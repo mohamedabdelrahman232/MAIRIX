@@ -1,0 +1,50 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 70-MAIRIX_ReportingEngineIntegration.gs
+ *
+ * Reporting facade.
+ *
+ * Reports consume authoritative transaction/ledger data.
+ * They do not recreate business rules.
+ ************************************************/
+
+function mairixReportDateRange(startDate, endDate) {
+  var start = new Date(startDate);
+  var end = new Date(endDate);
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    throw new Error("Invalid report date range.");
+  }
+
+  if (start > end) {
+    throw new Error("Report start date cannot exceed end date.");
+  }
+
+  return { startDate: start, endDate: end };
+}
+
+function mairixSumEffect(rows, fieldName) {
+  if (!Array.isArray(rows)) return 0;
+
+  return rows.reduce(function(sum, row) {
+    var value = Number(row[fieldName] || 0);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
+function testMairixReportingEngineContract() {
+  var range = mairixReportDateRange("2026-01-01", "2026-01-31");
+
+  if (range.startDate > range.endDate) throw new Error("Date range failed.");
+
+  var qty = mairixSumEffect([
+    { quantityEffect: -2 },
+    { quantityEffect: 5 },
+    { quantityEffect: -1 }
+  ], "quantityEffect");
+
+  if (qty !== 2) throw new Error("Effect aggregation failed.");
+
+  Logger.log("70 REPORTING ENGINE CONTRACT: PASS");
+  return { success: true, aggregation: "SUM_EFFECT_COLUMNS" };
+}

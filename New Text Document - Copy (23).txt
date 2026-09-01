@@ -1,0 +1,1628 @@
+/************************************************
+ * MAIRIX ERP
+ * MAIRIX EMPLOYEE PROVISIONING ENGINE
+ *
+ * FILE:
+ * MAIRIX_EmployeeProvisioning.gs
+ *
+ * PURPOSE:
+ *
+ * ONE ACTION FROM UI:
+ *
+ * Add Employee
+ *
+ * SYSTEM AUTOMATICALLY:
+ *
+ * 1. Creates Employee Code
+ * 2. Creates Employee record
+ * 3. Creates User ID
+ * 4. Creates User Account
+ * 5. Resolves Job Title
+ * 6. Assigns Role
+ * 7. Assigns selected Warehouses
+ *
+ * IMPORTANT:
+ *
+ * Employee creation is SYSTEMATIC.
+ * Admin does NOT manually create:
+ *
+ * - Employee
+ * - User
+ * - Permissions
+ *
+ ************************************************/
+
+
+/************************************************
+ * CONFIGURATION
+ ************************************************/
+
+var MAIRIX_IDENTITY_CONFIG = Object.freeze({
+
+  SHEETS: {
+
+    EMPLOYEES:
+      "EMPLOYEES",
+
+    USERS:
+      "USERS",
+
+    JOB_TITLES:
+      "JOB_TITLES",
+
+    ROLES:
+      "ROLES",
+
+    USER_WAREHOUSES:
+      "USER_WAREHOUSES",
+
+    WAREHOUSES:
+      "WAREHOUSES"
+
+  },
+
+  PREFIX: {
+
+    EMPLOYEE:
+      "EMP",
+
+    USER:
+      "USR"
+
+  },
+
+  CODE_WIDTH:
+    7
+
+});
+
+
+/************************************************
+ * CREATE EMPLOYEE + USER
+ *
+ * INPUT EXAMPLE:
+ *
+ * {
+ *   name: "Mohamed Ahmed",
+ *   email: "example@gmail.com",
+ *   phone: "01000000000",
+ *   jobTitleCode: "SALESMAN",
+ *   warehouseCodes: [
+ *     "WH-0000001",
+ *     "WH-0000002"
+ *   ]
+ * }
+ *
+ ************************************************/
+
+function mairixCreateEmployee(
+  input
+) {
+
+  if (
+    !input ||
+    typeof input !== "object"
+  ) {
+
+    throw new Error(
+      "Employee input is required."
+    );
+
+  }
+
+
+  var lock =
+    LockService.getScriptLock();
+
+
+  lock.waitLock(
+    30000
+  );
+
+
+  try {
+
+    /********************************************
+     * NORMALIZE INPUT
+     ********************************************/
+
+    var employeeName =
+      mairixIdentityCleanText(
+        input.name ||
+        input.employeeName
+      );
+
+
+    var email =
+      mairixIdentityNormalizeEmail(
+        input.email
+      );
+
+
+    var phone =
+      mairixIdentityCleanText(
+        input.phone
+      );
+
+
+    var jobTitleCode =
+      mairixIdentityCleanText(
+        input.jobTitleCode
+      ).toUpperCase();
+
+
+    var warehouseCodes =
+      mairixIdentityNormalizeWarehouseCodes(
+        input.warehouseCodes
+      );
+
+
+    /********************************************
+     * VALIDATION
+     ********************************************/
+
+    if (!employeeName) {
+
+      throw new Error(
+        "Employee name is required."
+      );
+
+    }
+
+
+    if (!email) {
+
+      throw new Error(
+        "Employee Gmail / Email is required."
+      );
+
+    }
+
+
+    if (
+      !mairixIdentityIsValidEmail(
+        email
+      )
+    ) {
+
+      throw new Error(
+        "Invalid email address."
+      );
+
+    }
+
+
+    if (!phone) {
+
+      throw new Error(
+        "Employee phone number is required."
+      );
+
+    }
+
+
+    if (!jobTitleCode) {
+
+      throw new Error(
+        "Job Title is required."
+      );
+
+    }
+
+
+    /********************************************
+     * GET JOB TITLE
+     ********************************************/
+
+    var jobTitle =
+      mairixGetJobTitleByCode(
+        jobTitleCode
+      );
+
+
+    if (!jobTitle) {
+
+      throw new Error(
+        "Job Title not found: " +
+        jobTitleCode
+      );
+
+    }
+
+
+    if (
+      jobTitle.active !== true
+    ) {
+
+      throw new Error(
+        "Job Title is inactive: " +
+        jobTitleCode
+      );
+
+    }
+
+
+    /********************************************
+     * GET ROLE
+     ********************************************/
+
+    var roleCode =
+      mairixIdentityCleanText(
+        jobTitle.roleCode
+      ).toUpperCase();
+
+
+    if (!roleCode) {
+
+      throw new Error(
+        "Job Title has no Role Code: " +
+        jobTitleCode
+      );
+
+    }
+
+
+    var role =
+      mairixGetRoleByCode(
+        roleCode
+      );
+
+
+    if (!role) {
+
+      throw new Error(
+        "Role not found: " +
+        roleCode
+      );
+
+    }
+
+
+    if (
+      role.active !== true
+    ) {
+
+      throw new Error(
+        "Role is inactive: " +
+        roleCode
+      );
+
+    }
+
+
+    /********************************************
+     * CHECK EMAIL UNIQUENESS
+     ********************************************/
+
+    var existingUser =
+      mairixGetUserByEmailIdentity(
+        email
+      );
+
+
+    if (existingUser) {
+
+      throw new Error(
+        "Email is already registered: " +
+        email
+      );
+
+    }
+
+
+    /********************************************
+     * VALIDATE WAREHOUSES
+     ********************************************/
+
+    mairixValidateWarehouseAssignments(
+      warehouseCodes
+    );
+
+
+    /********************************************
+     * GENERATE CODES
+     ********************************************/
+
+    var employeeCode =
+      mairixGenerateIdentityCode(
+        MAIRIX_IDENTITY_CONFIG.PREFIX.EMPLOYEE,
+        MAIRIX_IDENTITY_CONFIG.SHEETS.EMPLOYEES,
+        "Employee Code"
+      );
+
+
+    var userId =
+      mairixGenerateIdentityCode(
+        MAIRIX_IDENTITY_CONFIG.PREFIX.USER,
+        MAIRIX_IDENTITY_CONFIG.SHEETS.USERS,
+        "User ID"
+      );
+
+
+    var now =
+      new Date();
+
+
+    /********************************************
+     * CREATE EMPLOYEE
+     ********************************************/
+
+    mairixInsertEmployeeRecord({
+
+      employeeCode:
+        employeeCode,
+
+      employeeName:
+        employeeName,
+
+      email:
+        email,
+
+      phone:
+        phone,
+
+      jobTitleCode:
+        jobTitle.jobTitleCode,
+
+      jobTitleName:
+        jobTitle.jobTitleName,
+
+      active:
+        true,
+
+      createdAt:
+        now,
+
+      updatedAt:
+        now
+
+    });
+
+
+    /********************************************
+     * CREATE USER
+     ********************************************/
+
+    mairixInsertUserRecord({
+
+      userId:
+        userId,
+
+      employeeCode:
+        employeeCode,
+
+      email:
+        email,
+
+      roleCode:
+        role.roleCode,
+
+      roleName:
+        role.roleName,
+
+      active:
+        true,
+
+      createdAt:
+        now,
+
+      updatedAt:
+        now
+
+    });
+
+
+    /********************************************
+     * ASSIGN WAREHOUSES
+     ********************************************/
+
+    for (
+      var i = 0;
+      i < warehouseCodes.length;
+      i++
+    ) {
+
+      mairixAssignUserWarehouse(
+
+        userId,
+
+        warehouseCodes[i],
+
+        now
+
+      );
+
+    }
+
+
+    /********************************************
+     * FINAL RESULT
+     ********************************************/
+
+    return {
+
+      success:
+        true,
+
+      employee: {
+
+        employeeCode:
+          employeeCode,
+
+        employeeName:
+          employeeName,
+
+        email:
+          email,
+
+        phone:
+          phone,
+
+        jobTitleCode:
+          jobTitle.jobTitleCode,
+
+        jobTitleName:
+          jobTitle.jobTitleName
+
+      },
+
+      user: {
+
+        userId:
+          userId,
+
+        employeeCode:
+          employeeCode,
+
+        email:
+          email,
+
+        roleCode:
+          role.roleCode,
+
+        roleName:
+          role.roleName
+
+      },
+
+      warehouses:
+        warehouseCodes
+
+    };
+
+  }
+
+  finally {
+
+    lock.releaseLock();
+
+  }
+
+}
+
+
+/************************************************
+ * CLEAN TEXT
+ ************************************************/
+
+function mairixIdentityCleanText(
+  value
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(
+    value
+  )
+    .trim();
+
+}
+
+
+/************************************************
+ * NORMALIZE EMAIL
+ ************************************************/
+
+function mairixIdentityNormalizeEmail(
+  email
+) {
+
+  return mairixIdentityCleanText(
+    email
+  )
+    .toLowerCase();
+
+}
+
+
+/************************************************
+ * VALIDATE EMAIL
+ ************************************************/
+
+function mairixIdentityIsValidEmail(
+  email
+) {
+
+  var value =
+    mairixIdentityNormalizeEmail(
+      email
+    );
+
+
+  var pattern =
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+
+  return pattern.test(
+    value
+  );
+
+}
+
+
+/************************************************
+ * BOOLEAN PARSER
+ ************************************************/
+
+function mairixIdentityIsTrue(
+  value
+) {
+
+  if (value === true) {
+
+    return true;
+
+  }
+
+
+  if (value === 1) {
+
+    return true;
+
+  }
+
+
+  var normalized =
+    mairixIdentityCleanText(
+      value
+    )
+      .toUpperCase();
+
+
+  return (
+
+    normalized === "TRUE" ||
+    normalized === "1" ||
+    normalized === "YES" ||
+    normalized === "Y"
+
+  );
+
+}
+
+
+/************************************************
+ * NORMALIZE WAREHOUSE CODES
+ ************************************************/
+
+function mairixIdentityNormalizeWarehouseCodes(
+  warehouseCodes
+) {
+
+  if (
+    !warehouseCodes
+  ) {
+
+    return [];
+
+  }
+
+
+  if (
+    !Array.isArray(
+      warehouseCodes
+    )
+  ) {
+
+    warehouseCodes =
+      [warehouseCodes];
+
+  }
+
+
+  var result =
+    [];
+
+
+  var seen =
+    {};
+
+
+  for (
+    var i = 0;
+    i < warehouseCodes.length;
+    i++
+  ) {
+
+    var code =
+      mairixIdentityCleanText(
+        warehouseCodes[i]
+      )
+        .toUpperCase();
+
+
+    if (!code) {
+
+      continue;
+
+    }
+
+
+    if (
+      seen[code]
+    ) {
+
+      continue;
+
+    }
+
+
+    seen[code] =
+      true;
+
+
+    result.push(
+      code
+    );
+
+  }
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * GET JOB TITLE
+ ************************************************/
+
+function mairixGetJobTitleByCode(
+  jobTitleCode
+) {
+
+  var sheet =
+    mairixIdentityGetRequiredSheet(
+      MAIRIX_IDENTITY_CONFIG.SHEETS.JOB_TITLES
+    );
+
+
+  var data =
+    mairixIdentityReadSheetObjects(
+      sheet
+    );
+
+
+  var target =
+    mairixIdentityCleanText(
+      jobTitleCode
+    )
+      .toUpperCase();
+
+
+  for (
+    var i = 0;
+    i < data.length;
+    i++
+  ) {
+
+    var row =
+      data[i];
+
+
+    var code =
+      mairixIdentityCleanText(
+        row["Job Title Code"]
+      )
+        .toUpperCase();
+
+
+    if (
+      code !== target
+    ) {
+
+      continue;
+
+    }
+
+
+    return {
+
+      jobTitleCode:
+        code,
+
+      jobTitleName:
+        mairixIdentityCleanText(
+          row["Job Title Name"]
+        ),
+
+      roleCode:
+        mairixIdentityCleanText(
+          row["Role Code"]
+        )
+          .toUpperCase(),
+
+      active:
+        mairixIdentityIsTrue(
+          row["Active"]
+        )
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET ROLE
+ ************************************************/
+
+function mairixGetRoleByCode(
+  roleCode
+) {
+
+  var sheet =
+    mairixIdentityGetRequiredSheet(
+      MAIRIX_IDENTITY_CONFIG.SHEETS.ROLES
+    );
+
+
+  var data =
+    mairixIdentityReadSheetObjects(
+      sheet
+    );
+
+
+  var target =
+    mairixIdentityCleanText(
+      roleCode
+    )
+      .toUpperCase();
+
+
+  for (
+    var i = 0;
+    i < data.length;
+    i++
+  ) {
+
+    var row =
+      data[i];
+
+
+    var code =
+      mairixIdentityCleanText(
+        row["Role Code"]
+      )
+        .toUpperCase();
+
+
+    if (
+      code !== target
+    ) {
+
+      continue;
+
+    }
+
+
+    return {
+
+      roleCode:
+        code,
+
+      roleName:
+        mairixIdentityCleanText(
+          row["Role Name"]
+        ),
+
+      active:
+        mairixIdentityIsTrue(
+          row["Active"]
+        )
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET USER BY EMAIL
+ ************************************************/
+
+function mairixGetUserByEmailIdentity(
+  email
+) {
+
+  var sheet =
+    mairixIdentityGetRequiredSheet(
+      MAIRIX_IDENTITY_CONFIG.SHEETS.USERS
+    );
+
+
+  var data =
+    mairixIdentityReadSheetObjects(
+      sheet
+    );
+
+
+  var target =
+    mairixIdentityNormalizeEmail(
+      email
+    );
+
+
+  for (
+    var i = 0;
+    i < data.length;
+    i++
+  ) {
+
+    var row =
+      data[i];
+
+
+    var rowEmail =
+      mairixIdentityNormalizeEmail(
+        row["Gmail"]
+      );
+
+
+    if (
+      rowEmail === target
+    ) {
+
+      return row;
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * VALIDATE WAREHOUSE ASSIGNMENTS
+ ************************************************/
+
+function mairixValidateWarehouseAssignments(
+  warehouseCodes
+) {
+
+  if (
+    !warehouseCodes ||
+    warehouseCodes.length === 0
+  ) {
+
+    /*
+     * بعض الوظائف قد لا تحتاج مخزن.
+     *
+     * لذلك لا نفرض وجود مخزن هنا.
+     */
+
+    return true;
+
+  }
+
+
+  var sheet =
+    mairixIdentityGetRequiredSheet(
+      MAIRIX_IDENTITY_CONFIG.SHEETS.WAREHOUSES
+    );
+
+
+  var data =
+    mairixIdentityReadSheetObjects(
+      sheet
+    );
+
+
+  for (
+    var i = 0;
+    i < warehouseCodes.length;
+    i++
+  ) {
+
+    var target =
+      warehouseCodes[i];
+
+
+    var found =
+      false;
+
+
+    for (
+      var j = 0;
+      j < data.length;
+      j++
+    ) {
+
+      var row =
+        data[j];
+
+
+      var warehouseCode =
+        mairixIdentityCleanText(
+          row["Warehouse Code"]
+        )
+          .toUpperCase();
+
+
+      if (
+        warehouseCode !== target
+      ) {
+
+        continue;
+
+      }
+
+
+      if (
+        !mairixIdentityIsTrue(
+          row["Active"]
+        )
+      ) {
+
+        throw new Error(
+          "Warehouse is inactive: " +
+          target
+        );
+
+      }
+
+
+      found =
+        true;
+
+      break;
+
+    }
+
+
+    if (!found) {
+
+      throw new Error(
+        "Warehouse not found: " +
+        target
+      );
+
+    }
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * GENERATE IDENTITY CODE
+ *
+ * EMP-0000001
+ * USR-0000001
+ *
+ ************************************************/
+
+function mairixGenerateIdentityCode(
+  prefix,
+  sheetName,
+  codeHeader
+) {
+
+  var sheet =
+    mairixIdentityGetRequiredSheet(
+      sheetName
+    );
+
+
+  var lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return (
+      prefix +
+      "-" +
+      String(1).padStart(
+        MAIRIX_IDENTITY_CONFIG.CODE_WIDTH,
+        "0"
+      )
+    );
+
+  }
+
+
+  var headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  var index =
+    headers.indexOf(
+      codeHeader
+    );
+
+
+  if (
+    index === -1
+  ) {
+
+    throw new Error(
+      "Missing header: " +
+      codeHeader +
+      " in sheet: " +
+      sheetName
+    );
+
+  }
+
+
+  var values =
+    sheet
+      .getRange(
+        2,
+        index + 1,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  var maxNumber =
+    0;
+
+
+  var pattern =
+    new RegExp(
+      "^" +
+      prefix +
+      "-(\\d+)$"
+    );
+
+
+  for (
+    var i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    var value =
+      mairixIdentityCleanText(
+        values[i][0]
+      );
+
+
+    var match =
+      value.match(
+        pattern
+      );
+
+
+    if (!match) {
+
+      continue;
+
+    }
+
+
+    var number =
+      parseInt(
+        match[1],
+        10
+      );
+
+
+    if (
+      number > maxNumber
+    ) {
+
+      maxNumber =
+        number;
+
+    }
+
+  }
+
+
+  var nextNumber =
+    maxNumber + 1;
+
+
+  return (
+
+    prefix +
+    "-" +
+    String(nextNumber).padStart(
+      MAIRIX_IDENTITY_CONFIG.CODE_WIDTH,
+      "0"
+    )
+
+  );
+
+}
+
+
+/************************************************
+ * INSERT EMPLOYEE RECORD
+ ************************************************/
+
+function mairixInsertEmployeeRecord(
+  employee
+) {
+
+  var sheet =
+    mairixIdentityGetRequiredSheet(
+      MAIRIX_IDENTITY_CONFIG.SHEETS.EMPLOYEES
+    );
+
+
+  mairixIdentityAppendObject(
+    sheet,
+    {
+
+      "Employee Code":
+        employee.employeeCode,
+
+      "Employee Name":
+        employee.employeeName,
+
+      "Gmail":
+        employee.email,
+
+      "Phone":
+        employee.phone,
+
+      "Job Title Code":
+        employee.jobTitleCode,
+
+      "Job Title Name":
+        employee.jobTitleName,
+
+      "Active":
+        employee.active,
+
+      "Created At":
+        employee.createdAt,
+
+      "Updated At":
+        employee.updatedAt
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * INSERT USER RECORD
+ ************************************************/
+
+function mairixInsertUserRecord(
+  user
+) {
+
+  var sheet =
+    mairixIdentityGetRequiredSheet(
+      MAIRIX_IDENTITY_CONFIG.SHEETS.USERS
+    );
+
+
+  mairixIdentityAppendObject(
+    sheet,
+    {
+
+      "User ID":
+        user.userId,
+
+      "Employee Code":
+        user.employeeCode,
+
+      "Gmail":
+        user.email,
+
+      "Role Code":
+        user.roleCode,
+
+      "Role Name":
+        user.roleName,
+
+      "Active":
+        user.active,
+
+      "Created At":
+        user.createdAt,
+
+      "Updated At":
+        user.updatedAt
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * ASSIGN USER TO WAREHOUSE
+ ************************************************/
+
+function mairixAssignUserWarehouse(
+  userId,
+  warehouseCode,
+  now
+) {
+
+  var sheet =
+    mairixIdentityGetRequiredSheet(
+      MAIRIX_IDENTITY_CONFIG.SHEETS.USER_WAREHOUSES
+    );
+
+
+  var data =
+    mairixIdentityReadSheetObjects(
+      sheet
+    );
+
+
+  for (
+    var i = 0;
+    i < data.length;
+    i++
+  ) {
+
+    var row =
+      data[i];
+
+
+    if (
+
+      mairixIdentityCleanText(
+        row["User ID"]
+      ) === userId &&
+
+      mairixIdentityCleanText(
+        row["Warehouse Code"]
+      ).toUpperCase() === warehouseCode
+
+    ) {
+
+      return true;
+
+    }
+
+  }
+
+
+  mairixIdentityAppendObject(
+    sheet,
+    {
+
+      "User ID":
+        userId,
+
+      "Warehouse Code":
+        warehouseCode,
+
+      "Active":
+        true,
+
+      "Created At":
+        now,
+
+      "Updated At":
+        now
+
+    }
+  );
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * GET REQUIRED SHEET
+ ************************************************/
+
+function mairixIdentityGetRequiredSheet(
+  sheetName
+) {
+
+  var spreadsheet =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  var sheet =
+    spreadsheet.getSheetByName(
+      sheetName
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Required sheet does not exist: " +
+      sheetName
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * READ SHEET AS OBJECTS
+ ************************************************/
+
+function mairixIdentityReadSheetObjects(
+  sheet
+) {
+
+  var lastRow =
+    sheet.getLastRow();
+
+
+  var lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  var headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  var values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  var result =
+    [];
+
+
+  for (
+    var i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    var object =
+      {};
+
+
+    for (
+      var j = 0;
+      j < headers.length;
+      j++
+    ) {
+
+      object[
+        headers[j]
+      ] =
+        values[i][j];
+
+    }
+
+
+    result.push(
+      object
+    );
+
+  }
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * APPEND OBJECT TO SHEET
+ *
+ * HEADER-DRIVEN
+ *
+ * This is important because columns can be
+ * rearranged without breaking the engine.
+ *
+ ************************************************/
+
+function mairixIdentityAppendObject(
+  sheet,
+  object
+) {
+
+  var lastColumn =
+    sheet.getLastColumn();
+
+
+  var headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  var row =
+    [];
+
+
+  for (
+    var i = 0;
+    i < headers.length;
+    i++
+  ) {
+
+    var header =
+      headers[i];
+
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        object,
+        header
+      )
+    ) {
+
+      row.push(
+        object[header]
+      );
+
+    }
+
+    else {
+
+      row.push(
+        ""
+      );
+
+    }
+
+  }
+
+
+  sheet.appendRow(
+    row
+  );
+
+}
+
+
+/************************************************
+ * TEST:
+ * CREATE EMPLOYEE
+ *
+ * IMPORTANT:
+ * Change email before running again.
+ *
+ ************************************************/
+
+function testMairixCreateEmployee() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX EMPLOYEE PROVISIONING TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  var result =
+    mairixCreateEmployee({
+
+      name:
+        "MAIRIX TEST EMPLOYEE",
+
+      email:
+        "mairix.test.employee@example.com",
+
+      phone:
+        "01000000000",
+
+      jobTitleCode:
+        "SALESMAN",
+
+      warehouseCodes:
+        []
+
+    });
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "EMPLOYEE PROVISIONING: PASSED"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return result;
+
+}

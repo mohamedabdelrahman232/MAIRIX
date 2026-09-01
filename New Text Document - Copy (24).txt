@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+  <base target="_top">
+
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <title>MAIRIX ERP</title>
+
+  <style>
+
+    html,
+    body {
+
+      margin:
+        0;
+
+      padding:
+        0;
+
+      width:
+        100%;
+
+      height:
+        100%;
+
+      font-family:
+        Arial,
+        sans-serif;
+
+      background:
+        #f5f6f8;
+
+    }
+
+
+    * {
+
+      box-sizing:
+        border-box;
+
+    }
+
+
+    #mairixApp {
+
+      width:
+        100%;
+
+      min-height:
+        100vh;
+
+    }
+
+
+    #mairixLoading {
+
+      min-height:
+        100vh;
+
+      display:
+        flex;
+
+      align-items:
+        center;
+
+      justify-content:
+        center;
+
+      flex-direction:
+        column;
+
+      gap:
+        12px;
+
+      color:
+        #333;
+
+    }
+
+
+    #mairixLoadingMessage {
+
+      font-size:
+        16px;
+
+    }
+
+
+    #mairixError {
+
+      display:
+        none;
+
+      min-height:
+        100vh;
+
+      padding:
+        40px;
+
+      align-items:
+        center;
+
+      justify-content:
+        center;
+
+    }
+
+
+    .mairix-error-box {
+
+      width:
+        min(520px, 100%);
+
+      background:
+        #ffffff;
+
+      border:
+        1px solid #dddddd;
+
+      border-radius:
+        10px;
+
+      padding:
+        24px;
+
+      box-shadow:
+        0 4px 18px rgba(0, 0, 0, 0.08);
+
+    }
+
+
+    .mairix-error-title {
+
+      font-size:
+        20px;
+
+      font-weight:
+        700;
+
+      margin-bottom:
+        10px;
+
+    }
+
+
+    .mairix-error-message {
+
+      color:
+        #555;
+
+      line-height:
+        1.6;
+
+    }
+
+
+    button {
+
+      font-family:
+        inherit;
+
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+  <div id="mairixApp">
+
+    <!--
+      ============================================================
+      INITIAL LOADING
+      ============================================================
+    -->
+
+    <div id="mairixLoading">
+
+      <div
+        id="mairixLoadingMessage"
+      >
+        جاري تحميل MAIRIX ERP...
+      </div>
+
+    </div>
+
+
+    <!--
+      ============================================================
+      APPLICATION ROOT
+      ============================================================
+
+      The actual application shell will be mounted here.
+
+      This file intentionally does NOT contain:
+      - Business logic
+      - Database access
+      - Transaction logic
+      - Permission decisions
+      - Product logic
+      - Sales logic
+      - Report calculations
+
+      Those responsibilities belong to the server/API layers
+      and the dedicated UI modules.
+      ============================================================
+    -->
+
+    <div
+      id="mairixApplicationRoot"
+      style="display:none;"
+    ></div>
+
+
+    <!--
+      ============================================================
+      ERROR STATE
+      ============================================================
+    -->
+
+    <div
+      id="mairixError"
+    >
+
+      <div
+        class="mairix-error-box"
+      >
+
+        <div
+          class="mairix-error-title"
+        >
+          تعذر تحميل النظام
+        </div>
+
+        <div
+          id="mairixErrorMessage"
+          class="mairix-error-message"
+        >
+          حدث خطأ أثناء تحميل النظام.
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <script>
+
+    /************************************************************
+     * MAIRIX ERP
+     * UI ENTRY POINT
+     *
+     * FILE:
+     * MAIRIX_UI_Index.html
+     *
+     * PURPOSE:
+     *
+     * 1. Start the MAIRIX UI.
+     * 2. Ask the server for the authenticated user context.
+     * 3. Never trust a UI-supplied User ID.
+     * 4. Hand the server result to the UI application shell.
+     *
+     * IMPORTANT:
+     *
+     * This file does NOT perform authorization.
+     *
+     * Server-side authorization remains authoritative.
+     *
+     * The UI only uses the returned context to decide what
+     * should be rendered or hidden.
+     ************************************************************/
+
+
+    /************************************************************
+     * DOM HELPERS
+     ************************************************************/
+
+    function mairixUIElement(
+      id
+    ) {
+
+      return document.getElementById(
+        id
+      );
+
+    }
+
+
+    /************************************************************
+     * SHOW LOADING
+     ************************************************************/
+
+    function mairixUIShowLoading(
+      message
+    ) {
+
+      var loading =
+        mairixUIElement(
+          "mairixLoading"
+        );
+
+      var error =
+        mairixUIElement(
+          "mairixError"
+        );
+
+      var root =
+        mairixUIElement(
+          "mairixApplicationRoot"
+        );
+
+
+      if (loading) {
+
+        loading.style.display =
+          "flex";
+
+      }
+
+
+      if (error) {
+
+        error.style.display =
+          "none";
+
+      }
+
+
+      if (root) {
+
+        root.style.display =
+          "none";
+
+      }
+
+
+      var messageElement =
+        mairixUIElement(
+          "mairixLoadingMessage"
+        );
+
+
+      if (
+        messageElement &&
+        message
+      ) {
+
+        messageElement.textContent =
+          message;
+
+      }
+
+    }
+
+
+    /************************************************************
+     * SHOW ERROR
+     ************************************************************/
+
+    function mairixUIShowError(
+      message
+    ) {
+
+      var loading =
+        mairixUIElement(
+          "mairixLoading"
+        );
+
+      var error =
+        mairixUIElement(
+          "mairixError"
+        );
+
+      var root =
+        mairixUIElement(
+          "mairixApplicationRoot"
+        );
+
+      var messageElement =
+        mairixUIElement(
+          "mairixErrorMessage"
+        );
+
+
+      if (loading) {
+
+        loading.style.display =
+          "none";
+
+      }
+
+
+      if (root) {
+
+        root.style.display =
+          "none";
+
+      }
+
+
+      if (messageElement) {
+
+        messageElement.textContent =
+          message ||
+          "حدث خطأ أثناء تحميل النظام.";
+
+      }
+
+
+      if (error) {
+
+        error.style.display =
+          "flex";
+
+      }
+
+    }
+
+
+    /************************************************************
+     * SHOW APPLICATION ROOT
+     ************************************************************/
+
+    function mairixUIShowApplication()
+    {
+
+      var loading =
+        mairixUIElement(
+          "mairixLoading"
+        );
+
+      var error =
+        mairixUIElement(
+          "mairixError"
+        );
+
+      var root =
+        mairixUIElement(
+          "mairixApplicationRoot"
+        );
+
+
+      if (loading) {
+
+        loading.style.display =
+          "none";
+
+      }
+
+
+      if (error) {
+
+        error.style.display =
+          "none";
+
+      }
+
+
+      if (root) {
+
+        root.style.display =
+          "block";
+
+      }
+
+    }
+
+
+    /************************************************************
+     * SERVER ERROR NORMALIZER
+     ************************************************************/
+
+    function mairixUINormalizeServerError(
+      error
+    ) {
+
+      if (!error) {
+
+        return "تعذر الاتصال بالخادم.";
+
+      }
+
+
+      if (
+        typeof error ===
+        "string"
+      ) {
+
+        return error;
+
+      }
+
+
+      if (
+        error.message
+      ) {
+
+        return String(
+          error.message
+        );
+
+      }
+
+
+      try {
+
+        return JSON.stringify(
+          error
+        );
+
+      } catch (
+        stringifyError
+      ) {
+
+        return "حدث خطأ غير معروف.";
+
+      }
+
+    }
+
+
+    /************************************************************
+     * BOOTSTRAP APPLICATION
+     ************************************************************/
+
+    function mairixUIBootstrap(
+      context
+    ) {
+
+      /*
+       * IMPORTANT:
+       *
+       * We do NOT decide whether this user is authorized
+       * to perform transactions here.
+       *
+       * The server/API remains authoritative.
+       *
+       * The context is only passed to the UI shell so the
+       * navigation and visible components can be rendered.
+       */
+
+      if (
+        !context ||
+        context.success !== true
+      ) {
+
+        mairixUIShowError(
+          "تعذر الحصول على بيانات المستخدم الحالي."
+        );
+
+        return;
+
+      }
+
+
+      if (
+        typeof mairixUIInitializeApp ===
+        "function"
+      ) {
+
+        mairixUIInitializeApp(
+          context
+        );
+
+        mairixUIShowApplication();
+
+        return;
+
+      }
+
+
+      /*
+       * Temporary foundation fallback.
+       *
+       * This exists only until the Application Shell file
+       * is loaded.
+       */
+
+      var root =
+        mairixUIElement(
+          "mairixApplicationRoot"
+        );
+
+
+      if (root) {
+
+        root.innerHTML =
+
+          "<div " +
+          "style=\"" +
+          "padding:24px;" +
+          "background:#fff;" +
+          "margin:20px;" +
+          "border-radius:10px;" +
+          "\">" +
+
+          "<h2>MAIRIX ERP</h2>" +
+
+          "<p>" +
+          "تم التحقق من جلسة المستخدم بنجاح." +
+          "</p>" +
+
+          "</div>";
+
+      }
+
+
+      mairixUIShowApplication();
+
+    }
+
+
+    /************************************************************
+     * LOAD CURRENT AUTHENTICATED USER
+     ************************************************************/
+
+    function mairixUILoadCurrentUser()
+    {
+
+      mairixUIShowLoading(
+        "جاري التحقق من المستخدم..."
+      );
+
+
+      /*
+       * IMPORTANT:
+       *
+       * The UI does NOT send a userId.
+       *
+       * The server determines the authenticated user.
+       *
+       * This follows the existing MAIRIX security contract.
+       */
+
+      if (
+        typeof google ===
+        "undefined" ||
+        !google.script ||
+        !google.script.run
+      ) {
+
+        mairixUIShowError(
+          "بيئة MAIRIX غير متاحة."
+        );
+
+        return;
+
+      }
+
+
+      google
+        .script
+        .run
+        .withSuccessHandler(
+          function(result) {
+
+            if (
+              !result ||
+              result.success !== true
+            ) {
+
+              mairixUIShowError(
+                (
+                  result &&
+                  result.error &&
+                  result.error.message
+                ) ||
+                "تعذر تحميل المستخدم الحالي."
+              );
+
+              return;
+
+            }
+
+
+            mairixUIBootstrap(
+              result
+            );
+
+          }
+        )
+        .withFailureHandler(
+          function(error) {
+
+            mairixUIShowError(
+              mairixUINormalizeServerError(
+                error
+              )
+            );
+
+          }
+        )
+        .apiGetCurrentUser();
+
+    }
+
+
+    /************************************************************
+     * INITIAL START
+     ************************************************************/
+
+    document.addEventListener(
+      "DOMContentLoaded",
+      function() {
+
+        mairixUILoadCurrentUser();
+
+      }
+    );
+
+  </script>
+
+
+</body>
+
+</html>

@@ -1,0 +1,1832 @@
+/************************************************
+ * MAIRIX ERP
+ * 24-MAIRIX_AuditTrail.gs
+ *
+ * CENTRAL AUDIT TRAIL
+ *
+ * PURPOSE
+ * -------
+ * 1) Record important system actions.
+ * 2) Link every auditable action to its
+ *    central Reference whenever available.
+ * 3) Record who performed the action.
+ * 4) Record when the action occurred.
+ * 5) Record source/module/action/result.
+ * 6) Preserve before/after information when
+ *    applicable.
+ * 7) Support investigation and reporting.
+ *
+ * DESIGN PRINCIPLES
+ * -----------------
+ * - Audit records are append-only.
+ * - Audit data is never used as transaction data.
+ * - Audit Trail never changes the transaction itself.
+ * - Reference remains the central transaction key.
+ * - Financial, inventory and tax calculations
+ *   remain owned by their respective engines.
+ * - Audit Trail only records what happened.
+ *
+ * NEW WHITE-SHEET ARCHITECTURE
+ * ----------------------------
+ * This file does NOT depend on legacy layouts.
+ ************************************************/
+
+
+/************************************************
+ * CONFIGURATION
+ ************************************************/
+
+const MAIRIX_AUDIT = {
+
+  SHEET_NAME:
+    "AUDIT_TRAIL",
+
+  HEADERS: [
+
+    "Audit ID",
+    "Timestamp",
+
+    "User ID",
+    "User Name",
+    "User Email",
+
+    "Module",
+    "Action",
+    "Result",
+
+    "Reference",
+    "Transaction ID",
+    "Document No",
+
+    "Entity Type",
+    "Entity ID",
+
+    "Warehouse ID",
+
+    "Customer ID",
+    "Vendor ID",
+    "Salesman ID",
+
+    "Description",
+
+    "Before Data",
+    "After Data",
+
+    "Source",
+    "Session ID"
+
+  ],
+
+  MAX_TEXT_LENGTH:
+    50000
+
+};
+
+
+/************************************************
+ * SETUP AUDIT TRAIL
+ ************************************************/
+
+function setupAuditTrail() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_AUDIT.SHEET_NAME
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_AUDIT.SHEET_NAME
+      );
+
+  }
+
+
+  /*
+   * Only create headers when the sheet
+   * is actually empty.
+   *
+   * This prevents accidental destruction
+   * of existing audit records.
+   */
+
+  if (
+    sheet.getLastRow() === 0
+  ) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        MAIRIX_AUDIT.HEADERS.length
+      )
+      .setValues([
+        MAIRIX_AUDIT.HEADERS
+      ]);
+
+  }
+
+
+  formatAuditTrail();
+
+
+  return {
+
+    success:
+      true,
+
+    sheet:
+      MAIRIX_AUDIT.SHEET_NAME,
+
+    headers:
+      MAIRIX_AUDIT.HEADERS
+
+  };
+
+}
+
+
+/************************************************
+ * WRITE AUDIT RECORD
+ *
+ * Main public function.
+ ************************************************/
+
+function writeAuditTrail(data) {
+
+  if (!data) {
+
+    throw new Error(
+      "Audit data is required."
+    );
+
+  }
+
+
+  const sheet =
+    ensureAuditTrailSheet();
+
+
+  const currentUser =
+    resolveAuditUser(
+      data.userId
+    );
+
+
+  const auditId =
+    generateAuditId();
+
+
+  const timestamp =
+    new Date();
+
+
+  const row = {
+
+    "Audit ID":
+      auditId,
+
+    "Timestamp":
+      timestamp,
+
+    "User ID":
+      currentUser.userId ||
+      cleanAuditText(
+        data.userId
+      ),
+
+    "User Name":
+      currentUser.name ||
+      cleanAuditText(
+        data.userName
+      ),
+
+    "User Email":
+      currentUser.email ||
+      cleanAuditText(
+        data.userEmail
+      ),
+
+    "Module":
+      cleanAuditText(
+        data.module
+      ),
+
+    "Action":
+      cleanAuditText(
+        data.action
+      ),
+
+    "Result":
+      cleanAuditText(
+        data.result
+      ) ||
+      "SUCCESS",
+
+    "Reference":
+      cleanAuditText(
+        data.reference
+      ),
+
+    "Transaction ID":
+      cleanAuditText(
+        data.transactionId
+      ),
+
+    "Document No":
+      cleanAuditText(
+        data.documentNo
+      ),
+
+    "Entity Type":
+      cleanAuditText(
+        data.entityType
+      ),
+
+    "Entity ID":
+      cleanAuditText(
+        data.entityId
+      ),
+
+    "Warehouse ID":
+      cleanAuditText(
+        data.warehouseId
+      ),
+
+    "Customer ID":
+      cleanAuditText(
+        data.customerId
+      ),
+
+    "Vendor ID":
+      cleanAuditText(
+        data.vendorId
+      ),
+
+    "Salesman ID":
+      cleanAuditText(
+        data.salesmanId
+      ),
+
+    "Description":
+      cleanAuditText(
+        data.description
+      ),
+
+    "Before Data":
+      serializeAuditData(
+        data.beforeData
+      ),
+
+    "After Data":
+      serializeAuditData(
+        data.afterData
+      ),
+
+    "Source":
+      cleanAuditText(
+        data.source
+      ),
+
+    "Session ID":
+      cleanAuditText(
+        data.sessionId
+      )
+
+  };
+
+
+  const values =
+    MAIRIX_AUDIT.HEADERS.map(
+      function(header) {
+
+        return row[header] !== undefined
+          ? row[header]
+          : "";
+
+      }
+    );
+
+
+  sheet
+    .appendRow(
+      values
+    );
+
+
+  return {
+
+    success:
+      true,
+
+    auditId:
+      auditId,
+
+    timestamp:
+      timestamp,
+
+    reference:
+      row["Reference"]
+
+  };
+
+}
+
+
+/************************************************
+ * SAFE AUDIT WRITE
+ *
+ * Audit failure must NEVER break the
+ * business transaction.
+ ************************************************/
+
+function safeWriteAuditTrail(data) {
+
+  try {
+
+    return writeAuditTrail(
+      data
+    );
+
+  } catch (error) {
+
+    Logger.log(
+      "AUDIT TRAIL FAILED: " +
+      error.message
+    );
+
+
+    return {
+
+      success:
+        false,
+
+      auditFailed:
+        true,
+
+      error:
+        error.message
+
+    };
+
+  }
+
+}
+
+
+/************************************************
+ * RECORD TRANSACTION CREATION
+ ************************************************/
+
+function auditTransactionCreated(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      data.module,
+
+    action:
+      "CREATE",
+
+    result:
+      "SUCCESS",
+
+    reference:
+      data.reference,
+
+    transactionId:
+      data.transactionId,
+
+    documentNo:
+      data.documentNo,
+
+    entityType:
+      data.entityType,
+
+    entityId:
+      data.entityId,
+
+    warehouseId:
+      data.warehouseId,
+
+    customerId:
+      data.customerId,
+
+    vendorId:
+      data.vendorId,
+
+    salesmanId:
+      data.salesmanId,
+
+    description:
+      data.description ||
+      "Transaction created.",
+
+    afterData:
+      data.afterData,
+
+    source:
+      data.source ||
+
+      "TRANSACTION_ENGINE",
+
+    userId:
+      data.userId
+
+  });
+
+}
+
+
+/************************************************
+ * RECORD TRANSACTION UPDATE
+ ************************************************/
+
+function auditTransactionUpdated(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      data.module,
+
+    action:
+      "UPDATE",
+
+    result:
+      "SUCCESS",
+
+    reference:
+      data.reference,
+
+    transactionId:
+      data.transactionId,
+
+    documentNo:
+      data.documentNo,
+
+    entityType:
+      data.entityType,
+
+    entityId:
+      data.entityId,
+
+    warehouseId:
+      data.warehouseId,
+
+    customerId:
+      data.customerId,
+
+    vendorId:
+      data.vendorId,
+
+    salesmanId:
+      data.salesmanId,
+
+    description:
+      data.description ||
+      "Transaction updated.",
+
+    beforeData:
+      data.beforeData,
+
+    afterData:
+      data.afterData,
+
+    source:
+      data.source ||
+
+      "TRANSACTION_ENGINE",
+
+    userId:
+      data.userId
+
+  });
+
+}
+
+
+/************************************************
+ * RECORD TRANSACTION REVERSAL
+ ************************************************/
+
+function auditTransactionReversed(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      data.module,
+
+    action:
+      "REVERSE",
+
+    result:
+      "SUCCESS",
+
+    reference:
+      data.reference,
+
+    transactionId:
+      data.transactionId,
+
+    documentNo:
+      data.documentNo,
+
+    entityType:
+      data.entityType,
+
+    entityId:
+      data.entityId,
+
+    description:
+      data.description ||
+      "Transaction reversed.",
+
+    beforeData:
+      data.beforeData,
+
+    afterData:
+      data.afterData,
+
+    source:
+      data.source ||
+
+      "TRANSACTION_ENGINE",
+
+    userId:
+      data.userId
+
+  });
+
+}
+
+
+/************************************************
+ * RECORD DELETE / VOID
+ *
+ * Physical deletion should generally NOT be
+ * used for financial transactions.
+ *
+ * This audit action records a logical
+ * cancellation / void when used.
+ ************************************************/
+
+function auditTransactionVoided(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      data.module,
+
+    action:
+      "VOID",
+
+    result:
+      "SUCCESS",
+
+    reference:
+      data.reference,
+
+    transactionId:
+      data.transactionId,
+
+    documentNo:
+      data.documentNo,
+
+    entityType:
+      data.entityType,
+
+    entityId:
+      data.entityId,
+
+    description:
+      data.description ||
+      "Transaction voided.",
+
+    beforeData:
+      data.beforeData,
+
+    afterData:
+      data.afterData,
+
+    source:
+      data.source ||
+
+      "TRANSACTION_ENGINE",
+
+    userId:
+      data.userId
+
+  });
+
+}
+
+
+/************************************************
+ * RECORD PERMISSION CHANGE
+ ************************************************/
+
+function auditPermissionChanged(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      "SECURITY",
+
+    action:
+      "PERMISSION_CHANGE",
+
+    result:
+      "SUCCESS",
+
+    entityType:
+      "USER",
+
+    entityId:
+      data.userId,
+
+    description:
+      data.description ||
+      "User permission changed.",
+
+    beforeData:
+      data.beforeData,
+
+    afterData:
+      data.afterData,
+
+    source:
+      "PERMISSION_ENGINE",
+
+    userId:
+      data.changedByUserId
+
+  });
+
+}
+
+
+/************************************************
+ * RECORD LOGIN
+ ************************************************/
+
+function auditLogin(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      "AUTHENTICATION",
+
+    action:
+      "LOGIN",
+
+    result:
+      data.result ||
+      "SUCCESS",
+
+    entityType:
+      "USER",
+
+    entityId:
+      data.userId,
+
+    description:
+      data.description ||
+      "User login attempt.",
+
+    source:
+      "AUTHENTICATION_ENGINE",
+
+    userId:
+      data.userId,
+
+    userEmail:
+      data.userEmail,
+
+    sessionId:
+      data.sessionId
+
+  });
+
+}
+
+
+/************************************************
+ * RECORD REPORT ACCESS
+ ************************************************/
+
+function auditReportAccess(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      "REPORTS",
+
+    action:
+      "VIEW_REPORT",
+
+    result:
+      "SUCCESS",
+
+    entityType:
+      "REPORT",
+
+    entityId:
+      data.reportCode,
+
+    reference:
+      data.reference,
+
+    description:
+      data.description ||
+      (
+        "Report viewed: " +
+        cleanAuditText(
+          data.reportCode
+        )
+      ),
+
+    source:
+      "REPORTS_ENGINE",
+
+    userId:
+      data.userId,
+
+    sessionId:
+      data.sessionId
+
+  });
+
+}
+
+
+/************************************************
+ * RECORD REFERENCE VIEW
+ ************************************************/
+
+function auditReferenceViewed(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      "REFERENCE_VIEWER",
+
+    action:
+      "VIEW_REFERENCE",
+
+    result:
+      "SUCCESS",
+
+    reference:
+      data.reference,
+
+    transactionId:
+      data.transactionId,
+
+    entityType:
+      data.entityType,
+
+    entityId:
+      data.entityId,
+
+    description:
+      data.description ||
+      (
+        "Reference details viewed: " +
+        cleanAuditText(
+          data.reference
+        )
+      ),
+
+    source:
+      "REFERENCE_VIEWER",
+
+    userId:
+      data.userId,
+
+    sessionId:
+      data.sessionId
+
+  });
+
+}
+
+
+/************************************************
+ * RECORD FAILED ACTION
+ ************************************************/
+
+function auditFailedAction(data) {
+
+  return safeWriteAuditTrail({
+
+    module:
+      data.module,
+
+    action:
+      data.action ||
+
+      "UNKNOWN_ACTION",
+
+    result:
+      "FAILED",
+
+    reference:
+      data.reference,
+
+    transactionId:
+      data.transactionId,
+
+    entityType:
+      data.entityType,
+
+    entityId:
+      data.entityId,
+
+    description:
+      data.description ||
+      "Operation failed.",
+
+    beforeData:
+      data.beforeData,
+
+    afterData:
+      data.afterData,
+
+    source:
+      data.source ||
+
+      "SYSTEM",
+
+    userId:
+      data.userId
+
+  });
+
+}
+
+
+/************************************************
+ * GENERATE AUDIT ID
+ *
+ * Format:
+ *
+ * AUD-YYYYMMDD-HHMMSS-XXXX
+ ************************************************/
+
+function generateAuditId() {
+
+  const now =
+    new Date();
+
+
+  const timezone =
+    Session.getScriptTimeZone();
+
+
+  const dateKey =
+    Utilities.formatDate(
+      now,
+      timezone,
+      "yyyyMMdd-HHmmss"
+    );
+
+
+  const randomPart =
+    Utilities.getUuid()
+      .replace(
+        /-/g,
+        ""
+      )
+      .substring(
+        0,
+        4
+      )
+      .toUpperCase();
+
+
+  return (
+    "AUD-" +
+    dateKey +
+    "-" +
+    randomPart
+  );
+
+}
+
+
+/************************************************
+ * ENSURE AUDIT SHEET
+ ************************************************/
+
+function ensureAuditTrailSheet() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_AUDIT.SHEET_NAME
+    );
+
+
+  if (!sheet) {
+
+    setupAuditTrail();
+
+    sheet =
+      ss.getSheetByName(
+        MAIRIX_AUDIT.SHEET_NAME
+      );
+
+  }
+
+
+  /*
+   * If sheet exists but is completely empty,
+   * initialize it.
+   */
+
+  if (
+    sheet.getLastRow() === 0
+  ) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        MAIRIX_AUDIT.HEADERS.length
+      )
+      .setValues([
+        MAIRIX_AUDIT.HEADERS
+      ]);
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * RESOLVE AUDIT USER
+ ************************************************/
+
+function resolveAuditUser(
+  userId
+) {
+
+  const normalizedUserId =
+    cleanAuditText(
+      userId
+    );
+
+
+  /*
+   * If a user ID is supplied, use the
+   * centralized Users engine.
+   */
+
+  if (
+    normalizedUserId
+  ) {
+
+    try {
+
+      const user =
+        getCurrentMAIRIXUser(
+          normalizedUserId
+        );
+
+
+      if (user) {
+
+        return {
+
+          userId:
+            user.userId,
+
+          name:
+            user.name,
+
+          email:
+            user.email
+
+        };
+
+      }
+
+    } catch (error) {
+
+      Logger.log(
+        "Unable to resolve audit user: " +
+        error.message
+      );
+
+    }
+
+  }
+
+
+  /*
+   * Fall back to the active Google account.
+   */
+
+  try {
+
+    const email =
+      Session
+        .getActiveUser()
+        .getEmail();
+
+
+    if (email) {
+
+      try {
+
+        const user =
+          getUserByEmail(
+            email
+          );
+
+
+        if (user) {
+
+          return {
+
+            userId:
+              user.userId,
+
+            name:
+              user.name,
+
+            email:
+              user.email
+
+          };
+
+        }
+
+      } catch (error) {
+
+        Logger.log(
+          "Audit user lookup failed: " +
+          error.message
+        );
+
+      }
+
+
+      return {
+
+        userId:
+          "",
+
+        name:
+          "",
+
+        email:
+          email
+
+      };
+
+    }
+
+  } catch (error) {
+
+    Logger.log(
+      "Unable to resolve active user: " +
+      error.message
+    );
+
+  }
+
+
+  return {
+
+    userId:
+      "",
+
+    name:
+      "",
+
+    email:
+      "SYSTEM"
+
+  };
+
+}
+
+
+/************************************************
+ * SERIALIZE AUDIT DATA
+ ************************************************/
+
+function serializeAuditData(
+  value
+) {
+
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+
+    return "";
+
+  }
+
+
+  let output;
+
+
+  try {
+
+    if (
+      typeof value === "string"
+    ) {
+
+      output =
+        value;
+
+    } else {
+
+      output =
+        JSON.stringify(
+          value
+        );
+
+    }
+
+  } catch (error) {
+
+    output =
+      String(
+        value
+      );
+
+  }
+
+
+  return truncateAuditText(
+    output
+  );
+
+}
+
+
+/************************************************
+ * TEXT HELPERS
+ ************************************************/
+
+function cleanAuditText(
+  value
+) {
+
+  if (
+    value === undefined ||
+    value === null
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(
+    value
+  ).trim();
+
+}
+
+
+function truncateAuditText(
+  value
+) {
+
+  const text =
+    cleanAuditText(
+      value
+    );
+
+
+  if (
+    text.length <=
+    MAIRIX_AUDIT.MAX_TEXT_LENGTH
+  ) {
+
+    return text;
+
+  }
+
+
+  return (
+    text.substring(
+      0,
+      MAIRIX_AUDIT.MAX_TEXT_LENGTH
+    ) +
+    "...[TRUNCATED]"
+  );
+
+}
+
+
+/************************************************
+ * SEARCH AUDIT TRAIL BY REFERENCE
+ *
+ * Used by reports and Reference Viewer.
+ ************************************************/
+
+function getAuditTrailByReference(
+  reference
+) {
+
+  const normalizedReference =
+    cleanAuditText(
+      reference
+    ).toUpperCase();
+
+
+  if (
+    !normalizedReference
+  ) {
+
+    throw new Error(
+      "Reference is required."
+    );
+
+  }
+
+
+  const sheet =
+    ensureAuditTrailSheet();
+
+
+  const rows =
+    readAuditObjects(
+      sheet
+    );
+
+
+  return rows.filter(
+    function(row) {
+
+      return cleanAuditText(
+        row["Reference"]
+      ).toUpperCase() ===
+      normalizedReference;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * SEARCH AUDIT TRAIL BY USER
+ ************************************************/
+
+function getAuditTrailByUser(
+  userId
+) {
+
+  const normalizedUserId =
+    cleanAuditText(
+      userId
+    );
+
+
+  if (
+    !normalizedUserId
+  ) {
+
+    throw new Error(
+      "User ID is required."
+    );
+
+  }
+
+
+  const sheet =
+    ensureAuditTrailSheet();
+
+
+  const rows =
+    readAuditObjects(
+      sheet
+    );
+
+
+  return rows.filter(
+    function(row) {
+
+      return cleanAuditText(
+        row["User ID"]
+      ) ===
+      normalizedUserId;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * SEARCH AUDIT TRAIL BY MODULE
+ ************************************************/
+
+function getAuditTrailByModule(
+  module
+) {
+
+  const normalizedModule =
+    cleanAuditText(
+      module
+    ).toUpperCase();
+
+
+  if (
+    !normalizedModule
+  ) {
+
+    throw new Error(
+      "Module is required."
+    );
+
+  }
+
+
+  const sheet =
+    ensureAuditTrailSheet();
+
+
+  const rows =
+    readAuditObjects(
+      sheet
+    );
+
+
+  return rows.filter(
+    function(row) {
+
+      return cleanAuditText(
+        row["Module"]
+      ).toUpperCase() ===
+      normalizedModule;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * SEARCH AUDIT TRAIL BY DATE RANGE
+ ************************************************/
+
+function getAuditTrailByDateRange(
+  startDate,
+  endDate
+) {
+
+  if (
+    !startDate ||
+    !endDate
+  ) {
+
+    throw new Error(
+      "Start date and end date are required."
+    );
+
+  }
+
+
+  const start =
+    new Date(
+      startDate
+    );
+
+
+  const end =
+    new Date(
+      endDate
+    );
+
+
+  if (
+    isNaN(start.getTime()) ||
+    isNaN(end.getTime())
+  ) {
+
+    throw new Error(
+      "Invalid audit date range."
+    );
+
+  }
+
+
+  /*
+   * Include the complete end date.
+   */
+
+  end.setHours(
+    23,
+    59,
+    59,
+    999
+  );
+
+
+  const sheet =
+    ensureAuditTrailSheet();
+
+
+  const rows =
+    readAuditObjects(
+      sheet
+    );
+
+
+  return rows.filter(
+    function(row) {
+
+      const timestamp =
+        new Date(
+          row["Timestamp"]
+        );
+
+
+      if (
+        isNaN(
+          timestamp.getTime()
+        )
+      ) {
+
+        return false;
+
+      }
+
+
+      return (
+        timestamp >= start &&
+        timestamp <= end
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * READ AUDIT OBJECTS
+ ************************************************/
+
+function readAuditObjects(
+  sheet
+) {
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  return values.map(
+    function(row) {
+
+      const object = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          const key =
+            cleanAuditText(
+              header
+            );
+
+
+          if (!key) {
+            return;
+          }
+
+
+          object[key] =
+            row[index];
+
+        }
+      );
+
+
+      return object;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * FORMAT AUDIT TRAIL
+ ************************************************/
+
+function formatAuditTrail() {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        MAIRIX_AUDIT.SHEET_NAME
+      );
+
+
+  if (!sheet) {
+    return;
+  }
+
+
+  sheet.setFrozenRows(1);
+
+
+  const lastColumn =
+    Math.max(
+      sheet.getLastColumn(),
+      MAIRIX_AUDIT.HEADERS.length
+    );
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      lastColumn
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+
+  /*
+   * Timestamp formatting.
+   */
+
+  if (
+    sheet.getLastRow() >= 2
+  ) {
+
+    const timestampColumn =
+      MAIRIX_AUDIT.HEADERS
+        .indexOf(
+          "Timestamp"
+        ) + 1;
+
+
+    sheet
+      .getRange(
+        2,
+        timestampColumn,
+        sheet.getLastRow() - 1,
+        1
+      )
+      .setNumberFormat(
+        "yyyy-mm-dd hh:mm:ss"
+      );
+
+  }
+
+
+  /*
+   * Add filter if possible.
+   */
+
+  if (
+    sheet.getFilter()
+  ) {
+
+    sheet
+      .getFilter()
+      .remove();
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 1
+  ) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        lastRow,
+        lastColumn
+      )
+      .createFilter();
+
+  }
+
+
+  sheet.autoResizeColumns(
+    1,
+    lastColumn
+  );
+
+}
+
+
+/************************************************
+ * TEST AUDIT TRAIL
+ ************************************************/
+
+function testAuditTrail() {
+
+  const result =
+    writeAuditTrail({
+
+      module:
+        "TEST",
+
+      action:
+        "AUDIT_TEST",
+
+      result:
+        "SUCCESS",
+
+      reference:
+        "TEST-REF-001",
+
+      transactionId:
+        "TEST-TXN-001",
+
+      documentNo:
+        "TEST-DOC-001",
+
+      entityType:
+        "TEST",
+
+      entityId:
+        "TEST-001",
+
+      description:
+        "MAIRIX Audit Trail test record.",
+
+      beforeData:
+        {
+          status:
+            "NEW"
+        },
+
+      afterData:
+        {
+          status:
+            "TESTED"
+        },
+
+      source:
+        "AUDIT_TEST"
+
+    });
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "AUDIT TRAIL TEST FAILED."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  Logger.log(
+    "MAIRIX AUDIT TRAIL TEST: PASS"
+  );
+
+
+  Logger.log(
+    "Audit ID: " +
+    result.auditId
+  );
+
+
+  Logger.log(
+    "Reference: " +
+    result.reference
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST REFERENCE AUDIT SEARCH
+ ************************************************/
+
+function testAuditTrailReferenceSearch() {
+
+  const reference =
+    "TEST-REF-001";
+
+
+  const results =
+    getAuditTrailByReference(
+      reference
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      results,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !results.length
+  ) {
+
+    throw new Error(
+      "No audit records found for test reference."
+    );
+
+  }
+
+
+  Logger.log(
+    "AUDIT REFERENCE SEARCH: PASS"
+  );
+
+}

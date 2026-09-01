@@ -1,0 +1,1203 @@
+/************************************************
+ * MAIRIX ERP
+ *
+ * FILE:
+ * 56-MAIRIX_TransactionAuthorization.gs
+ *
+ * PURPOSE:
+ *
+ * CENTRAL TRANSACTION AUTHORIZATION CONTRACT.
+ *
+ * This file DOES NOT replace:
+ *
+ * - Access Control Runtime
+ * - Business Transaction Engines
+ * - Inventory Engine
+ * - Financial Engines
+ * - Tax Engine
+ * - Rollback Engine
+ *
+ * It provides ONE consistent authorization gateway
+ * for transaction entry points.
+ *
+ *
+ * AUTHORITY CHAIN:
+ *
+ * Authenticated User
+ *       ↓
+ * Active User / Employee / Role
+ *       ↓
+ * Permission
+ *       ↓
+ * Warehouse Authorization
+ *       ↓
+ * Business Engine
+ *
+ *
+ * IMPORTANT:
+ *
+ * 1. Never trust UI userId.
+ * 2. Current authenticated user is server-side.
+ * 3. Permission is checked server-side.
+ * 4. Warehouse access is checked server-side.
+ * 5. Salesman identity is resolved server-side.
+ * 6. This layer does NOT execute transactions.
+ * 7. This layer does NOT write business data.
+ * 8. Existing MAIRIX runtime remains authoritative.
+ ************************************************/
+
+
+/************************************************
+ * TRANSACTION AUTHORIZATION CONFIG
+ ************************************************/
+
+const MAIRIX_TRANSACTION_AUTH = {
+
+  VERSION:
+    "1.0",
+
+  ACTIONS: {
+
+    CREATE:
+      "CREATE",
+
+    VIEW:
+      "VIEW",
+
+    EDIT:
+      "EDIT",
+
+    DELETE:
+      "DELETE"
+
+  },
+
+
+  PERMISSIONS: {
+
+    SALES:
+      "SALES",
+
+    SALES_RETURNS:
+      "SALES_RETURNS_CREATE",
+
+    PURCHASES:
+      "PURCHASES_CREATE",
+
+    PURCHASE_RETURNS:
+      "PURCHASE_RETURNS_CREATE",
+
+    COLLECTIONS:
+      "COLLECTIONS_CREATE",
+
+    VENDOR_PAYMENTS:
+      "VENDOR_PAYMENTS_CREATE",
+
+    EXPENSES:
+      "EXPENSES_CREATE"
+
+  }
+
+};
+
+
+/************************************************
+ * CURRENT AUTHENTICATED USER
+ *
+ * IMPORTANT:
+ *
+ * This function deliberately does NOT accept
+ * a userId from the caller.
+ *
+ * The existing MAIRIX authentication/runtime
+ * is the source of truth.
+ ************************************************/
+
+function mairixTransactionAuthCurrentUser() {
+
+  if (
+    typeof mairixApiContext ===
+    "function"
+  ) {
+
+    const context =
+      mairixApiContext();
+
+
+    if (
+      !context ||
+      !context.userId
+    ) {
+
+      throw new Error(
+        "Authenticated MAIRIX user context is unavailable."
+      );
+
+    }
+
+
+    return context;
+
+  }
+
+
+  if (
+    typeof requireCurrentUser ===
+    "function"
+  ) {
+
+    const user =
+      requireCurrentUser();
+
+
+    if (
+      !user ||
+      !user.userId
+    ) {
+
+      throw new Error(
+        "Authenticated MAIRIX user is unavailable."
+      );
+
+    }
+
+
+    return user;
+
+  }
+
+
+  throw new Error(
+    "MAIRIX authenticated-user runtime is unavailable."
+  );
+
+}
+
+
+/************************************************
+ * NORMALIZE TRANSACTION TYPE
+ ************************************************/
+
+function mairixTransactionAuthNormalizeType(
+  transactionType
+) {
+
+  const value =
+    String(
+      transactionType ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+
+  if (!value) {
+
+    throw new Error(
+      "Transaction type is required."
+    );
+
+  }
+
+
+  return value;
+
+}
+
+
+/************************************************
+ * NORMALIZE ACTION
+ ************************************************/
+
+function mairixTransactionAuthNormalizeAction(
+  action
+) {
+
+  const value =
+    String(
+      action ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+
+  if (
+    value !==
+      MAIRIX_TRANSACTION_AUTH
+        .ACTIONS
+        .CREATE &&
+
+    value !==
+      MAIRIX_TRANSACTION_AUTH
+        .ACTIONS
+        .VIEW &&
+
+    value !==
+      MAIRIX_TRANSACTION_AUTH
+        .ACTIONS
+        .EDIT &&
+
+    value !==
+      MAIRIX_TRANSACTION_AUTH
+        .ACTIONS
+        .DELETE
+  ) {
+
+    throw new Error(
+      "Invalid transaction authorization action: " +
+      action
+    );
+
+  }
+
+
+  return value;
+
+}
+
+
+/************************************************
+ * TRANSACTION TYPE → PERMISSION
+ *
+ * CENTRAL MAP
+ *
+ * No business logic belongs here.
+ ************************************************/
+
+function mairixTransactionAuthPermissionForType(
+  transactionType
+) {
+
+  const type =
+    mairixTransactionAuthNormalizeType(
+      transactionType
+    );
+
+
+  const map = {
+
+    SALE:
+      MAIRIX_TRANSACTION_AUTH
+        .PERMISSIONS
+        .SALES,
+
+    SALES_RETURN:
+      MAIRIX_TRANSACTION_AUTH
+        .PERMISSIONS
+        .SALES_RETURNS,
+
+    PURCHASE:
+      MAIRIX_TRANSACTION_AUTH
+        .PERMISSIONS
+        .PURCHASES,
+
+    PURCHASE_RETURN:
+      MAIRIX_TRANSACTION_AUTH
+        .PERMISSIONS
+        .PURCHASE_RETURNS,
+
+    COLLECTION:
+      MAIRIX_TRANSACTION_AUTH
+        .PERMISSIONS
+        .COLLECTIONS,
+
+    VENDOR_PAYMENT:
+      MAIRIX_TRANSACTION_AUTH
+        .PERMISSIONS
+        .VENDOR_PAYMENTS,
+
+    EXPENSE:
+      MAIRIX_TRANSACTION_AUTH
+        .PERMISSIONS
+        .EXPENSES
+
+  };
+
+
+  const permission =
+    map[type];
+
+
+  if (!permission) {
+
+    throw new Error(
+      "No transaction permission mapping exists for: " +
+      type
+    );
+
+  }
+
+
+  return permission;
+
+}
+
+
+/************************************************
+ * RECORD AUTHORIZATION REJECTION
+ *
+ * Uses the existing runtime rejection audit
+ * when available.
+ *
+ * This function does NOT create a parallel
+ * audit system.
+ ************************************************/
+
+function mairixTransactionAuthRecordRejection(
+  userId,
+  transactionType,
+  reason
+) {
+
+  try {
+
+    if (
+      typeof mairixRuntimeRecordRejection ===
+      "function"
+    ) {
+
+      mairixRuntimeRecordRejection(
+        userId,
+        "TRANSACTION_AUTHORIZATION",
+        transactionType +
+        " :: " +
+        reason
+      );
+
+    }
+
+  } catch (
+    auditError
+  ) {
+
+    Logger.log(
+      "Transaction authorization rejection audit failed: " +
+      auditError.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * REQUIRE TRANSACTION AUTHORIZATION
+ *
+ * MAIN CONTRACT
+ *
+ * Checks:
+ *
+ * 1. Authenticated user
+ * 2. Permission
+ * 3. Warehouse access when supplied
+ *
+ * Does NOT execute the transaction.
+ ************************************************/
+
+function mairixRequireTransactionAuthorization(
+  transactionType,
+  action,
+  warehouseCode
+) {
+
+  const normalizedType =
+    mairixTransactionAuthNormalizeType(
+      transactionType
+    );
+
+
+  const normalizedAction =
+    mairixTransactionAuthNormalizeAction(
+      action
+    );
+
+
+  const permissionCode =
+    mairixTransactionAuthPermissionForType(
+      normalizedType
+    );
+
+
+  const context =
+    mairixTransactionAuthCurrentUser();
+
+
+  const userId =
+    String(
+      context.userId ||
+      ""
+    )
+      .trim();
+
+
+  if (!userId) {
+
+    throw new Error(
+      "Authenticated user ID is unavailable."
+    );
+
+  }
+
+
+  const normalizedWarehouse =
+    warehouseCode === null ||
+    warehouseCode === undefined
+      ? ""
+      : String(
+          warehouseCode
+        )
+          .trim();
+
+
+  try {
+
+    /*
+     * Preferred central runtime.
+     *
+     * This performs:
+     *
+     * Active User validation
+     * Permission validation
+     * Warehouse validation
+     */
+
+    if (
+      typeof mairixRuntimeRequireTransactionAccess ===
+      "function"
+    ) {
+
+      mairixRuntimeRequireTransactionAccess(
+        userId,
+        permissionCode,
+        normalizedAction,
+        normalizedWarehouse
+      );
+
+    } else {
+
+      /*
+       * Compatibility path.
+       *
+       * Only used if the central transaction
+       * runtime is unavailable.
+       *
+       * This does NOT silently allow access.
+       */
+
+      if (
+        typeof mairixRuntimeRequirePermission !==
+        "function"
+      ) {
+
+        throw new Error(
+          "MAIRIX transaction authorization runtime is unavailable."
+        );
+
+      }
+
+
+      mairixRuntimeRequirePermission(
+        userId,
+        permissionCode,
+        normalizedAction
+      );
+
+
+      if (
+        normalizedWarehouse &&
+        typeof mairixRuntimeRequireWarehouseAccess ===
+        "function"
+      ) {
+
+        mairixRuntimeRequireWarehouseAccess(
+          userId,
+          normalizedWarehouse,
+          normalizedAction
+        );
+
+      } else if (
+        normalizedWarehouse
+      ) {
+
+        throw new Error(
+          "MAIRIX warehouse authorization runtime is unavailable."
+        );
+
+      }
+
+    }
+
+
+    return {
+
+      authorized:
+        true,
+
+      userId:
+        userId,
+
+      transactionType:
+        normalizedType,
+
+      action:
+        normalizedAction,
+
+      permissionCode:
+        permissionCode,
+
+      warehouseCode:
+        normalizedWarehouse || null
+
+    };
+
+  } catch (
+    error
+  ) {
+
+    mairixTransactionAuthRecordRejection(
+      userId,
+      normalizedType,
+      error.message ||
+      String(error)
+    );
+
+
+    throw error;
+
+  }
+
+}
+
+
+/************************************************
+ * CREATE TRANSACTION AUTHORIZATION
+ *
+ * Convenience wrapper.
+ ************************************************/
+
+function mairixRequireTransactionCreateAuthorization(
+  transactionType,
+  warehouseCode
+) {
+
+  return mairixRequireTransactionAuthorization(
+    transactionType,
+    MAIRIX_TRANSACTION_AUTH
+      .ACTIONS
+      .CREATE,
+    warehouseCode
+  );
+
+}
+
+
+/************************************************
+ * SALE AUTHORIZATION
+ ************************************************/
+
+function mairixRequireSaleAuthorization(
+  warehouseCode
+) {
+
+  return mairixRequireTransactionCreateAuthorization(
+    "SALE",
+    warehouseCode
+  );
+
+}
+
+
+/************************************************
+ * SALES RETURN AUTHORIZATION
+ ************************************************/
+
+function mairixRequireSalesReturnAuthorization(
+  warehouseCode
+) {
+
+  return mairixRequireTransactionCreateAuthorization(
+    "SALES_RETURN",
+    warehouseCode
+  );
+
+}
+
+
+/************************************************
+ * PURCHASE AUTHORIZATION
+ ************************************************/
+
+function mairixRequirePurchaseAuthorization(
+  warehouseCode
+) {
+
+  return mairixRequireTransactionCreateAuthorization(
+    "PURCHASE",
+    warehouseCode
+  );
+
+}
+
+
+/************************************************
+ * PURCHASE RETURN AUTHORIZATION
+ ************************************************/
+
+function mairixRequirePurchaseReturnAuthorization(
+  warehouseCode
+) {
+
+  return mairixRequireTransactionCreateAuthorization(
+    "PURCHASE_RETURN",
+    warehouseCode
+  );
+
+}
+
+
+/************************************************
+ * COLLECTION AUTHORIZATION
+ ************************************************/
+
+function mairixRequireCollectionAuthorization() {
+
+  return mairixRequireTransactionCreateAuthorization(
+    "COLLECTION"
+  );
+
+}
+
+
+/************************************************
+ * VENDOR PAYMENT AUTHORIZATION
+ ************************************************/
+
+function mairixRequireVendorPaymentAuthorization() {
+
+  return mairixRequireTransactionCreateAuthorization(
+    "VENDOR_PAYMENT"
+  );
+
+}
+
+
+/************************************************
+ * EXPENSE AUTHORIZATION
+ ************************************************/
+
+function mairixRequireExpenseAuthorization() {
+
+  return mairixRequireTransactionCreateAuthorization(
+    "EXPENSE"
+  );
+
+}
+
+
+/************************************************
+ * SALESMAN CONSISTENCY
+ *
+ * IMPORTANT:
+ *
+ * A salesman code supplied by the UI is NOT
+ * an authentication identity.
+ *
+ * For salesman users, the runtime must resolve
+ * the authenticated salesman profile.
+ ************************************************/
+
+function mairixValidateSalesmanForTransaction(
+  salesmanCode
+) {
+
+  const requestedCode =
+    String(
+      salesmanCode ||
+      ""
+    )
+      .trim();
+
+
+  if (!requestedCode) {
+
+    throw new Error(
+      "Salesman Code is required."
+    );
+
+  }
+
+
+  const context =
+    mairixTransactionAuthCurrentUser();
+
+
+  const userId =
+    context.userId;
+
+
+  if (
+    typeof mairixRuntimeGetSalesmanForUser !==
+    "function"
+  ) {
+
+    /*
+     * Do not silently trust the submitted
+     * salesman code.
+     */
+
+    throw new Error(
+      "Salesman authorization runtime is unavailable."
+    );
+
+  }
+
+
+  const salesman =
+    mairixRuntimeGetSalesmanForUser(
+      userId
+    );
+
+
+  if (!salesman) {
+
+    throw new Error(
+      "Authenticated user is not linked to an active salesman profile."
+    );
+
+  }
+
+
+  const resolvedCode =
+    String(
+      salesman["Salesman Code"] ||
+      ""
+    )
+      .trim();
+
+
+  if (
+    resolvedCode !==
+    requestedCode
+  ) {
+
+    mairixTransactionAuthRecordRejection(
+      userId,
+      "SALE",
+      "SALESMAN_MISMATCH: " +
+      requestedCode +
+      " != " +
+      resolvedCode
+    );
+
+
+    throw new Error(
+      "Salesman does not match the authenticated user."
+    );
+
+  }
+
+
+  return salesman;
+
+}
+
+
+/************************************************
+ * BUILD AUTHORIZED TRANSACTION CONTEXT
+ *
+ * This creates a server-side context object
+ * that can be passed to the business layer.
+ *
+ * No client identity is copied into it.
+ ************************************************/
+
+function mairixBuildAuthorizedTransactionContext(
+  transactionType,
+  action,
+  warehouseCode
+) {
+
+  const authorization =
+    mairixRequireTransactionAuthorization(
+      transactionType,
+      action,
+      warehouseCode
+    );
+
+
+  const context =
+    mairixTransactionAuthCurrentUser();
+
+
+  return {
+
+    authorized:
+      true,
+
+    userId:
+      context.userId,
+
+    email:
+      context.email ||
+      "",
+
+    name:
+      context.name ||
+      "",
+
+    role:
+      context.role ||
+      "",
+
+    transactionType:
+      authorization.transactionType,
+
+    action:
+      authorization.action,
+
+    permissionCode:
+      authorization.permissionCode,
+
+    warehouseCode:
+      authorization.warehouseCode
+
+  };
+
+}
+
+
+/************************************************
+ * SANITIZE TRANSACTION REQUEST
+ *
+ * SECURITY RULE:
+ *
+ * UI supplied identity fields are removed.
+ *
+ * The caller may still submit:
+ *
+ * - customerCode
+ * - salesmanCode
+ * - warehouseCode
+ * - paymentMethod
+ * - items
+ * - notes
+ *
+ * But user identity is always server-owned.
+ ************************************************/
+
+function mairixSanitizeTransactionRequest(
+  data,
+  transactionContext
+) {
+
+  const request =
+    Object.assign(
+      {},
+      data || {}
+    );
+
+
+  /*
+   * Remove client-controlled identity.
+   */
+
+  delete request.userId;
+
+  delete request.serverUserId;
+
+  delete request.user;
+
+  delete request.role;
+
+  delete request.email;
+
+  delete request.userEmail;
+
+  delete request.userName;
+
+  delete request.createdBy;
+
+  delete request.updatedBy;
+
+
+  /*
+   * Server-owned identity.
+   */
+
+  request.serverUserId =
+    transactionContext.userId;
+
+
+  request.serverUserEmail =
+    transactionContext.email;
+
+
+  request.serverUserName =
+    transactionContext.name;
+
+
+  return request;
+
+}
+
+
+/************************************************
+ * ASSERT AUTHORIZED CONTEXT
+ *
+ * Business engines may use this before
+ * executing protected work.
+ ************************************************/
+
+function mairixAssertAuthorizedTransactionContext(
+  transactionContext,
+  expectedTransactionType
+) {
+
+  if (
+    !transactionContext ||
+    transactionContext.authorized !== true
+  ) {
+
+    throw new Error(
+      "Unauthorized transaction context."
+    );
+
+  }
+
+
+  if (
+    !transactionContext.userId
+  ) {
+
+    throw new Error(
+      "Authorized transaction context is missing user ID."
+    );
+
+  }
+
+
+  if (
+    expectedTransactionType
+  ) {
+
+    const expected =
+      mairixTransactionAuthNormalizeType(
+        expectedTransactionType
+      );
+
+
+    if (
+      transactionContext.transactionType !==
+      expected
+    ) {
+
+      throw new Error(
+        "Transaction type mismatch."
+      );
+
+    }
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * TRANSACTION AUTHORIZATION HEALTH CHECK
+ *
+ * Structural only.
+ *
+ * Does NOT create transactions.
+ ************************************************/
+
+function testMairixTransactionAuthorizationContract() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TRANSACTION AUTHORIZATION CONTRACT TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const requiredFunctions = [
+
+    "mairixTransactionAuthCurrentUser",
+
+    "mairixTransactionAuthPermissionForType",
+
+    "mairixRequireTransactionAuthorization",
+
+    "mairixRequireTransactionCreateAuthorization",
+
+    "mairixRequireSaleAuthorization",
+
+    "mairixRequireSalesReturnAuthorization",
+
+    "mairixRequirePurchaseAuthorization",
+
+    "mairixRequirePurchaseReturnAuthorization",
+
+    "mairixRequireCollectionAuthorization",
+
+    "mairixRequireVendorPaymentAuthorization",
+
+    "mairixRequireExpenseAuthorization",
+
+    "mairixBuildAuthorizedTransactionContext",
+
+    "mairixSanitizeTransactionRequest",
+
+    "mairixAssertAuthorizedTransactionContext"
+
+  ];
+
+
+  requiredFunctions.forEach(
+    function(functionName) {
+
+      if (
+        typeof globalThis[
+          functionName
+        ] !==
+        "function"
+      ) {
+
+        throw new Error(
+          "Required transaction authorization function missing: " +
+          functionName
+        );
+
+      }
+
+    }
+  );
+
+
+  /*
+   * Verify central permission mappings.
+   */
+
+  const expectedMappings = {
+
+    SALE:
+      "SALES",
+
+    SALES_RETURN:
+      "SALES_RETURNS_CREATE",
+
+    PURCHASE:
+      "PURCHASES_CREATE",
+
+    PURCHASE_RETURN:
+      "PURCHASE_RETURNS_CREATE",
+
+    COLLECTION:
+      "COLLECTIONS_CREATE",
+
+    VENDOR_PAYMENT:
+      "VENDOR_PAYMENTS_CREATE",
+
+    EXPENSE:
+      "EXPENSES_CREATE"
+
+  };
+
+
+  Object.keys(
+    expectedMappings
+  )
+    .forEach(
+      function(transactionType) {
+
+        const actual =
+          mairixTransactionAuthPermissionForType(
+            transactionType
+          );
+
+
+        if (
+          actual !==
+          expectedMappings[
+            transactionType
+          ]
+        ) {
+
+          throw new Error(
+            "Invalid permission mapping for " +
+            transactionType +
+            ": expected " +
+            expectedMappings[
+              transactionType
+            ] +
+            ", received " +
+            actual
+          );
+
+        }
+
+      }
+    );
+
+
+  /*
+   * Ensure invalid transaction types
+   * cannot silently pass.
+   */
+
+  let rejected =
+    false;
+
+
+  try {
+
+    mairixTransactionAuthPermissionForType(
+      "UNKNOWN_TRANSACTION"
+    );
+
+  } catch (
+    error
+  ) {
+
+    rejected =
+      true;
+
+  }
+
+
+  if (
+    !rejected
+  ) {
+
+    throw new Error(
+      "Unknown transaction type was not rejected."
+    );
+
+  }
+
+
+  Logger.log(
+    "TRANSACTION AUTHORIZATION CONTRACT TEST: PASS"
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    message:
+      "Transaction authorization contract passed structural verification."
+
+  };
+
+}

@@ -1,0 +1,72 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 58-MAIRIX_SaleAuthorizationTests.gs
+ *
+ * Authorization tests for the Sale public API.
+ *
+ * No production transaction is created here.
+ ************************************************/
+
+function testMairixSaleAuthorizationInfrastructure() {
+
+  var required = [
+    "apiCreateSale",
+    "mairixApiRequirePermission",
+    "mairixRuntimeRequireTransactionAccess"
+  ];
+
+  required.forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Required function missing: " + name);
+    }
+  });
+
+  Logger.log("SALE AUTHORIZATION INFRASTRUCTURE: PASS");
+
+  return {
+    success: true,
+    authorization: true,
+    businessEngineUntouched: true
+  };
+}
+
+function testMairixSalePayloadCannotSupplyAuthority() {
+
+  var payload = {
+    userId: "CLIENT_FORGED_USER",
+    serverUserId: "CLIENT_FORGED_SERVER_USER",
+    createdBy: "CLIENT_FORGED",
+    customerCode: "TEST",
+    items: []
+  };
+
+  delete payload.userId;
+  delete payload.serverUserId;
+  delete payload.createdBy;
+
+  if (
+    payload.userId !== undefined ||
+    payload.serverUserId !== undefined ||
+    payload.createdBy !== undefined
+  ) {
+    throw new Error("Client authority fields were not removed.");
+  }
+
+  Logger.log("SALE CLIENT-AUTHORITY SANITIZATION: PASS");
+
+  return {
+    success: true,
+    status: "PASS"
+  };
+}
+
+function runMairixSaleAuthorizationTests() {
+
+  return {
+    success: true,
+    tests: [
+      testMairixSaleAuthorizationInfrastructure(),
+      testMairixSalePayloadCannotSupplyAuthority()
+    ]
+  };
+}

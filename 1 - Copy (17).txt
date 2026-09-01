@@ -1,0 +1,4889 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE 29 — MAIRIX SETTINGS ENGINE
+ *
+ * RESPONSIBILITIES:
+ *
+ *   1. Manage runtime SETTINGS.
+ *   2. Maintain SETTINGS_OPTIONS.
+ *   3. Validate setting keys and values.
+ *   4. Provide defaults without duplicating CONFIG.
+ *   5. Support typed settings.
+ *   6. Support editable / protected settings.
+ *   7. Audit setting changes.
+ *   8. Keep compatibility with:
+ *
+ *        getMairixSetting()
+ *        setMairixSetting()
+ *
+ *   9. Runtime policy belongs here.
+ *  10. Static system configuration belongs in
+ *      1-MAIRIX CONFIG.gs.
+ *
+ * IMPORTANT:
+ *
+ * This file does NOT redefine:
+ *
+ *   MAIRIX
+ *   mairixCleanText()
+ *   getMairixSetting()
+ *   setMairixSetting()
+ *   getMairixSettingsSheet()
+ *
+ ************************************************/
+
+
+/************************************************
+ * SETTINGS SHEETS
+ ************************************************/
+
+const MAIRIX_SETTINGS = {
+
+  SETTINGS_SHEET:
+    "SETTINGS",
+
+  OPTIONS_SHEET:
+    "SETTINGS_OPTIONS",
+
+  STATUS_ACTIVE:
+    "ACTIVE",
+
+  STATUS_INACTIVE:
+    "INACTIVE"
+
+};
+
+
+/************************************************
+ * SETTINGS HEADERS
+ *
+ * SETTINGS:
+ *
+ * A = KEY
+ * B = VALUE
+ * C = TYPE
+ * D = CATEGORY
+ * E = DEFAULT VALUE
+ * F = EDITABLE
+ * G = DESCRIPTION
+ * H = STATUS
+ * I = UPDATED BY
+ * J = UPDATED AT
+ *
+ *
+ * SETTINGS_OPTIONS:
+ *
+ * A = KEY
+ * B = OPTION VALUE
+ * C = LABEL
+ * D = SORT ORDER
+ * E = ACTIVE
+ ************************************************/
+
+const MAIRIX_SETTINGS_HEADERS = [
+
+  "KEY",
+  "VALUE",
+  "TYPE",
+  "CATEGORY",
+  "DEFAULT VALUE",
+  "EDITABLE",
+  "DESCRIPTION",
+  "STATUS",
+  "UPDATED BY",
+  "UPDATED AT"
+
+];
+
+
+const MAIRIX_SETTINGS_OPTION_HEADERS = [
+
+  "KEY",
+  "OPTION VALUE",
+  "LABEL",
+  "SORT ORDER",
+  "ACTIVE"
+
+];
+
+
+/************************************************
+ * SETUP
+ ************************************************/
+
+function setupMairixSettings() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  if (!ss) {
+
+    throw new Error(
+      "Active spreadsheet is not available."
+    );
+
+  }
+
+
+  const settingsSheet =
+    mairixSettingsGetOrCreateSheet(
+      ss,
+      MAIRIX_SETTINGS.SETTINGS_SHEET
+    );
+
+
+  const optionsSheet =
+    mairixSettingsGetOrCreateSheet(
+      ss,
+      MAIRIX_SETTINGS.OPTIONS_SHEET
+    );
+
+
+  mairixSettingsEnsureHeaders(
+    settingsSheet,
+    MAIRIX_SETTINGS_HEADERS
+  );
+
+
+  mairixSettingsEnsureHeaders(
+    optionsSheet,
+    MAIRIX_SETTINGS_OPTION_HEADERS
+  );
+
+
+  settingsSheet.setFrozenRows(1);
+  optionsSheet.setFrozenRows(1);
+
+
+  mairixSettingsApplyFormatting(
+    settingsSheet,
+    optionsSheet
+  );
+
+
+  mairixSettingsSeedDefaults();
+
+  mairixSettingsSeedDefaultOptions();
+
+  /************************************************
+   * SEED DEFAULT SETTINGS OPTIONS
+   ************************************************/
+
+  function mairixSettingsSeedDefaultOptions() {
+
+    const sheet =
+      mairixSettingsGetOptionsSheet();
+
+    const definitions =
+      mairixGetDefaultSettingsOptions();
+
+    const existingRows =
+      mairixSettingsGetAllOptionRows();
+
+    definitions.forEach(
+      function(definition) {
+
+        const exists =
+          existingRows.some(
+            function(row) {
+
+              return (
+                mairixCleanText(row.key)
+                  .toUpperCase() ===
+                mairixCleanText(definition.key)
+                  .toUpperCase()
+                &&
+                String(row.value) ===
+                String(definition.value)
+              );
+
+            }
+          );
+
+        if (exists) {
+          return;
+        }
+
+        sheet.appendRow([
+          definition.key,
+          definition.value,
+          definition.label,
+          definition.sortOrder,
+          definition.active
+        ]);
+
+      }
+    );
+
+  }
+
+
+  /************************************************
+   * GET ALL SETTINGS OPTIONS
+   ************************************************/
+
+  function mairixSettingsGetAllOptionRows() {
+
+    const sheet =
+      mairixSettingsGetOptionsSheet();
+
+    const lastRow =
+      sheet.getLastRow();
+
+    if (lastRow < 2) {
+      return [];
+    }
+
+    const values =
+      sheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          5
+        )
+        .getValues();
+
+    return values.map(
+      function(row) {
+
+        return {
+          key: row[0],
+          value: row[1],
+          label: row[2],
+          sortOrder: row[3],
+          active: row[4]
+        };
+
+      }
+    );
+
+  }
+
+  return {
+
+    success:
+      true,
+
+    settingsSheet:
+      MAIRIX_SETTINGS.SETTINGS_SHEET,
+
+    optionsSheet:
+      MAIRIX_SETTINGS.OPTIONS_SHEET
+
+  };
+
+}
+
+
+/************************************************
+ * DEFAULT SETTINGS REGISTRY
+ *
+ * IMPORTANT:
+ *
+ * These are RUNTIME settings only.
+ *
+ * Static constants remain in MAIRIX CONFIG.
+ ************************************************/
+
+function mairixGetDefaultSettings() {
+
+  return [
+
+    {
+      key:
+        "SYSTEM_NAME",
+
+      type:
+        "TEXT",
+
+      category:
+        "SYSTEM",
+
+      defaultValue:
+        MAIRIX.SYSTEM_NAME,
+
+      editable:
+        false,
+
+      description:
+        "MAIRIX system name."
+    },
+
+
+    {
+      key:
+        "PROJECT_NAME",
+
+      type:
+        "TEXT",
+
+      category:
+        "SYSTEM",
+
+      defaultValue:
+        MAIRIX.PROJECT_NAME,
+
+      editable:
+        true,
+
+      description:
+        "Displayed ERP project name."
+    },
+
+
+    {
+      key:
+        "DEFAULT_LANGUAGE",
+
+      type:
+        "TEXT",
+
+      category:
+        "SYSTEM",
+
+      defaultValue:
+        MAIRIX.DEFAULT_LANGUAGE,
+
+      editable:
+        true,
+
+      description:
+        "Default application language."
+    },
+
+
+    {
+      key:
+        "TIMEZONE",
+
+      type:
+        "TEXT",
+
+      category:
+        "SYSTEM",
+
+      defaultValue:
+        "",
+
+      editable:
+        true,
+
+      description:
+        "Runtime timezone. Empty means spreadsheet timezone."
+    },
+
+
+    {
+      key:
+        "REPORTING_CURRENCY",
+
+      type:
+        "TEXT",
+
+      category:
+        "ACCOUNTING",
+
+      defaultValue:
+        MAIRIX.ACCOUNTING.REPORTING_CURRENCY,
+
+      editable:
+        true,
+
+      description:
+        "Currency used by management reports."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COST_METHOD",
+
+      type:
+        "TEXT",
+
+      category:
+        "ACCOUNTING",
+
+      defaultValue:
+        MAIRIX.ACCOUNTING.INVENTORY_COST_METHOD,
+
+      editable:
+        false,
+
+      description:
+        "Inventory valuation method."
+    },
+
+
+    {
+      key:
+        "COST_DECIMAL_PLACES",
+
+      type:
+        "INTEGER",
+
+      category:
+        "ACCOUNTING",
+
+      defaultValue:
+        MAIRIX.ACCOUNTING.COST_DECIMAL_PLACES,
+
+      editable:
+        true,
+
+      description:
+        "Decimal places used for inventory cost."
+    },
+
+
+    {
+      key:
+        "AMOUNT_DECIMAL_PLACES",
+
+      type:
+        "INTEGER",
+
+      category:
+        "ACCOUNTING",
+
+      defaultValue:
+        MAIRIX.ACCOUNTING.AMOUNT_DECIMAL_PLACES,
+
+      editable:
+        true,
+
+      description:
+        "Decimal places used for monetary amounts."
+    },
+
+
+    {
+      key:
+        "QUANTITY_DECIMAL_PLACES",
+
+      type:
+        "INTEGER",
+
+      category:
+        "INVENTORY",
+
+      defaultValue:
+        MAIRIX.ACCOUNTING.QUANTITY_DECIMAL_PLACES,
+
+      editable:
+        true,
+
+      description:
+        "Decimal places used for quantities."
+    },
+
+
+    {
+      key:
+        "TAX_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "TAX",
+
+      defaultValue:
+        MAIRIX.TAX.ENABLED,
+
+      editable:
+        true,
+
+      description:
+        "Enable tax processing."
+    },
+
+
+    {
+      key:
+        "LOYALTY_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "LOYALTY",
+
+      defaultValue:
+        MAIRIX.LOYALTY.ENABLED,
+
+      editable:
+        true,
+
+      description:
+        "Enable customer loyalty points."
+    },
+
+
+    {
+      key:
+        "POINTS_PER_UNIT",
+
+      type:
+        "NUMBER",
+
+      category:
+        "LOYALTY",
+
+      defaultValue:
+        MAIRIX.LOYALTY.POINTS_PER_UNIT,
+
+      editable:
+        true,
+
+      description:
+        "Default loyalty points earned per purchased unit."
+    },
+
+
+    {
+      key:
+        "RETURN_REVERSES_POINTS",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "LOYALTY",
+
+      defaultValue:
+        MAIRIX.LOYALTY.RETURN_REVERSES_POINTS,
+
+      editable:
+        true,
+
+      description:
+        "Returned quantities reverse loyalty points."
+    },
+
+
+    {
+      key:
+        "DISCOUNT_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "DISCOUNT",
+
+      defaultValue:
+        MAIRIX.DISCOUNT.ENABLED,
+
+      editable:
+        true,
+
+      description:
+        "Enable sales discounts."
+    },
+
+
+    {
+      key:
+        "COMMISSION_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "COMMISSION",
+
+      defaultValue:
+        MAIRIX.COMMISSION.ENABLED,
+
+      editable:
+        true,
+
+      description:
+        "Enable salesman commissions."
+    },
+
+
+    {
+      key:
+        "HIDE_COMMISSION_FROM_SALESMAN",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "COMMISSION",
+
+      defaultValue:
+        MAIRIX.COMMISSION
+          .HIDE_FROM_SALESMAN_SALE_SCREEN,
+
+      editable:
+        false,
+
+      description:
+        "Commission values remain hidden from salesman sale screen."
+    },
+
+
+    {
+      key:
+        "EXPENSE_ALLOCATION_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "EXPENSES",
+
+      defaultValue:
+        MAIRIX.FEATURES.EXPENSE_ALLOCATION,
+
+      editable:
+        true,
+
+      description:
+        "Enable expense allocation to items or purchases."
+    },
+
+
+    {
+      key:
+        "MULTI_WAREHOUSE_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY",
+
+      defaultValue:
+        MAIRIX.FEATURES.MULTI_WAREHOUSE,
+
+      editable:
+        false,
+
+      description:
+        "Enable multi-warehouse operations."
+    },
+
+
+    {
+      key:
+        "FINANCIAL_STATEMENTS_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "REPORTING",
+
+      defaultValue:
+        MAIRIX.FEATURES.FINANCIAL_STATEMENTS,
+
+      editable:
+        true,
+
+      description:
+        "Enable management financial statements."
+    },
+
+
+    {
+      key:
+        "AUDIT_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "SECURITY",
+
+      defaultValue:
+        MAIRIX.SECURITY.AUDIT_ENABLED,
+
+      editable:
+        false,
+
+      description:
+        "Enable system audit trail."
+    },
+
+
+    {
+      key:
+        "DRILL_DOWN_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "REPORTING",
+
+      defaultValue:
+        MAIRIX.FEATURES.DRILL_DOWN,
+
+      editable:
+        true,
+
+      description:
+        "Enable report drill-down."
+    },
+
+
+    {
+      key:
+        "NEW_USERS_ACTIVE",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "SECURITY",
+
+      defaultValue:
+        MAIRIX.SECURITY.NEW_USERS_ACTIVE,
+
+      editable:
+        true,
+
+      description:
+        "Whether newly created users are active by default."
+    },
+
+
+        {
+      key:
+        "REQUIRE_ACTIVE_USER",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "SECURITY",
+
+      defaultValue:
+        MAIRIX.SECURITY.REQUIRE_ACTIVE_USER,
+
+      editable:
+        false,
+
+      description:
+        "Require active authenticated users."
+    },
+
+
+    /************************************************
+     * RETURNS POLICY
+     ************************************************/
+
+    {
+      key:
+        "SALES_RETURN_ALLOWED_DAYS",
+
+      type:
+        "INTEGER",
+
+      category:
+        "RETURNS",
+
+      defaultValue:
+        30,
+
+      editable:
+        true,
+
+      description:
+        "Maximum number of days allowed for a sales return."
+    },
+
+
+    {
+      key:
+        "SALES_RETURN_ALLOW_OVERRIDE",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "RETURNS",
+
+      defaultValue:
+        false,
+
+      editable:
+        true,
+
+      description:
+        "Allow authorized users to override expired sales return periods."
+    },
+
+
+    {
+      key:
+        "SALES_RETURN_REQUIRE_ORIGINAL_REFERENCE",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "RETURNS",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Require the original sale reference when creating a sales return."
+    },
+
+
+    /************************************************
+     * TAX POLICY
+     ************************************************/
+
+    {
+      key:
+        "TAX_TYPES_RUNTIME_MANAGED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "TAX",
+
+      defaultValue:
+        true,
+
+      editable:
+        false,
+
+      description:
+        "Tax types and rates are managed through master data and runtime policy."
+    },
+
+
+    {
+      key:
+        "ALLOW_ZERO_TAX_RATE",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "TAX",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Allow active tax definitions with a zero percent rate."
+    },
+
+
+    /************************************************
+     * DISCOUNT POLICY
+     ************************************************/
+
+    {
+      key:
+        "DISCOUNT_OPTIONS_KEY",
+
+      type:
+        "TEXT",
+
+      category:
+        "DISCOUNT",
+
+      defaultValue:
+        "SALES_DISCOUNT_PERCENT",
+
+      editable:
+        false,
+
+      description:
+        "SETTINGS_OPTIONS key used to load allowed sales discount percentages."
+    },
+
+
+    {
+      key:
+        "DISCOUNT_REQUIRE_APPROVED_OPTION",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "DISCOUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Sales discounts must match an active approved discount option."
+    },
+
+
+    {
+      key:
+        "DISCOUNT_ALLOW_ZERO",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "DISCOUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Allow zero percent discount as a valid sales option."
+    },
+
+
+      /************************************************
+     * OFFERS POLICY
+     ************************************************/
+
+    {
+      key:
+        "OFFERS_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "OFFERS",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Enable timed item offers and promotional pricing."
+    },
+
+
+    {
+      key:
+        "OFFER_BLOCKS_OTHER_DISCOUNTS",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "OFFERS",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Items sold with an active offer cannot receive additional item or invoice discounts."
+    },
+
+    /************************************************
+     * CODING POLICY
+     ************************************************/
+
+    {
+      key:
+        "CUSTOMER_CODE_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "CUS",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for automatically generated customer codes."
+    },
+
+
+    {
+      key:
+        "VENDOR_CODE_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "VEN",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for automatically generated vendor codes."
+    },
+
+
+    {
+      key:
+        "EMPLOYEE_CODE_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "EMP",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for automatically generated employee codes."
+    },
+
+
+    {
+      key:
+        "USER_CODE_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "USR",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for automatically generated user codes."
+    },
+
+
+    {
+      key:
+        "ITEM_CODE_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "ITM",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for automatically generated item codes."
+    },
+
+
+    {
+      key:
+        "WAREHOUSE_CODE_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "WH",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for automatically generated warehouse codes."
+    },
+
+
+    {
+      key:
+        "EXPENSE_CODE_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "EXP",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for automatically generated expense codes."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_CODE_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "IC",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for inventory count sessions."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_TASK_PREFIX",
+
+      type:
+        "TEXT",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        "ICT",
+
+      editable:
+        true,
+
+      description:
+        "Prefix used for inventory count employee tasks."
+    },
+
+
+    {
+      key:
+        "CODE_SEQUENCE_PADDING",
+
+      type:
+        "INTEGER",
+
+      category:
+        "CODING",
+
+      defaultValue:
+        7,
+
+      editable:
+        true,
+
+      description:
+        "Number of digits used when formatting generated sequence numbers."
+    },
+
+
+    /************************************************
+     * INVENTORY COUNT POLICY
+     ************************************************/
+
+    {
+      key:
+        "INVENTORY_COUNT_ENABLED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Enable the inventory count and adjustment workflow."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_REQUIRE_ALL_TASKS_SUBMITTED",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Require all assigned inventory count tasks to be submitted before validation."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_REQUIRE_EMPLOYEE_COMMENT",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        false,
+
+      editable:
+        true,
+
+      description:
+        "Require each employee to enter a comment before submitting a count task."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_ALLOW_MANAGER_EDIT",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Allow authorized managers to edit consolidated inventory count results."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_ALLOW_REOPEN",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Allow authorized users to reopen submitted inventory count tasks."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_SHOW_SYSTEM_QTY_TO_COUNTER",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        false,
+
+      editable:
+        false,
+
+      description:
+        "Physical counters must not see system quantities during counting."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_ALLOW_NEGATIVE_SYSTEM_QTY",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Include items with negative theoretical stock in inventory counts."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_INCLUDE_ZERO_STOCK_ITEMS",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        true,
+
+      description:
+        "Include zero theoretical stock items in inventory counts."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_REQUIRE_CONFLICT_REVIEW",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        false,
+
+      description:
+        "Duplicate or conflicting item counts must be reviewed before validation."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_REQUIRE_VALIDATION",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        false,
+
+      description:
+        "Inventory adjustments become effective only after explicit validation."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_USE_CUTOFF_SNAPSHOT",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        false,
+
+      description:
+        "Inventory counts use a controlled theoretical stock snapshot at the count cutoff."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_POST_FINANCIAL_EFFECT",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        false,
+
+      description:
+        "Validated inventory differences create centralized financial effects."
+    },
+
+
+    {
+      key:
+        "INVENTORY_COUNT_POST_PROFIT_LOSS_EFFECT",
+
+      type:
+        "BOOLEAN",
+
+      category:
+        "INVENTORY_COUNT",
+
+      defaultValue:
+        true,
+
+      editable:
+        false,
+
+      description:
+        "Validated inventory shortages and surpluses affect management profit and loss reporting."
+    }
+
+  ];
+
+}
+
+
+
+/************************************************
+ * SEED DEFAULT SETTINGS
+ ************************************************/
+
+function mairixSettingsSeedDefaults() {
+
+  const sheet =
+    mairixSettingsGetSheet();
+
+
+  const definitions =
+    mairixGetDefaultSettings();
+
+
+  definitions.forEach(
+    function(definition) {
+
+      const existing =
+        mairixSettingsFindRow(
+          sheet,
+          definition.key
+        );
+
+
+      if (
+        existing !== -1
+      ) {
+
+        /*
+         * Do not overwrite an existing
+         * runtime value.
+         */
+
+        mairixSettingsUpdateMetadata(
+          sheet,
+          existing,
+          definition
+        );
+
+        return;
+
+      }
+
+
+      const row =
+        mairixSettingsBuildRow(
+          definition.key,
+          definition.defaultValue,
+          definition
+        );
+
+
+      sheet.appendRow(
+        row
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * GET SETTING
+ *
+ * This is the preferred typed API.
+ ************************************************/
+
+function getMairixRuntimeSetting(
+  key,
+  options
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const definition =
+    mairixSettingsGetDefinition(
+      normalizedKey
+    );
+
+
+  const raw =
+    getMairixSetting(
+      normalizedKey
+    );
+
+
+  if (
+    raw === null ||
+    raw === undefined ||
+    mairixCleanText(raw) === ""
+  ) {
+
+    if (
+      definition
+    ) {
+
+      return mairixSettingsConvertValue(
+        definition.defaultValue,
+        definition.type
+      );
+
+    }
+
+
+    return null;
+
+  }
+
+
+  const type =
+    definition
+      ? definition.type
+      : (
+          options &&
+          options.type
+            ? options.type
+            : "TEXT"
+        );
+
+
+  return mairixSettingsConvertValue(
+    raw,
+    type
+  );
+
+}
+
+
+/************************************************
+ * GET SETTING WITH DEFAULT
+ ************************************************/
+
+function getMairixRuntimeSettingOrDefault(
+  key,
+  defaultValue,
+  type
+) {
+
+  const value =
+    getMairixRuntimeSetting(
+      key,
+      {
+        type:
+          type || "TEXT"
+      }
+    );
+
+
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+
+    return defaultValue;
+
+  }
+
+
+  return value;
+
+}
+
+
+/************************************************
+ * SET RUNTIME SETTING
+ ************************************************/
+
+function setMairixRuntimeSetting(
+  key,
+  value
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const definition =
+    mairixSettingsGetDefinition(
+      normalizedKey
+    );
+
+
+  if (
+    !definition
+  ) {
+
+    throw new Error(
+      "Unknown MAIRIX runtime setting: " +
+      normalizedKey
+    );
+
+  }
+
+
+  if (
+    definition.editable !== true
+  ) {
+
+    throw new Error(
+      "Setting is protected and cannot be modified: " +
+      normalizedKey
+    );
+
+  }
+
+
+  const normalizedValue =
+    mairixSettingsValidateAndNormalizeValue(
+      value,
+      definition
+    );
+
+    if (
+    !validateMairixSettingOption(
+      normalizedKey,
+      normalizedValue
+    )
+  ) {
+
+    throw new Error(
+      "Invalid option for setting " +
+      normalizedKey +
+      ": " +
+      normalizedValue
+    );
+
+  }
+
+
+  const oldValue =
+    getMairixSetting(
+      normalizedKey
+    );
+
+
+  const user =
+    mairixSettingsGetCurrentUser();
+
+
+  const result =
+    setMairixSetting(
+      normalizedKey,
+      normalizedValue
+    );
+
+
+  mairixSettingsUpdateMetadataByKey(
+    normalizedKey,
+    user
+  );
+
+
+  mairixSettingsAudit(
+    "UPDATE_SETTING",
+    normalizedKey,
+    oldValue,
+    normalizedValue,
+    user
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    key:
+      normalizedKey,
+
+    oldValue:
+      oldValue,
+
+    value:
+      normalizedValue,
+
+    updatedBy:
+      user
+        ? user.userId
+        : "SYSTEM",
+
+    result:
+      result
+
+  };
+
+}
+
+
+/************************************************
+ * FORCE SET SYSTEM SETTING
+ *
+ * Intended for controlled setup/migration.
+ ************************************************/
+
+function setMairixSystemSetting(
+  key,
+  value
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const definition =
+    mairixSettingsGetDefinition(
+      normalizedKey
+    );
+
+
+  if (
+    !definition
+  ) {
+
+    throw new Error(
+      "Unknown MAIRIX setting: " +
+      normalizedKey
+    );
+
+  }
+
+
+  const normalizedValue =
+    mairixSettingsValidateAndNormalizeValue(
+      value,
+      definition
+    );
+
+
+  const oldValue =
+    getMairixSetting(
+      normalizedKey
+    );
+
+
+  const result =
+    setMairixSetting(
+      normalizedKey,
+      normalizedValue
+    );
+
+
+  mairixSettingsUpdateMetadataByKey(
+    normalizedKey,
+    null
+  );
+
+
+  mairixSettingsAudit(
+    "SYSTEM_UPDATE_SETTING",
+    normalizedKey,
+    oldValue,
+    normalizedValue,
+    null
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    key:
+      normalizedKey,
+
+    oldValue:
+      oldValue,
+
+    value:
+      normalizedValue,
+
+    result:
+      result
+
+  };
+
+}
+
+
+/************************************************
+ * GET ALL SETTINGS
+ ************************************************/
+
+function getAllMairixRuntimeSettings() {
+
+  const sheet =
+    mairixSettingsGetSheet();
+
+
+  const headers =
+    mairixSettingsGetHeaders(
+      sheet
+    );
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return [];
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+
+  return values
+    .map(
+      function(row) {
+
+        const object = {};
+
+
+        headers.forEach(
+          function(header, index) {
+
+            object[
+              header
+            ] =
+              row[index];
+
+          }
+        );
+
+
+        return object;
+
+      }
+    )
+    .filter(
+      function(setting) {
+
+        return (
+          mairixCleanText(
+            setting.KEY
+          ) !== ""
+        );
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * GET ACTIVE SETTINGS
+ ************************************************/
+
+function getActiveMairixRuntimeSettings() {
+
+  return getAllMairixRuntimeSettings()
+    .filter(
+      function(setting) {
+
+        return (
+          mairixCleanText(
+            setting.STATUS
+          ).toUpperCase() !==
+          MAIRIX_SETTINGS.STATUS_INACTIVE
+        );
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * GET SETTING DEFINITION
+ ************************************************/
+
+function getMairixSettingDefinition(
+  key
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  return mairixSettingsGetDefinition(
+    normalizedKey
+  );
+
+}
+
+
+/************************************************
+ * GET SETTINGS BY CATEGORY
+ ************************************************/
+
+function getMairixSettingsByCategory(
+  category
+) {
+
+  const normalizedCategory =
+    mairixCleanText(
+      category
+    ).toUpperCase();
+
+
+  return getAllMairixRuntimeSettings()
+    .filter(
+      function(setting) {
+
+        return (
+          mairixCleanText(
+            setting.CATEGORY
+          ).toUpperCase() ===
+          normalizedCategory
+        );
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * RESET SETTING TO DEFAULT
+ ************************************************/
+
+function resetMairixSettingToDefault(
+  key
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const definition =
+    mairixSettingsGetDefinition(
+      normalizedKey
+    );
+
+
+  if (
+    !definition
+  ) {
+
+    throw new Error(
+      "Unknown MAIRIX setting: " +
+      normalizedKey
+    );
+
+  }
+
+
+  if (
+    definition.editable !== true
+  ) {
+
+    throw new Error(
+      "Protected setting cannot be reset: " +
+      normalizedKey
+    );
+
+  }
+
+
+  return setMairixRuntimeSetting(
+    normalizedKey,
+    definition.defaultValue
+  );
+
+}
+
+
+/************************************************
+ * ENABLE SETTING
+ ************************************************/
+
+function enableMairixSetting(
+  key
+) {
+
+  return mairixSettingsSetStatus(
+    key,
+    MAIRIX_SETTINGS.STATUS_ACTIVE
+  );
+
+}
+
+
+/************************************************
+ * DISABLE SETTING
+ ************************************************/
+
+function disableMairixSetting(
+  key
+) {
+
+  return mairixSettingsSetStatus(
+    key,
+    MAIRIX_SETTINGS.STATUS_INACTIVE
+  );
+
+}
+
+
+/************************************************
+ * SET STATUS
+ ************************************************/
+
+function mairixSettingsSetStatus(
+  key,
+  status
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const definition =
+    mairixSettingsGetDefinition(
+      normalizedKey
+    );
+
+
+  if (
+    !definition
+  ) {
+
+    throw new Error(
+      "Unknown MAIRIX setting: " +
+      normalizedKey
+    );
+
+  }
+
+
+    if (
+    definition.editable !== true
+  ) {
+
+    throw new Error(
+      "Protected setting status cannot be changed: " +
+      normalizedKey
+    );
+
+  }
+
+
+
+  const normalizedStatus =
+    mairixCleanText(
+      status
+    ).toUpperCase();
+
+
+  if (
+    normalizedStatus !==
+    MAIRIX_SETTINGS.STATUS_ACTIVE &&
+    normalizedStatus !==
+    MAIRIX_SETTINGS.STATUS_INACTIVE
+  ) {
+
+    throw new Error(
+      "Invalid setting status: " +
+      status
+    );
+
+  }
+
+
+  const sheet =
+    mairixSettingsGetSheet();
+
+
+  const row =
+    mairixSettingsFindRow(
+      sheet,
+      normalizedKey
+    );
+
+
+  if (
+    row === -1
+  ) {
+
+    throw new Error(
+      "Setting row not found: " +
+      normalizedKey
+    );
+
+  }
+
+
+  const headers =
+    mairixSettingsGetHeaders(
+      sheet
+    );
+
+
+  const statusIndex =
+    headers.indexOf(
+      "STATUS"
+    );
+
+
+  if (
+    statusIndex === -1
+  ) {
+
+    throw new Error(
+      "SETTINGS STATUS column is missing."
+    );
+
+  }
+
+
+  sheet
+    .getRange(
+      row,
+      statusIndex + 1
+    )
+    .setValue(
+      normalizedStatus
+    );
+
+
+  const user =
+    mairixSettingsGetCurrentUser();
+
+
+  mairixSettingsUpdateMetadataByKey(
+    normalizedKey,
+    user
+  );
+
+
+  mairixSettingsAudit(
+    "SETTING_STATUS_CHANGE",
+    normalizedKey,
+    "",
+    normalizedStatus,
+    user
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    key:
+      normalizedKey,
+
+    status:
+      normalizedStatus
+
+  };
+
+}
+
+
+/************************************************
+ * ADD / UPDATE CUSTOM SETTING
+ *
+ * Allows future settings without changing
+ * CONFIG or this engine.
+ ************************************************/
+
+function registerMairixCustomSetting(
+  definition
+) {
+
+  if (
+    !definition
+  ) {
+
+    throw new Error(
+      "Setting definition is required."
+    );
+
+  }
+
+
+  const key =
+    mairixSettingsNormalizeKey(
+      definition.key
+    );
+
+
+  if (!key) {
+
+    throw new Error(
+      "Setting key is required."
+    );
+
+  }
+
+
+  if (
+    mairixSettingsGetDefinition(
+      key
+    )
+  ) {
+
+    throw new Error(
+      "Setting already exists: " +
+      key
+    );
+
+  }
+
+
+  const type =
+    mairixSettingsNormalizeType(
+      definition.type || "TEXT"
+    );
+
+
+  const category =
+    mairixCleanText(
+      definition.category ||
+      "CUSTOM"
+    ).toUpperCase();
+
+
+  const defaultValue =
+    mairixSettingsValidateAndNormalizeValue(
+      definition.defaultValue,
+      {
+        key:
+          key,
+
+        type:
+          type,
+
+        editable:
+          true
+      }
+    );
+
+
+  const editable =
+    definition.editable !== false;
+
+
+  const description =
+    mairixCleanText(
+      definition.description
+    );
+
+
+  const sheet =
+    mairixSettingsGetSheet();
+
+
+  const row =
+    mairixSettingsBuildRow(
+      key,
+      defaultValue,
+      {
+
+        type:
+          type,
+
+        category:
+          category,
+
+        defaultValue:
+          defaultValue,
+
+        editable:
+          editable,
+
+        description:
+          description
+
+      }
+    );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  mairixSettingsAudit(
+    "REGISTER_SETTING",
+    key,
+    "",
+    defaultValue,
+    mairixSettingsGetCurrentUser()
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    key:
+      key,
+
+    type:
+      type,
+
+    category:
+      category,
+
+    defaultValue:
+      defaultValue,
+
+    editable:
+      editable
+
+  };
+
+}
+
+
+/************************************************
+ * SETTINGS OPTIONS
+ ************************************************/
+
+function addMairixSettingOption(
+  key,
+  optionValue,
+  label,
+  sortOrder
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  if (
+    !mairixSettingsGetDefinition(
+      normalizedKey
+    )
+  ) {
+
+    throw new Error(
+      "Cannot add option for unknown setting: " +
+      normalizedKey
+    );
+
+  }
+
+
+  const sheet =
+    mairixSettingsGetOptionsSheet();
+
+
+  const existing =
+    mairixSettingsFindOptionRow(
+      sheet,
+      normalizedKey,
+      optionValue
+    );
+
+
+  const rowData = [
+
+    normalizedKey,
+
+    optionValue,
+
+    label || optionValue,
+
+    Number(
+      sortOrder || 0
+    ),
+
+    true
+
+  ];
+
+
+  if (
+    existing !== -1
+  ) {
+
+    sheet
+      .getRange(
+        existing,
+        1,
+        1,
+        rowData.length
+      )
+      .setValues([
+        rowData
+      ]);
+
+  } else {
+
+    sheet.appendRow(
+      rowData
+    );
+
+  }
+
+
+  return {
+
+    success:
+      true,
+
+    key:
+      normalizedKey,
+
+    optionValue:
+      optionValue,
+
+    label:
+      label || optionValue
+
+  };
+
+}
+
+
+/************************************************
+ * GET SETTING OPTIONS
+ ************************************************/
+
+function getMairixSettingOptions(
+  key
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const sheet =
+    mairixSettingsGetOptionsSheet();
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return [];
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        5
+      )
+      .getValues();
+
+
+  return values
+  .filter(
+    function(row) {
+
+      return (
+        mairixCleanText(
+          row[0]
+        ).toUpperCase() ===
+        normalizedKey &&
+        String(
+          row[4]
+        ).toUpperCase() !==
+        "FALSE"
+      );
+
+    }
+  )
+
+    .sort(
+      function(a, b) {
+
+        return (
+          Number(a[3] || 0) -
+          Number(b[3] || 0)
+        );
+
+      }
+    )
+    .map(
+      function(row) {
+
+        return {
+
+          key:
+            row[0],
+
+          value:
+            row[1],
+
+          label:
+            row[2],
+
+          sortOrder:
+            row[3],
+
+          active:
+            row[4]
+
+        };
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * REMOVE SETTING OPTION
+ ************************************************/
+
+function removeMairixSettingOption(
+  key,
+  optionValue
+) {
+
+  const sheet =
+    mairixSettingsGetOptionsSheet();
+
+
+  const row =
+    mairixSettingsFindOptionRow(
+      sheet,
+      mairixSettingsNormalizeKey(key),
+      optionValue
+    );
+
+
+  if (
+    row === -1
+  ) {
+
+    throw new Error(
+      "Setting option not found."
+    );
+
+  }
+
+
+  sheet
+    .getRange(
+      row,
+      5
+    )
+    .setValue(
+      false
+    );
+
+
+  return {
+
+    success:
+      true,
+
+    removed:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * VALIDATE OPTION SETTING
+ ************************************************/
+
+function validateMairixSettingOption(
+  key,
+  value
+) {
+
+  const options =
+    getMairixSettingOptions(
+      key
+    );
+
+
+  if (
+    !options.length
+  ) {
+
+    return true;
+
+  }
+
+
+  const normalized =
+    mairixCleanText(
+      value
+    );
+
+
+  return options.some(
+    function(option) {
+
+      return (
+        mairixCleanText(
+          option.value
+        ) ===
+        normalized
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * VALIDATE SETTING
+ ************************************************/
+
+function validateMairixSetting(
+  key,
+  value
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const definition =
+    mairixSettingsGetDefinition(
+      normalizedKey
+    );
+
+
+  if (
+    !definition
+  ) {
+
+    throw new Error(
+      "Unknown MAIRIX setting: " +
+      normalizedKey
+    );
+
+  }
+
+
+  const normalizedValue =
+    mairixSettingsValidateAndNormalizeValue(
+      value,
+      definition
+    );
+
+
+  if (
+    !validateMairixSettingOption(
+      normalizedKey,
+      normalizedValue
+    )
+  ) {
+
+    throw new Error(
+      "Invalid option for setting " +
+      normalizedKey +
+      ": " +
+      normalizedValue
+    );
+
+  }
+
+
+  return {
+
+    valid:
+      true,
+
+    key:
+      normalizedKey,
+
+    value:
+      normalizedValue
+
+  };
+
+}
+
+
+/************************************************
+ * SETTING TYPE CONVERTER
+ ************************************************/
+
+function mairixSettingsConvertValue(
+  value,
+  type
+) {
+
+  const normalizedType =
+    mairixSettingsNormalizeType(
+      type
+    );
+
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return null;
+
+  }
+
+
+  switch (
+    normalizedType
+  ) {
+
+    case "BOOLEAN":
+
+      if (
+        typeof value ===
+        "boolean"
+      ) {
+
+        return value;
+
+      }
+
+
+      const boolText =
+        mairixCleanText(
+          value
+        ).toUpperCase();
+
+
+      if (
+        boolText === "TRUE" ||
+        boolText === "1" ||
+        boolText === "YES"
+      ) {
+
+        return true;
+
+      }
+
+
+      if (
+        boolText === "FALSE" ||
+        boolText === "0" ||
+        boolText === "NO"
+      ) {
+
+        return false;
+
+      }
+
+
+      throw new Error(
+        "Invalid BOOLEAN setting value: " +
+        value
+      );
+
+
+    case "INTEGER":
+
+      const integerValue =
+        Number(
+          value
+        );
+
+
+      if (
+        !isFinite(integerValue) ||
+        Math.floor(integerValue) !==
+        integerValue
+      ) {
+
+        throw new Error(
+          "Invalid INTEGER setting value: " +
+          value
+        );
+
+      }
+
+
+      return integerValue;
+
+
+    case "NUMBER":
+
+      const numberValue =
+        Number(
+          value
+        );
+
+
+      if (
+        !isFinite(numberValue)
+      ) {
+
+        throw new Error(
+          "Invalid NUMBER setting value: " +
+          value
+        );
+
+      }
+
+
+      return numberValue;
+
+
+    case "PERCENT":
+
+      const percentValue =
+        Number(
+          value
+        );
+
+
+      if (
+        !isFinite(percentValue) ||
+        percentValue < 0 ||
+        percentValue > 100
+      ) {
+
+        throw new Error(
+          "Invalid PERCENT setting value: " +
+          value
+        );
+
+      }
+
+
+      return percentValue;
+
+
+    case "JSON":
+
+      if (
+        typeof value ===
+        "object"
+      ) {
+
+        return value;
+
+      }
+
+
+      try {
+
+        return JSON.parse(
+          value
+        );
+
+      } catch (error) {
+
+        throw new Error(
+          "Invalid JSON setting value."
+        );
+
+      }
+
+
+    case "TEXT":
+
+    default:
+
+      return mairixCleanText(
+        value
+      );
+
+  }
+
+}
+
+
+/************************************************
+ * VALIDATE + NORMALIZE VALUE
+ ************************************************/
+
+function mairixSettingsValidateAndNormalizeValue(
+  value,
+  definition
+) {
+
+  const normalizedType =
+    mairixSettingsNormalizeType(
+      definition.type
+    );
+
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    throw new Error(
+      "Setting value is required: " +
+      definition.key
+    );
+
+  }
+
+
+  const normalized =
+    mairixSettingsConvertValue(
+      value,
+      normalizedType
+    );
+
+
+  /*
+   * Business-level validations.
+   */
+
+  if (
+    definition.key ===
+    "INVENTORY_COST_METHOD"
+  ) {
+
+    if (
+      String(
+        normalized
+      ).toUpperCase() !==
+      "WAC"
+    ) {
+
+      throw new Error(
+        "MAIRIX inventory cost method must remain WAC."
+      );
+
+    }
+
+  }
+
+
+  if (
+    definition.key ===
+    "COST_DECIMAL_PLACES"
+  ) {
+
+    if (
+      normalized < 0 ||
+      normalized > 6
+    ) {
+
+      throw new Error(
+        "COST_DECIMAL_PLACES must be between 0 and 6."
+      );
+
+    }
+
+  }
+
+
+  if (
+    definition.key ===
+    "AMOUNT_DECIMAL_PLACES"
+  ) {
+
+    if (
+      normalized < 0 ||
+      normalized > 6
+    ) {
+
+      throw new Error(
+        "AMOUNT_DECIMAL_PLACES must be between 0 and 6."
+      );
+
+    }
+
+  }
+
+
+  if (
+    definition.key ===
+    "QUANTITY_DECIMAL_PLACES"
+  ) {
+
+    if (
+      normalized < 0 ||
+      normalized > 6
+    ) {
+
+      throw new Error(
+        "QUANTITY_DECIMAL_PLACES must be between 0 and 6."
+      );
+
+    }
+
+  }
+
+
+  if (
+    definition.key ===
+    "POINTS_PER_UNIT"
+  ) {
+
+    if (
+      normalized < 0
+    ) {
+
+      throw new Error(
+        "POINTS_PER_UNIT cannot be negative."
+      );
+
+    }
+
+  }
+
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * TYPE NORMALIZATION
+ ************************************************/
+
+function mairixSettingsNormalizeType(
+  type
+) {
+
+  const normalized =
+    mairixCleanText(
+      type
+    ).toUpperCase();
+
+
+  const supported = [
+
+    "TEXT",
+    "BOOLEAN",
+    "INTEGER",
+    "NUMBER",
+    "PERCENT",
+    "JSON"
+
+  ];
+
+
+  if (
+    supported.indexOf(
+      normalized
+    ) === -1
+  ) {
+
+    throw new Error(
+      "Unsupported MAIRIX setting type: " +
+      type
+    );
+
+  }
+
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * KEY NORMALIZATION
+ ************************************************/
+
+function mairixSettingsNormalizeKey(
+  key
+) {
+
+  const normalized =
+    mairixCleanText(
+      key
+    ).toUpperCase();
+
+
+  if (!normalized) {
+
+    throw new Error(
+      "MAIRIX setting key is required."
+    );
+
+  }
+
+
+  if (
+    !/^[A-Z0-9_]+$/.test(
+      normalized
+    )
+  ) {
+
+    throw new Error(
+      "Invalid MAIRIX setting key: " +
+      normalized
+    );
+
+  }
+
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * GET DEFINITION
+ ************************************************/
+
+function mairixSettingsGetDefinition(
+  key
+) {
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const defaults =
+    mairixGetDefaultSettings();
+
+
+  for (
+    let i = 0;
+    i < defaults.length;
+    i++
+  ) {
+
+    if (
+      defaults[i].key ===
+      normalizedKey
+    ) {
+
+      return defaults[i];
+
+    }
+
+  }
+
+
+  /*
+   * Look inside SETTINGS itself so custom
+   * registered settings are supported.
+   */
+
+  const sheet =
+    mairixSettingsGetSheet();
+
+
+  const row =
+    mairixSettingsFindRow(
+      sheet,
+      normalizedKey
+    );
+
+
+  if (
+    row === -1
+  ) {
+
+    return null;
+
+  }
+
+
+  const headers =
+    mairixSettingsGetHeaders(
+      sheet
+    );
+
+
+  const values =
+    sheet
+      .getRange(
+        row,
+        1,
+        1,
+        headers.length
+      )
+      .getValues()[0];
+
+
+  const object = {};
+
+
+  headers.forEach(
+    function(header, index) {
+
+      object[
+        header
+      ] =
+        values[index];
+
+    }
+  );
+
+
+  return {
+
+    key:
+      normalizedKey,
+
+    type:
+      mairixSettingsNormalizeType(
+        object.TYPE || "TEXT"
+      ),
+
+    category:
+      mairixCleanText(
+        object.CATEGORY ||
+        "CUSTOM"
+      ).toUpperCase(),
+
+    defaultValue:
+      object[
+        "DEFAULT VALUE"
+      ],
+
+    editable:
+      object.EDITABLE !== false &&
+      String(
+        object.EDITABLE
+      ).toUpperCase() !==
+      "FALSE",
+
+    description:
+      mairixCleanText(
+        object.DESCRIPTION
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * BUILD SETTINGS ROW
+ ************************************************/
+
+function mairixSettingsBuildRow(
+  key,
+  value,
+  definition
+) {
+
+  return [
+
+    key,
+
+    value,
+
+    definition.type ||
+      "TEXT",
+
+    definition.category ||
+      "CUSTOM",
+
+    definition.defaultValue,
+
+    definition.editable !== false,
+
+    definition.description ||
+      "",
+
+    MAIRIX_SETTINGS.STATUS_ACTIVE,
+
+    "SYSTEM",
+
+    new Date()
+
+  ];
+
+}
+
+
+/************************************************
+ * UPDATE METADATA
+ ************************************************/
+
+function mairixSettingsUpdateMetadata(
+  sheet,
+  row,
+  definition
+) {
+
+  const headers =
+    mairixSettingsGetHeaders(
+      sheet
+    );
+
+
+  const mappings = {
+
+    "TYPE":
+      definition.type,
+
+    "CATEGORY":
+      definition.category,
+
+    "DEFAULT VALUE":
+      definition.defaultValue,
+
+    "EDITABLE":
+      definition.editable,
+
+    "DESCRIPTION":
+      definition.description
+
+  };
+
+
+  Object.keys(
+    mappings
+  ).forEach(
+    function(header) {
+
+      const index =
+        headers.indexOf(
+          header
+        );
+
+
+      if (
+        index !== -1
+      ) {
+
+        sheet
+          .getRange(
+            row,
+            index + 1
+          )
+          .setValue(
+            mappings[header]
+          );
+
+      }
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * UPDATE METADATA BY KEY
+ ************************************************/
+
+function mairixSettingsUpdateMetadataByKey(
+  key,
+  user
+) {
+
+  const sheet =
+    mairixSettingsGetSheet();
+
+
+  const row =
+    mairixSettingsFindRow(
+      sheet,
+      key
+    );
+
+
+  if (
+    row === -1
+  ) {
+
+    return;
+
+  }
+
+
+  const headers =
+    mairixSettingsGetHeaders(
+      sheet
+    );
+
+
+  const userIndex =
+    headers.indexOf(
+      "UPDATED BY"
+    );
+
+
+  const dateIndex =
+    headers.indexOf(
+      "UPDATED AT"
+    );
+
+
+  if (
+    userIndex !== -1
+  ) {
+
+    sheet
+      .getRange(
+        row,
+        userIndex + 1
+      )
+      .setValue(
+        user
+          ? user.userId
+          : "SYSTEM"
+      );
+
+  }
+
+
+  if (
+    dateIndex !== -1
+  ) {
+
+    sheet
+      .getRange(
+        row,
+        dateIndex + 1
+      )
+      .setValue(
+        new Date()
+      );
+
+  }
+
+}
+
+
+/************************************************
+ * GET SETTINGS SHEET
+ ************************************************/
+
+function mairixSettingsGetSheet() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  if (!ss) {
+
+    throw new Error(
+      "Active spreadsheet is not available."
+    );
+
+  }
+
+
+  const sheet =
+    ss.getSheetByName(
+      MAIRIX_SETTINGS.SETTINGS_SHEET
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "SETTINGS sheet does not exist. " +
+      "Run setupMairixSettings() first."
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * GET OPTIONS SHEET
+ ************************************************/
+
+function mairixSettingsGetOptionsSheet() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    ss.getSheetByName(
+      MAIRIX_SETTINGS.OPTIONS_SHEET
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "SETTINGS_OPTIONS sheet does not exist. " +
+      "Run setupMairixSettings() first."
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * FIND SETTINGS ROW
+ ************************************************/
+
+function mairixSettingsFindRow(
+  sheet,
+  key
+) {
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return -1;
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  const normalized =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      mairixCleanText(
+        values[i][0]
+      ).toUpperCase() ===
+      normalized
+    ) {
+
+      return i + 2;
+
+    }
+
+  }
+
+
+  return -1;
+
+}
+
+
+/************************************************
+ * FIND OPTION ROW
+ ************************************************/
+
+function mairixSettingsFindOptionRow(
+  sheet,
+  key,
+  optionValue
+) {
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return -1;
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        2
+      )
+      .getDisplayValues();
+
+
+  const normalizedKey =
+    mairixSettingsNormalizeKey(
+      key
+    );
+
+
+  const normalizedValue =
+    mairixCleanText(
+      optionValue
+    );
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      mairixCleanText(
+        values[i][0]
+      ).toUpperCase() ===
+      normalizedKey &&
+      mairixCleanText(
+        values[i][1]
+      ) ===
+      normalizedValue
+    ) {
+
+      return i + 2;
+
+    }
+
+  }
+
+
+  return -1;
+
+}
+
+
+/************************************************
+ * GET HEADERS
+ ************************************************/
+
+function mairixSettingsGetHeaders(
+  sheet
+) {
+
+  return sheet
+    .getRange(
+      1,
+      1,
+      1,
+      sheet.getLastColumn()
+    )
+    .getDisplayValues()[0]
+    .map(
+      function(header) {
+
+        return mairixCleanText(
+          header
+        ).toUpperCase();
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * ENSURE HEADERS
+ ************************************************/
+
+function mairixSettingsEnsureHeaders(
+  sheet,
+  requiredHeaders
+) {
+
+  if (
+    sheet.getLastRow() === 0
+  ) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        requiredHeaders.length
+      )
+      .setValues([
+        requiredHeaders
+      ]);
+
+    return;
+
+  }
+
+
+  const currentLastColumn =
+    Math.max(
+      sheet.getLastColumn(),
+      requiredHeaders.length
+    );
+
+
+  const existing =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        currentLastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  requiredHeaders.forEach(
+    function(header, index) {
+
+      if (
+        mairixCleanText(
+          existing[index]
+        ).toUpperCase() !==
+        header
+      ) {
+
+        sheet
+          .getRange(
+            1,
+            index + 1
+          )
+          .setValue(
+            header
+          );
+
+      }
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * CREATE SHEET
+ ************************************************/
+
+function mairixSettingsGetOrCreateSheet(
+  ss,
+  name
+) {
+
+  let sheet =
+    ss.getSheetByName(
+      name
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        name
+      );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * FORMATTING
+ ************************************************/
+
+function mairixSettingsApplyFormatting(
+  settingsSheet,
+  optionsSheet
+) {
+
+  if (
+    settingsSheet.getLastColumn() >=
+    MAIRIX_SETTINGS_HEADERS.length
+  ) {
+
+    settingsSheet
+      .getRange(
+        1,
+        1,
+        1,
+        MAIRIX_SETTINGS_HEADERS.length
+      )
+      .setFontWeight(
+        "bold"
+      );
+
+  }
+
+
+  if (
+    optionsSheet.getLastColumn() >=
+    MAIRIX_SETTINGS_OPTION_HEADERS.length
+  ) {
+
+    optionsSheet
+      .getRange(
+        1,
+        1,
+        1,
+        MAIRIX_SETTINGS_OPTION_HEADERS.length
+      )
+      .setFontWeight(
+        "bold"
+      );
+
+  }
+
+
+  settingsSheet
+    .setFrozenRows(1);
+
+
+  optionsSheet
+    .setFrozenRows(1);
+
+}
+
+
+/************************************************
+ * CURRENT USER BRIDGE
+ ************************************************/
+
+function mairixSettingsGetCurrentUser() {
+
+  try {
+
+    if (
+      typeof getMairixCurrentUser ===
+      "function"
+    ) {
+
+      return getMairixCurrentUser();
+
+    }
+
+
+    if (
+      typeof requireCurrentUser ===
+      "function"
+    ) {
+
+      return requireCurrentUser();
+
+    }
+
+  } catch (error) {
+
+    Logger.log(
+      "Settings current user lookup failed: " +
+      error.message
+    );
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * AUDIT BRIDGE
+ ************************************************/
+
+function mairixSettingsAudit(
+  action,
+  key,
+  oldValue,
+  newValue,
+  user
+) {
+
+  try {
+
+    if (
+      MAIRIX.SECURITY &&
+      MAIRIX.SECURITY.AUDIT_ENABLED !== true
+    ) {
+
+      return;
+
+    }
+
+
+    if (
+      typeof logAction ===
+      "function"
+    ) {
+
+      logAction(
+
+        action,
+
+        key,
+
+        "Old Value: " +
+          mairixSettingsAuditValue(
+            oldValue
+          ) +
+          " | New Value: " +
+          mairixSettingsAuditValue(
+            newValue
+          )
+
+      );
+
+      return;
+
+    }
+
+
+    const ss =
+      SpreadsheetApp
+        .getActiveSpreadsheet();
+
+
+    let sheet =
+      ss.getSheetByName(
+        "MAIRIX_AUDIT"
+      );
+
+
+    if (!sheet) {
+
+      sheet =
+        ss.insertSheet(
+          "MAIRIX_AUDIT"
+        );
+
+
+      sheet
+        .appendRow([
+
+          "Timestamp",
+          "User ID",
+          "Action",
+          "Reference",
+          "Details"
+
+        ]);
+
+    }
+
+
+    sheet.appendRow([
+
+      new Date(),
+
+      user
+        ? user.userId
+        : "SYSTEM",
+
+      action,
+
+      key,
+
+      "Old Value: " +
+        mairixSettingsAuditValue(
+          oldValue
+        ) +
+        " | New Value: " +
+        mairixSettingsAuditValue(
+          newValue
+        )
+
+    ]);
+
+  } catch (error) {
+
+    Logger.log(
+      "Settings audit failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * AUDIT VALUE
+ ************************************************/
+
+function mairixSettingsAuditValue(
+  value
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  if (
+    typeof value ===
+    "object"
+  ) {
+
+    try {
+
+      return JSON.stringify(
+        value
+      );
+
+    } catch (error) {
+
+      return String(
+        value
+      );
+
+    }
+
+  }
+
+
+  return String(
+    value
+  );
+
+}
+
+
+/************************************************
+ * SETTINGS SELF TEST
+ ************************************************/
+
+function testMairixSettingsSetup() {
+
+  const result =
+    setupMairixSettings();
+
+
+  if (
+    !result ||
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "MAIRIX Settings setup failed."
+    );
+
+  }
+
+
+  const systemName =
+    getMairixRuntimeSetting(
+      "SYSTEM_NAME"
+    );
+
+
+  if (
+    systemName !==
+    MAIRIX.SYSTEM_NAME
+  ) {
+
+    throw new Error(
+      "SYSTEM_NAME setting test failed."
+    );
+
+  }
+
+
+  const currency =
+    getMairixRuntimeSetting(
+      "REPORTING_CURRENCY"
+    );
+
+
+  if (
+    currency !==
+    MAIRIX.ACCOUNTING.REPORTING_CURRENCY
+  ) {
+
+    throw new Error(
+      "REPORTING_CURRENCY setting test failed."
+    );
+
+  }
+
+
+  const loyalty =
+    getMairixRuntimeSetting(
+      "LOYALTY_ENABLED"
+    );
+
+
+  if (
+    loyalty !==
+    true
+  ) {
+
+    throw new Error(
+      "LOYALTY_ENABLED setting test failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SETTINGS SETUP TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * SETTINGS TYPE TEST
+ ************************************************/
+
+function testMairixSettingsTypes() {
+
+  const booleanValue =
+    mairixSettingsConvertValue(
+      "TRUE",
+      "BOOLEAN"
+    );
+
+
+  if (
+    booleanValue !==
+    true
+  ) {
+
+    throw new Error(
+      "BOOLEAN conversion failed."
+    );
+
+  }
+
+
+  const integerValue =
+    mairixSettingsConvertValue(
+      "4",
+      "INTEGER"
+    );
+
+
+  if (
+    integerValue !==
+    4
+  ) {
+
+    throw new Error(
+      "INTEGER conversion failed."
+    );
+
+  }
+
+
+  const numberValue =
+    mairixSettingsConvertValue(
+      "14.5",
+      "NUMBER"
+    );
+
+
+  if (
+    numberValue !==
+    14.5
+  ) {
+
+    throw new Error(
+      "NUMBER conversion failed."
+    );
+
+  }
+
+
+  const textValue =
+    mairixSettingsConvertValue(
+      " MAIRIX ",
+      "TEXT"
+    );
+
+
+  if (
+    textValue !==
+    "MAIRIX"
+  ) {
+
+    throw new Error(
+      "TEXT conversion failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX SETTINGS TYPE TEST: PASS"
+  );
+
+
+  return {
+
+    success:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * SETTINGS VALIDATION TEST
+ ************************************************/
+
+function testMairixSettingsValidation() {
+
+  const valid =
+    validateMairixSetting(
+      "POINTS_PER_UNIT",
+      1
+    );
+
+
+  if (
+    !valid.valid
+  ) {
+
+    throw new Error(
+      "Valid setting was rejected."
+    );
+
+  }
+
+
+  let failed =
+    false;
+
+
+  try {
+
+    validateMairixSetting(
+      "COST_DECIMAL_PLACES",
+      99
+    );
+
+  } catch (error) {
+
+    failed = true;
+
+  }
+
+
+  if (
+    !failed
+  ) {
+
+    throw new Error(
+      "Invalid COST_DECIMAL_PLACES was accepted."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX SETTINGS VALIDATION TEST: PASS"
+  );
+
+
+  return {
+
+    success:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * SETTINGS OPTIONS TEST
+ ************************************************/
+
+function testMairixSettingsOptions() {
+
+  setupMairixSettings();
+
+
+  /*
+   * Use a custom setting so the test does not
+   * alter a core runtime policy.
+   */
+
+  const testKey =
+    "TEST_SETTING_OPTION";
+
+
+  if (
+    !mairixSettingsGetDefinition(
+      testKey
+    )
+  ) {
+
+    registerMairixCustomSetting({
+
+      key:
+        testKey,
+
+      type:
+        "TEXT",
+
+      category:
+        "TEST",
+
+      defaultValue:
+        "A",
+
+      editable:
+        true,
+
+      description:
+        "Temporary settings engine test."
+
+    });
+
+  }
+
+
+  addMairixSettingOption(
+    testKey,
+    "A",
+    "Option A",
+    1
+  );
+
+
+  addMairixSettingOption(
+    testKey,
+    "B",
+    "Option B",
+    2
+  );
+
+
+  const options =
+    getMairixSettingOptions(
+      testKey
+    );
+
+
+  if (
+    options.length < 2
+  ) {
+
+    throw new Error(
+      "SETTINGS_OPTIONS test failed."
+    );
+
+  }
+
+
+  if (
+    !validateMairixSettingOption(
+      testKey,
+      "B"
+    )
+  ) {
+
+    throw new Error(
+      "Valid setting option was rejected."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX SETTINGS OPTIONS TEST: PASS"
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    options:
+      options
+
+  };
+
+}
+
+
+/************************************************
+ * COMPLETE SETTINGS TEST
+ ************************************************/
+
+function testMairixSettingsEngine() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SETTINGS ENGINE TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  testMairixSettingsSetup();
+
+
+  testMairixSettingsTypes();
+
+
+  testMairixSettingsValidation();
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SETTINGS ENGINE TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    message:
+      "MAIRIX Settings Engine is operational."
+
+  };
+
+}
+
+/************************************************
+ * MAIRIX REJECTION ADAPTER
+ *
+ * Every rejected transaction should be recorded.
+ ************************************************/
+
+function mairixRecordRejection(
+  details
+) {
+
+  try {
+
+    if (
+      typeof mairixWriteRejectionReport ===
+      "function"
+    ) {
+
+      return mairixWriteRejectionReport(
+        details
+      );
+
+    }
+
+    /*
+     * Temporary fallback until the
+     * official rejection report engine
+     * is connected.
+     */
+
+    Logger.log(
+      "[MAIRIX REJECTION] " +
+      JSON.stringify(
+        details
+      )
+    );
+
+    return {
+      success:
+        true,
+
+      fallback:
+        true
+
+    };
+
+  } catch (error) {
+
+    Logger.log(
+      "Rejection report failed: " +
+      error.message
+    );
+
+    return {
+      success:
+        false,
+
+      error:
+        error.message
+
+    };
+
+  }
+
+}
+
+const MAIRIX_PASSWORD_POLICY_ROWS = [
+
+  [
+    "PASSWORD_LENGTH",
+    6,
+    "NUMBER",
+    "Required password length.",
+    true,
+    new Date()
+  ],
+
+  [
+    "PASSWORD_NUMERIC_ONLY",
+    true,
+    "BOOLEAN",
+    "Passwords must contain digits only.",
+    true,
+    new Date()
+  ],
+
+  [
+    "PASSWORD_NO_REPEATED_DIGITS",
+    true,
+    "BOOLEAN",
+    "Password cannot contain repeated digits.",
+    true,
+    new Date()
+  ],
+
+  [
+    "PASSWORD_NO_CONSECUTIVE_DIGITS",
+    true,
+    "BOOLEAN",
+    "Password cannot contain consecutive digits.",
+    true,
+    new Date()
+  ]
+
+];
+
+/************************************************
+ * MAIRIX DEFAULT SETTINGS OPTIONS
+ *
+ * Dynamic operational options.
+ *
+ * IMPORTANT:
+ * - This registry seeds default OPTIONS only.
+ * - Existing user/admin options are not overwritten.
+ * - Runtime single-value policies belong in SETTINGS.
+ * - Multi-value selectable lists belong in SETTINGS_OPTIONS.
+ ************************************************/
+
+function mairixGetDefaultSettingsOptions() {
+
+  return [
+
+    /**********************************************
+     * SALES DISCOUNTS
+     **********************************************/
+
+    {
+      key: "SALES_DISCOUNT_PERCENT",
+      value: 0,
+      label: "0%",
+      sortOrder: 1,
+      active: true
+    },
+
+    {
+      key: "SALES_DISCOUNT_PERCENT",
+      value: 5,
+      label: "5%",
+      sortOrder: 2,
+      active: true
+    },
+
+    {
+      key: "SALES_DISCOUNT_PERCENT",
+      value: 7,
+      label: "7%",
+      sortOrder: 3,
+      active: true
+    },
+
+    {
+      key: "SALES_DISCOUNT_PERCENT",
+      value: 10,
+      label: "10%",
+      sortOrder: 4,
+      active: true
+    },
+
+
+    /**********************************************
+     * OFFER TYPES
+     **********************************************/
+
+    {
+      key: "OFFER_TYPE",
+      value: "FIXED_PRICE",
+      label: "سعر عرض ثابت",
+      sortOrder: 1,
+      active: true
+    },
+
+    {
+      key: "OFFER_TYPE",
+      value: "PERCENTAGE",
+      label: "عرض بنسبة خصم",
+      sortOrder: 2,
+      active: true
+    },
+
+
+    /**********************************************
+     * EXPENSE CATEGORIES
+     **********************************************/
+
+    {
+      key: "EXPENSE_CATEGORY",
+      value: "SHP",
+      label: "شحن",
+      sortOrder: 1,
+      active: true
+    },
+
+    {
+      key: "EXPENSE_CATEGORY",
+      value: "TRN",
+      label: "نقل",
+      sortOrder: 2,
+      active: true
+    },
+
+    {
+      key: "EXPENSE_CATEGORY",
+      value: "SAL",
+      label: "رواتب",
+      sortOrder: 3,
+      active: true
+    },
+
+    {
+      key: "EXPENSE_CATEGORY",
+      value: "COM",
+      label: "عمولات مناديب",
+      sortOrder: 4,
+      active: true
+    },
+
+    {
+      key: "EXPENSE_CATEGORY",
+      value: "OTH",
+      label: "أخرى",
+      sortOrder: 5,
+      active: true
+    },
+
+
+    /**********************************************
+     * EXPENSE LOADING METHODS
+     **********************************************/
+
+    {
+      key: "EXPENSE_LOADING_METHOD",
+      value: "ITEM",
+      label: "تحميل على صنف معين",
+      sortOrder: 1,
+      active: true
+    },
+
+    {
+      key: "EXPENSE_LOADING_METHOD",
+      value: "PURCHASE",
+      label: "تحميل على فاتورة مشتريات معينة",
+      sortOrder: 2,
+      active: true
+    },
+
+    {
+      key: "EXPENSE_LOADING_METHOD",
+      value: "GENERAL",
+      label: "مصروف عمومي",
+      sortOrder: 3,
+      active: true
+    },
+
+
+    /**********************************************
+     * TAX TRANSACTION TYPES
+     *
+     * Transaction taxonomy only.
+     * Actual tax types/rates are managed through
+     * TAX_TYPES master data.
+     **********************************************/
+
+    {
+      key: "TAX_TRANSACTION_TYPE",
+      value: "SALE",
+      label: "بيع",
+      sortOrder: 1,
+      active: true
+    },
+
+    {
+      key: "TAX_TRANSACTION_TYPE",
+      value: "SALES_RETURN",
+      label: "مرتجع مبيعات",
+      sortOrder: 2,
+      active: true
+    },
+
+    {
+      key: "TAX_TRANSACTION_TYPE",
+      value: "PURCHASE",
+      label: "شراء",
+      sortOrder: 3,
+      active: true
+    },
+
+    {
+      key: "TAX_TRANSACTION_TYPE",
+      value: "PURCHASE_RETURN",
+      label: "مرتجع مشتريات",
+      sortOrder: 4,
+      active: true
+    }
+
+  ];
+
+}

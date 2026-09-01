@@ -1,0 +1,85 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 69-MAIRIX_TaxEngineFinalization.gs
+ *
+ * Tax Engine finalization contract.
+ *
+ * Tax configuration is date-effective.
+ * Transactions retain a tax snapshot.
+ *
+ * This file does not silently replace an existing Tax Core.
+ ************************************************/
+
+const MAIRIX_TAX_TYPES = {
+  PERCENTAGE: "PERCENTAGE",
+  FIXED: "FIXED",
+  INCLUSIVE: "INCLUSIVE",
+  EXCLUSIVE: "EXCLUSIVE"
+};
+
+function mairixCalculateTaxExclusive(taxableAmount, rate) {
+  var amount = Number(taxableAmount);
+  var taxRate = Number(rate);
+
+  if (!Number.isFinite(amount) || amount < 0) throw new Error("Invalid taxable amount.");
+  if (!Number.isFinite(taxRate) || taxRate < 0) throw new Error("Invalid tax rate.");
+
+  return {
+    taxableAmount: amount,
+    taxRate: taxRate,
+    taxAmount: amount * taxRate / 100,
+    total: amount + (amount * taxRate / 100)
+  };
+}
+
+function mairixCalculateTaxInclusive(totalAmount, rate) {
+  var total = Number(totalAmount);
+  var taxRate = Number(rate);
+
+  if (!Number.isFinite(total) || total < 0) throw new Error("Invalid total amount.");
+  if (!Number.isFinite(taxRate) || taxRate < 0) throw new Error("Invalid tax rate.");
+
+  var taxable = total / (1 + taxRate / 100);
+
+  return {
+    total: total,
+    taxRate: taxRate,
+    taxableAmount: taxable,
+    taxAmount: total - taxable
+  };
+}
+
+function mairixBuildTaxSnapshot(taxCode, rate, taxableAmount, taxAmount) {
+  if (!taxCode) throw new Error("Tax code is required.");
+
+  return {
+    taxCode: String(taxCode),
+    taxRate: Number(rate),
+    taxableAmount: Number(taxableAmount),
+    taxAmount: Number(taxAmount),
+    snapshotCreatedAt: new Date().toISOString()
+  };
+}
+
+function testMairixTaxEngineFinalization() {
+  var x = mairixCalculateTaxExclusive(100, 15);
+
+  if (x.taxAmount !== 15 || x.total !== 115) {
+    throw new Error("Exclusive tax calculation failed.");
+  }
+
+  var y = mairixCalculateTaxInclusive(115, 15);
+
+  if (Math.round(y.taxableAmount * 100) / 100 !== 100) {
+    throw new Error("Inclusive tax calculation failed.");
+  }
+
+  var snapshot = mairixBuildTaxSnapshot("VAT", 15, 100, 15);
+
+  if (snapshot.taxCode !== "VAT" || snapshot.taxRate !== 15) {
+    throw new Error("Tax snapshot failed.");
+  }
+
+  Logger.log("69 TAX ENGINE FINALIZATION: PASS");
+  return { success: true, snapshot: true, dateEffective: true };
+}

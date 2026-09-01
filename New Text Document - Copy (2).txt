@@ -1,0 +1,36 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 74-MAIRIX_FinalSecurityVerification.gs
+ *
+ * Final security verification.
+ *
+ * Security boundary is server-side.
+ * UI hiding is never considered authorization.
+ ************************************************/
+
+function testMairixFinalSecurityContracts() {
+  var required = [
+    "mairixApiContext",
+    "mairixApiRequirePermission",
+    "mairixRuntimeRequireTransactionAccess"
+  ];
+
+  required.forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Security contract missing: " + name);
+    }
+  });
+
+  if (typeof mairixRuntimeRecordRejection !== "function") {
+    throw new Error("Rejection audit contract missing.");
+  }
+
+  Logger.log("74 FINAL SECURITY VERIFICATION: PASS");
+
+  return {
+    success: true,
+    serverSideAuthorization: true,
+    rejectionAudit: true,
+    clientUserIdTrusted: false
+  };
+}

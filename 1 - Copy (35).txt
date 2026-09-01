@@ -1,0 +1,1705 @@
+<!--
+/************************************************
+ * MAIRIX ERP
+ * 43-MAIRIX_UI_Purchases.html
+ *
+ * PURCHASES UI
+ *
+ * Backend:
+ *   createPurchase(data)
+ *
+ * This UI does NOT write directly to Sheets.
+ * All posting is performed server-side.
+ ************************************************
+-->
+
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+  <base target="_top">
+
+  <meta charset="UTF-8">
+
+<meta
+name="viewport"
+content="width=device-width, initial-scale=1.0"
+
+>
+
+  <title>MAIRIX - Purchases</title>
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f5f6f8;
+      color: #222;
+    }
+
+    .page {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      color: #777;
+      font-size: 13px;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e1e4e8;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.04);
+    }
+
+    .section-title {
+      margin: 0 0 16px;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns:
+        repeat(4, minmax(180px, 1fr));
+      gap: 14px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #555;
+    }
+
+    input,
+    select {
+      width: 100%;
+      height: 40px;
+      border: 1px solid #d7dbe0;
+      border-radius: 7px;
+      padding: 0 11px;
+      font-size: 14px;
+      background: #fff;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: #777;
+    }
+
+    input[readonly] {
+      background: #f3f4f6;
+    }
+
+    .items-wrapper {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 900px;
+    }
+
+    th {
+      text-align: left;
+      background: #f3f4f6;
+      font-size: 12px;
+      padding: 10px;
+      border-bottom: 1px solid #ddd;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+      vertical-align: middle;
+    }
+
+    td input {
+      min-width: 90px;
+    }
+
+    .item-code {
+      min-width: 150px;
+    }
+
+    .item-name {
+      min-width: 180px;
+    }
+
+    .line-total {
+      min-width: 120px;
+      font-weight: 700;
+      text-align: right;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 0;
+      border-radius: 7px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: #222;
+      color: #fff;
+    }
+
+    .btn-secondary {
+      background: #e9ecef;
+      color: #222;
+    }
+
+    .btn-danger {
+      background: #eee;
+      color: #b00020;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .summary {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .summary-box {
+      width: 360px;
+      max-width: 100%;
+    }
+
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 14px;
+    }
+
+    .summary-row.total {
+      font-size: 18px;
+      font-weight: 700;
+      border-bottom: 0;
+      padding-top: 14px;
+    }
+
+    .message {
+      display: none;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin-bottom: 18px;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .message.show {
+      display: block;
+    }
+
+    .message.success {
+      background: #edf8ef;
+      border: 1px solid #c7e8cc;
+      color: #216e39;
+    }
+
+    .message.error {
+      background: #fff0f0;
+      border: 1px solid #f0caca;
+      color: #a00000;
+    }
+
+    .status {
+      font-size: 12px;
+      color: #777;
+      min-height: 18px;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 30px;
+      color: #888;
+    }
+
+    @media (max-width: 900px) {
+
+      .grid {
+        grid-template-columns:
+          repeat(2, minmax(160px, 1fr));
+      }
+
+    }
+
+    @media (max-width: 600px) {
+
+      .page {
+        padding: 12px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .title {
+        font-size: 23px;
+      }
+
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+<div class="page">
+
+  <div class="header">
+
+```
+<div>
+
+  <h1 class="title">
+    Purchases
+  </h1>
+
+  <div class="subtitle">
+    MAIRIX ERP — Purchase Transaction
+  </div>
+
+</div>
+
+<div class="actions">
+
+  <button
+    type="button"
+    class="btn-secondary"
+    onclick="resetPurchaseForm()"
+  >
+    New Purchase
+  </button>
+
+  <button
+    type="button"
+    class="btn-primary"
+    id="postButton"
+    onclick="postPurchase()"
+  >
+    Post Purchase
+  </button>
+
+</div>
+```
+
+  </div>
+
+  <div
+    id="message"
+    class="message"
+  ></div>
+
+  <!--
+    PURCHASE HEADER
+  -->
+
+  <div class="card">
+
+```
+<h2 class="section-title">
+  Purchase Information
+</h2>
+
+<div class="grid">
+
+  <div class="field">
+
+    <label>
+      Reference No
+    </label>
+
+    <input
+      id="referenceNo"
+      type="text"
+      autocomplete="off"
+    >
+
+  </div>
+
+
+  <div class="field">
+
+    <label>
+      Date
+    </label>
+
+    <input
+      id="purchaseDate"
+      type="date"
+    >
+
+  </div>
+
+
+  <div class="field">
+
+    <label>
+      Supplier Code *
+    </label>
+
+    <input
+      id="supplierCode"
+      type="text"
+      autocomplete="off"
+      required
+    >
+
+  </div>
+
+
+  <div class="field">
+
+    <label>
+      Warehouse Code *
+    </label>
+
+    <input
+      id="warehouseCode"
+      type="text"
+      autocomplete="off"
+      required
+    >
+
+  </div>
+
+
+  <div class="field">
+
+    <label>
+      Payment Type *
+    </label>
+
+    <select
+      id="paymentType"
+    >
+
+      <option value="CASH">
+        CASH
+      </option>
+
+      <option value="CREDIT">
+        CREDIT
+      </option>
+
+    </select>
+
+  </div>
+
+
+  <div class="field">
+
+    <label>
+      Due Date
+    </label>
+
+    <input
+      id="dueDate"
+      type="date"
+    >
+
+  </div>
+
+
+  <div class="field">
+
+    <label>
+      Currency
+    </label>
+
+    <input
+      id="currency"
+      type="text"
+      value="EGP"
+    >
+
+  </div>
+
+
+  <div class="field">
+
+    <label>
+      Document Discount
+    </label>
+
+    <input
+      id="documentDiscount"
+      type="number"
+      min="0"
+      step="0.001"
+      value="0"
+      oninput="recalculate()"
+    >
+
+  </div>
+
+</div>
+```
+
+  </div>
+
+  <!--
+    PURCHASE LINES
+  -->
+
+  <div class="card">
+
+```
+<div class="header">
+
+  <h2 class="section-title">
+    Purchase Items
+  </h2>
+
+  <button
+    type="button"
+    class="btn-secondary"
+    onclick="addPurchaseLine()"
+  >
+    + Add Item
+  </button>
+
+</div>
+
+
+<div class="items-wrapper">
+
+  <table>
+
+    <thead>
+
+      <tr>
+
+        <th>
+          #
+        </th>
+
+        <th>
+          Item Code *
+        </th>
+
+        <th>
+          Item Name
+        </th>
+
+        <th>
+          Quantity *
+        </th>
+
+        <th>
+          Unit
+        </th>
+
+        <th>
+          Unit Cost *
+        </th>
+
+        <th>
+          Discount
+        </th>
+
+        <th>
+          Net Amount
+        </th>
+
+        <th>
+          Action
+        </th>
+
+      </tr>
+
+    </thead>
+
+    <tbody id="itemsBody">
+    </tbody>
+
+  </table>
+
+</div>
+```
+
+  </div>
+
+  <!--
+    SUMMARY
+  -->
+
+  <div class="card">
+
+```
+<div class="summary">
+
+  <div class="summary-box">
+
+    <div class="summary-row">
+
+      <span>
+        Subtotal
+      </span>
+
+      <strong id="summarySubtotal">
+        0.000
+      </strong>
+
+    </div>
+
+
+    <div class="summary-row">
+
+      <span>
+        Discount
+      </span>
+
+      <strong id="summaryDiscount">
+        0.000
+      </strong>
+
+    </div>
+
+
+    <div class="summary-row">
+
+      <span>
+        Taxable Amount
+      </span>
+
+      <strong id="summaryTaxable">
+        0.000
+      </strong>
+
+    </div>
+
+
+    <div class="summary-row">
+
+      <span>
+        Tax
+      </span>
+
+      <strong>
+        Calculated by Tax Engine
+      </strong>
+
+    </div>
+
+
+    <div class="summary-row total">
+
+      <span>
+        Purchase Total
+      </span>
+
+      <strong id="summaryTotal">
+        0.000
+      </strong>
+
+    </div>
+
+  </div>
+
+</div>
+```
+
+  </div>
+
+  <div class="status" id="status">
+  </div>
+
+</div>
+
+<script>
+
+/************************************************
+ * STATE
+ ************************************************/
+
+let purchaseLines = [];
+
+let posting = false;
+
+
+/************************************************
+ * INITIALIZE
+ ************************************************/
+
+document.addEventListener(
+  "DOMContentLoaded",
+  function () {
+
+    setToday();
+
+    addPurchaseLine();
+
+  }
+);
+
+
+/************************************************
+ * DATE
+ ************************************************/
+
+function setToday() {
+
+  const input =
+    document.getElementById(
+      "purchaseDate"
+    );
+
+  const now =
+    new Date();
+
+  const year =
+    now.getFullYear();
+
+  const month =
+    String(
+      now.getMonth() + 1
+    ).padStart(2, "0");
+
+  const day =
+    String(
+      now.getDate()
+    ).padStart(2, "0");
+
+  input.value =
+    year +
+    "-" +
+    month +
+    "-" +
+    day;
+
+}
+
+
+/************************************************
+ * ADD LINE
+ ************************************************/
+
+function addPurchaseLine() {
+
+  purchaseLines.push({
+
+    itemCode: "",
+
+    quantity: 1,
+
+    unitCost: 0,
+
+    discount: 0
+
+  });
+
+  renderLines();
+
+}
+
+
+/************************************************
+ * REMOVE LINE
+ ************************************************/
+
+function removePurchaseLine(index) {
+
+  if (
+    purchaseLines.length === 1
+  ) {
+
+    showError(
+      "At least one purchase item is required."
+    );
+
+    return;
+
+  }
+
+  purchaseLines.splice(
+    index,
+    1
+  );
+
+  renderLines();
+
+}
+
+
+/************************************************
+ * UPDATE LINE
+ ************************************************/
+
+function updateLine(
+  index,
+  field,
+  value
+) {
+
+  if (
+    !purchaseLines[index]
+  ) {
+    return;
+  }
+
+  if (
+    field === "itemCode"
+  ) {
+
+    purchaseLines[index][field] =
+      String(value || "").trim();
+
+  } else {
+
+    const number =
+      Number(value);
+
+    purchaseLines[index][field] =
+      Number.isFinite(number)
+        ? number
+        : 0;
+
+  }
+
+  recalculate();
+
+}
+
+
+/************************************************
+ * RENDER LINES
+ ************************************************/
+
+function renderLines() {
+
+  const body =
+    document.getElementById(
+      "itemsBody"
+    );
+
+  body.innerHTML = "";
+
+
+  if (
+    purchaseLines.length === 0
+  ) {
+
+    body.innerHTML =
+      '<tr><td colspan="9" class="empty">No items</td></tr>';
+
+    recalculate();
+
+    return;
+
+  }
+
+
+  purchaseLines.forEach(
+    function(line, index) {
+
+      const gross =
+        line.quantity *
+        line.unitCost;
+
+      const discount =
+        line.discount;
+
+      const net =
+        Math.max(
+          0,
+          gross - discount
+        );
+
+
+      const row =
+        document.createElement(
+          "tr"
+        );
+
+
+      row.innerHTML = `
+
+        <td>
+          ${index + 1}
+        </td>
+
+        <td>
+          <input
+            class="item-code"
+            type="text"
+            value="${escapeHtml(line.itemCode)}"
+            oninput="updateLine(
+              ${index},
+              'itemCode',
+              this.value
+            )"
+          >
+        </td>
+
+        <td>
+          <input
+            class="item-name"
+            type="text"
+            value=""
+            placeholder="Server validates item"
+            readonly
+          >
+        </td>
+
+        <td>
+          <input
+            type="number"
+            min="0.001"
+            step="0.001"
+            value="${line.quantity}"
+            oninput="updateLine(
+              ${index},
+              'quantity',
+              this.value
+            )"
+          >
+        </td>
+
+        <td>
+          <input
+            type="text"
+            value=""
+            placeholder="Server"
+            readonly
+          >
+        </td>
+
+        <td>
+          <input
+            type="number"
+            min="0"
+            step="0.001"
+            value="${line.unitCost}"
+            oninput="updateLine(
+              ${index},
+              'unitCost',
+              this.value
+            )"
+          >
+        </td>
+
+        <td>
+          <input
+            type="number"
+            min="0"
+            step="0.001"
+            value="${line.discount}"
+            oninput="updateLine(
+              ${index},
+              'discount',
+              this.value
+            )"
+          >
+        </td>
+
+        <td class="line-total">
+          ${formatNumber(net)}
+        </td>
+
+        <td>
+          <button
+            type="button"
+            class="btn-danger"
+            onclick="removePurchaseLine(${index})"
+          >
+            Remove
+          </button>
+        </td>
+
+      `;
+
+      body.appendChild(row);
+
+    }
+  );
+
+
+  recalculate();
+
+}
+
+
+/************************************************
+ * RECALCULATE
+ *
+ * UI preview only.
+ *
+ * Final calculation belongs to
+ * createPurchase().
+ ************************************************/
+
+function recalculate() {
+
+  let subtotal = 0;
+
+  purchaseLines.forEach(
+    function(line) {
+
+      const quantity =
+        Number(line.quantity) || 0;
+
+      const unitCost =
+        Number(line.unitCost) || 0;
+
+      const discount =
+        Number(line.discount) || 0;
+
+      subtotal +=
+        Math.max(
+          0,
+          quantity * unitCost - discount
+        );
+
+    }
+  );
+
+
+  const documentDiscount =
+    Number(
+      document.getElementById(
+        "documentDiscount"
+      ).value
+    ) || 0;
+
+
+  const taxable =
+    Math.max(
+      0,
+      subtotal - documentDiscount
+    );
+
+
+  document.getElementById(
+    "summarySubtotal"
+  ).textContent =
+    formatNumber(subtotal);
+
+
+  document.getElementById(
+    "summaryDiscount"
+  ).textContent =
+    formatNumber(documentDiscount);
+
+
+  document.getElementById(
+    "summaryTaxable"
+  ).textContent =
+    formatNumber(taxable);
+
+
+  /*
+   * Tax is intentionally NOT calculated
+   * inside the browser.
+   *
+   * Server-side Tax Engine owns it.
+   */
+
+  document.getElementById(
+    "summaryTotal"
+  ).textContent =
+    "Calculated on Post";
+
+}
+
+
+/************************************************
+ * COLLECT DATA
+ ************************************************/
+
+function collectPurchaseData() {
+
+  const referenceNo =
+    getValue("referenceNo");
+
+  const date =
+    getValue("purchaseDate");
+
+  const supplierCode =
+    getValue("supplierCode");
+
+  const warehouseCode =
+    getValue("warehouseCode");
+
+  const paymentType =
+    getValue("paymentType");
+
+  const dueDate =
+    getValue("dueDate");
+
+  const currency =
+    getValue("currency") ||
+    "EGP";
+
+  const discount =
+    Number(
+      getValue(
+        "documentDiscount"
+      )
+    ) || 0;
+
+
+  const lines =
+    purchaseLines.map(
+      function(line) {
+
+        return {
+
+          itemCode:
+            String(
+              line.itemCode || ""
+            ).trim(),
+
+          quantity:
+            Number(
+              line.quantity
+            ),
+
+          unitCost:
+            Number(
+              line.unitCost
+            ),
+
+          discount:
+            Number(
+              line.discount
+            ) || 0
+
+        };
+
+      }
+    );
+
+
+  return {
+
+    referenceNo:
+      referenceNo,
+
+    date:
+      date,
+
+    supplierCode:
+      supplierCode,
+
+    warehouseCode:
+      warehouseCode,
+
+    paymentType:
+      paymentType,
+
+    dueDate:
+      dueDate,
+
+    currency:
+      currency,
+
+    discount:
+      discount,
+
+    lines:
+      lines
+
+  };
+
+}
+
+
+/************************************************
+ * VALIDATE CLIENT INPUT
+ *
+ * Server validation remains authoritative.
+ ************************************************/
+
+function validateClientData(
+  data
+) {
+
+  if (
+    !data.supplierCode
+  ) {
+
+    throw new Error(
+      "Supplier Code is required."
+    );
+
+  }
+
+
+  if (
+    !data.warehouseCode
+  ) {
+
+    throw new Error(
+      "Warehouse Code is required."
+    );
+
+  }
+
+
+  if (
+    !Array.isArray(data.lines) ||
+    data.lines.length === 0
+  ) {
+
+    throw new Error(
+      "At least one purchase item is required."
+    );
+
+  }
+
+
+  data.lines.forEach(
+    function(line, index) {
+
+      if (
+        !line.itemCode
+      ) {
+
+        throw new Error(
+          "Item Code is required on line " +
+          (index + 1)
+        );
+
+      }
+
+
+      if (
+        !Number.isFinite(
+          line.quantity
+        ) ||
+        line.quantity <= 0
+      ) {
+
+        throw new Error(
+          "Invalid quantity on line " +
+          (index + 1)
+        );
+
+      }
+
+
+      if (
+        !Number.isFinite(
+          line.unitCost
+        ) ||
+        line.unitCost < 0
+      ) {
+
+        throw new Error(
+          "Invalid unit cost on line " +
+          (index + 1)
+        );
+
+      }
+
+
+      if (
+        !Number.isFinite(
+          line.discount
+        ) ||
+        line.discount < 0
+      ) {
+
+        throw new Error(
+          "Invalid line discount on line " +
+          (index + 1)
+        );
+
+      }
+
+    }
+  );
+
+
+  if (
+    !["CASH", "CREDIT"]
+      .includes(
+        data.paymentType
+      )
+  ) {
+
+    throw new Error(
+      "Payment Type must be CASH or CREDIT."
+    );
+
+  }
+
+
+  if (
+    !Number.isFinite(
+      data.discount
+    ) ||
+    data.discount < 0
+  ) {
+
+    throw new Error(
+      "Invalid purchase discount."
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * POST PURCHASE
+ *
+ * ONLY SERVER FUNCTION CALLED:
+ *
+ *   createPurchase(data)
+ ************************************************/
+
+function postPurchase() {
+
+  if (posting) {
+    return;
+  }
+
+
+  clearMessage();
+
+
+  try {
+
+    const data =
+      collectPurchaseData();
+
+
+    validateClientData(
+      data
+    );
+
+
+    posting = true;
+
+    setPostingState(
+      true
+    );
+
+
+    setStatus(
+      "Posting purchase..."
+    );
+
+
+    google.script.run
+
+      .withSuccessHandler(
+        function(result) {
+
+          posting = false;
+
+          setPostingState(
+            false
+          );
+
+
+          if (
+            !result ||
+            result.success !== true
+          ) {
+
+            showError(
+              "Purchase was not posted."
+            );
+
+            setStatus(
+              ""
+            );
+
+            return;
+
+          }
+
+
+          showSuccess(
+            "Purchase posted successfully.\n\n" +
+            "Purchase ID: " +
+            (result.purchaseId || "") +
+            "\n" +
+            "Reference: " +
+            (result.referenceNo || "") +
+            "\n" +
+            "Net Total: " +
+            formatNumber(
+              result.netTotal
+            ) +
+            "\n" +
+            "Status: " +
+            (result.status || "POSTED")
+          );
+
+
+          setStatus(
+            "Purchase posted successfully."
+          );
+
+
+          /*
+           * Do not automatically reset the form.
+           *
+           * The posted document must remain visible
+           * to the user.
+           */
+
+        }
+      )
+
+      .withFailureHandler(
+        function(error) {
+
+          posting = false;
+
+          setPostingState(
+            false
+          );
+
+
+          const message =
+            error &&
+            error.message
+              ? error.message
+              : String(error);
+
+
+          showError(
+            message
+          );
+
+
+          setStatus(
+            "Posting failed."
+          );
+
+        }
+      )
+
+      .createPurchase(
+        data
+      );
+
+  } catch (error) {
+
+    posting = false;
+
+    setPostingState(
+      false
+    );
+
+
+    showError(
+      error.message ||
+      String(error)
+    );
+
+
+    setStatus(
+      ""
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * RESET
+ ************************************************/
+
+function resetPurchaseForm() {
+
+  if (posting) {
+    return;
+  }
+
+
+  clearMessage();
+
+
+  document.getElementById(
+    "referenceNo"
+  ).value = "";
+
+
+  document.getElementById(
+    "supplierCode"
+  ).value = "";
+
+
+  document.getElementById(
+    "warehouseCode"
+  ).value = "";
+
+
+  document.getElementById(
+    "paymentType"
+  ).value = "CASH";
+
+
+  document.getElementById(
+    "dueDate"
+  ).value = "";
+
+
+  document.getElementById(
+    "currency"
+  ).value = "EGP";
+
+
+  document.getElementById(
+    "documentDiscount"
+  ).value = "0";
+
+
+  purchaseLines = [];
+
+
+  addPurchaseLine();
+
+
+  setToday();
+
+
+  setStatus(
+    ""
+  );
+
+}
+
+
+/************************************************
+ * POSTING STATE
+ ************************************************/
+
+function setPostingState(
+  active
+) {
+
+  const button =
+    document.getElementById(
+      "postButton"
+    );
+
+
+  button.disabled =
+    active;
+
+
+  button.textContent =
+    active
+      ? "Posting..."
+      : "Post Purchase";
+
+}
+
+
+/************************************************
+ * STATUS
+ ************************************************/
+
+function setStatus(
+  text
+) {
+
+  document.getElementById(
+    "status"
+  ).textContent =
+    text || "";
+
+}
+
+
+/************************************************
+ * MESSAGES
+ ************************************************/
+
+function showSuccess(
+  text
+) {
+
+  const element =
+    document.getElementById(
+      "message"
+    );
+
+
+  element.className =
+    "message show success";
+
+
+  element.textContent =
+    text;
+
+}
+
+
+function showError(
+  text
+) {
+
+  const element =
+    document.getElementById(
+      "message"
+    );
+
+
+  element.className =
+    "message show error";
+
+
+  element.textContent =
+    text;
+
+}
+
+
+function clearMessage() {
+
+  const element =
+    document.getElementById(
+      "message"
+    );
+
+
+  element.className =
+    "message";
+
+
+  element.textContent =
+    "";
+
+}
+
+
+/************************************************
+ * HELPERS
+ ************************************************/
+
+function getValue(
+  id
+) {
+
+  const element =
+    document.getElementById(
+      id
+    );
+
+
+  return element
+    ? String(
+        element.value || ""
+      ).trim()
+    : "";
+
+}
+
+
+function formatNumber(
+  value
+) {
+
+  const number =
+    Number(value);
+
+
+  if (
+    !Number.isFinite(number)
+  ) {
+
+    return "0.000";
+
+  }
+
+
+  return number.toFixed(3);
+
+}
+
+
+function escapeHtml(
+  value
+) {
+
+  return String(
+    value || ""
+  )
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&#039;"
+    );
+
+}
+
+</script>
+
+</body>
+</html>

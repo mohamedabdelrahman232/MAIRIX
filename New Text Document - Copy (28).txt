@@ -1,0 +1,56 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 78-MAIRIX_DeploymentGoLive.gs
+ *
+ * Deployment / Go Live checklist.
+ *
+ * This file does not deploy automatically.
+ * Deployment remains an explicit administrative action.
+ ************************************************/
+
+const MAIRIX_GO_LIVE_CHECKLIST = [
+  "FULL_SPREADSHEET_BACKUP",
+  "FULL_CODE_BACKUP",
+  "PRODUCTION_COPY_CREATED",
+  "TIMEZONE_VERIFIED",
+  "TRIGGERS_VERIFIED",
+  "ADMIN_CREATED",
+  "ROLES_CONFIGURED",
+  "PERMISSIONS_CONFIGURED",
+  "WAREHOUSES_CONFIGURED",
+  "PRODUCTS_CONFIGURED",
+  "CUSTOMERS_CONFIGURED",
+  "SUPPLIERS_CONFIGURED",
+  "TAX_CONFIGURED",
+  "SETTINGS_CONFIGURED",
+  "TEST_SALE_COMPLETED",
+  "TEST_PURCHASE_COMPLETED",
+  "LEDGERS_RECONCILED",
+  "INVENTORY_RECONCILED",
+  "REPORTS_RECONCILED",
+  "SECURITY_APPROVED",
+  "UAT_APPROVED",
+  "GO_LIVE_APPROVED"
+];
+
+function getMairixGoLiveChecklist() {
+  return MAIRIX_GO_LIVE_CHECKLIST.map(function(item) {
+    return {
+      item: item,
+      status: "PENDING"
+    };
+  });
+}
+
+function testMairixDeploymentChecklist() {
+  if (MAIRIX_GO_LIVE_CHECKLIST.length < 20) {
+    throw new Error("Go Live checklist is incomplete.");
+  }
+
+  Logger.log("78 DEPLOYMENT / GO LIVE CHECKLIST: PASS");
+  return {
+    success: true,
+    checklistItems: MAIRIX_GO_LIVE_CHECKLIST.length,
+    deployment: "MANUAL_APPROVAL_REQUIRED"
+  };
+}

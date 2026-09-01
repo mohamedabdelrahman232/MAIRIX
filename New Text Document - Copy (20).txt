@@ -1,0 +1,1358 @@
+/************************************************
+ * MAIRIX ERP
+ * MAIRIX_RuntimePermissions
+ *
+ * FINAL RUNTIME PERMISSION ENGINE
+ *
+ * PERMISSION MODEL:
+ *
+ * ROLE
+ *   ↓
+ * ROLE_PERMISSIONS
+ *   ↓
+ * Permission Code
+ *   +
+ * Action Column
+ *
+ * Example:
+ *
+ * SALES + CREATE
+ *
+ * ROLE_PERMISSIONS:
+ *
+ * Role Code
+ * Permission Code
+ * View
+ * Create
+ * Edit
+ * Delete
+ * Export
+ * Active
+ *
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+const MAIRIX_RUNTIME_PERMISSION_SHEET =
+  "ROLE_PERMISSIONS";
+
+const MAIRIX_RUNTIME_PERMISSION_HEADERS = Object.freeze({
+  ROLE_CODE: "Role Code",
+  PERMISSION_CODE: "Permission Code",
+  VIEW: "View",
+  CREATE: "Create",
+  EDIT: "Edit",
+  DELETE: "Delete",
+  EXPORT: "Export",
+  ACTIVE: "Active"
+});
+
+
+/************************************************
+ * NORMALIZE VALUE
+ ************************************************/
+
+function mairixRuntimeNormalize(value) {
+
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+
+}
+
+
+/************************************************
+ * BOOLEAN VALUE
+ ************************************************/
+
+function mairixRuntimeToBoolean(value) {
+
+  if (value === true) {
+    return true;
+  }
+
+  if (value === false) {
+    return false;
+  }
+
+  const normalized =
+    mairixRuntimeNormalize(value);
+
+  return (
+    normalized === "TRUE" ||
+    normalized === "YES" ||
+    normalized === "1"
+  );
+
+}
+
+
+/************************************************
+ * NORMALIZE ACTION
+ ************************************************/
+
+function mairixRuntimeNormalizeAction(action) {
+
+  const normalized =
+    mairixRuntimeNormalize(action);
+
+  const allowedActions = [
+    "VIEW",
+    "CREATE",
+    "EDIT",
+    "DELETE",
+    "EXPORT"
+  ];
+
+  if (
+    allowedActions.indexOf(normalized) === -1
+  ) {
+    throw new Error(
+      "Invalid permission action: " +
+      action
+    );
+  }
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * ACTION → COLUMN
+ ************************************************/
+
+function mairixRuntimeGetActionHeader(action) {
+
+  const normalizedAction =
+    mairixRuntimeNormalizeAction(action);
+
+  const map = {
+    VIEW:
+      MAIRIX_RUNTIME_PERMISSION_HEADERS.VIEW,
+
+    CREATE:
+      MAIRIX_RUNTIME_PERMISSION_HEADERS.CREATE,
+
+    EDIT:
+      MAIRIX_RUNTIME_PERMISSION_HEADERS.EDIT,
+
+    DELETE:
+      MAIRIX_RUNTIME_PERMISSION_HEADERS.DELETE,
+
+    EXPORT:
+      MAIRIX_RUNTIME_PERMISSION_HEADERS.EXPORT
+  };
+
+  return map[normalizedAction];
+
+}
+
+
+/************************************************
+ * GET SPREADSHEET
+ ************************************************/
+
+function mairixRuntimeGetSpreadsheet() {
+
+  if (
+    typeof getMairixSpreadsheet === "function"
+  ) {
+    return getMairixSpreadsheet();
+  }
+
+  return SpreadsheetApp.getActiveSpreadsheet();
+
+}
+
+
+/************************************************
+ * GET REQUIRED SHEET
+ ************************************************/
+
+function mairixRuntimeGetRequiredSheet(sheetName) {
+
+  const spreadsheet =
+    mairixRuntimeGetSpreadsheet();
+
+  const sheet =
+    spreadsheet.getSheetByName(sheetName);
+
+  if (!sheet) {
+
+    throw new Error(
+      "Required sheet not found: " +
+      sheetName
+    );
+
+  }
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * GET SHEET DATA
+ ************************************************/
+
+function mairixRuntimeGetSheetData(sheetName) {
+
+  const sheet =
+    mairixRuntimeGetRequiredSheet(sheetName);
+
+  const lastRow =
+    sheet.getLastRow();
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+  if (
+    lastRow < 1 ||
+    lastColumn < 1
+  ) {
+
+    return {
+      headers: [],
+      rows: []
+    };
+
+  }
+
+  const values =
+    sheet
+      .getRange(
+        1,
+        1,
+        lastRow,
+        lastColumn
+      )
+      .getValues();
+
+  const headers =
+    values[0]
+      .map(function(header) {
+        return String(header || "").trim();
+      });
+
+  const rows =
+    values.slice(1);
+
+  return {
+    headers: headers,
+    rows: rows
+  };
+
+}
+
+
+/************************************************
+ * BUILD HEADER MAP
+ ************************************************/
+
+function mairixRuntimeBuildHeaderMap(headers) {
+
+  const map = {};
+
+  headers.forEach(
+    function(header, index) {
+
+      const normalized =
+        String(header || "")
+          .trim()
+          .toUpperCase();
+
+      map[normalized] = index;
+
+    }
+  );
+
+  return map;
+
+}
+
+
+/************************************************
+ * REQUIRE HEADER
+ ************************************************/
+
+function mairixRuntimeRequireHeader(
+  headerMap,
+  headerName,
+  sheetName
+) {
+
+  const normalized =
+    String(headerName || "")
+      .trim()
+      .toUpperCase();
+
+  if (
+    typeof headerMap[normalized] ===
+    "undefined"
+  ) {
+
+    throw new Error(
+      "Required header missing: " +
+      sheetName +
+      " -> " +
+      headerName
+    );
+
+  }
+
+  return headerMap[normalized];
+
+}
+
+
+/************************************************
+ * GET CURRENT USER SAFELY
+ *
+ * Uses existing project functions.
+ *
+ ************************************************/
+
+function mairixRuntimeGetCurrentUser() {
+
+  if (
+    typeof requireCurrentUser === "function"
+  ) {
+
+    const user =
+      requireCurrentUser();
+
+    if (
+      user &&
+      user.userId
+    ) {
+      return user;
+    }
+
+  }
+
+
+  if (
+    typeof mairixGetCurrentUser === "function"
+  ) {
+
+    const user =
+      mairixGetCurrentUser();
+
+    if (
+      user &&
+      user.userId
+    ) {
+      return user;
+    }
+
+  }
+
+
+  if (
+    typeof getCurrentMAIRIXUser === "function"
+  ) {
+
+    const user =
+      getCurrentMAIRIXUser();
+
+    if (
+      user &&
+      user.userId
+    ) {
+      return user;
+    }
+
+  }
+
+
+  throw new Error(
+    "Current authenticated MAIRIX user is required."
+  );
+
+}
+
+
+/************************************************
+ * GET USER BY ID
+ *
+ * Runtime engine should not depend on
+ * EMPLOYEES -> User ID.
+ *
+ ************************************************/
+
+function mairixRuntimeGetUserById(userId) {
+
+  const normalizedUserId =
+    String(userId || "").trim();
+
+  if (!normalizedUserId) {
+
+    throw new Error(
+      "User ID is required."
+    );
+
+  }
+
+
+  const currentUser =
+    mairixRuntimeGetCurrentUser();
+
+  if (
+    currentUser &&
+    String(currentUser.userId) ===
+    normalizedUserId
+  ) {
+
+    return currentUser;
+
+  }
+
+
+  if (
+    typeof mairixGetUserById === "function"
+  ) {
+
+    const user =
+      mairixGetUserById(
+        normalizedUserId
+      );
+
+    if (user) {
+      return user;
+    }
+
+  }
+
+
+  throw new Error(
+    "MAIRIX user not found: " +
+    normalizedUserId
+  );
+
+}
+
+
+/************************************************
+ * RESOLVE USER ROLE
+ ************************************************/
+
+function mairixRuntimeResolveRole(userId) {
+
+  const user =
+    mairixRuntimeGetUserById(userId);
+
+  const roleCode =
+    mairixRuntimeNormalize(
+      user.roleCode ||
+      user.role
+    );
+
+  if (!roleCode) {
+
+    throw new Error(
+      "User role is missing: " +
+      userId
+    );
+
+  }
+
+  return {
+    userId:
+      user.userId,
+
+    employeeCode:
+      user.employeeCode || "",
+
+    roleCode:
+      roleCode,
+
+    roleName:
+      user.roleName ||
+      roleCode,
+
+    active:
+      user.active !== false
+  };
+
+}
+
+
+/************************************************
+ * FIND ROLE PERMISSION ROW
+ ************************************************/
+
+function mairixRuntimeFindPermissionRow(
+  roleCode,
+  permissionCode
+) {
+
+  const data =
+    mairixRuntimeGetSheetData(
+      MAIRIX_RUNTIME_PERMISSION_SHEET
+    );
+
+  const headerMap =
+    mairixRuntimeBuildHeaderMap(
+      data.headers
+    );
+
+
+  const roleIndex =
+    mairixRuntimeRequireHeader(
+      headerMap,
+      MAIRIX_RUNTIME_PERMISSION_HEADERS.ROLE_CODE,
+      MAIRIX_RUNTIME_PERMISSION_SHEET
+    );
+
+
+  const permissionIndex =
+    mairixRuntimeRequireHeader(
+      headerMap,
+      MAIRIX_RUNTIME_PERMISSION_HEADERS.PERMISSION_CODE,
+      MAIRIX_RUNTIME_PERMISSION_SHEET
+    );
+
+
+  const normalizedRole =
+    mairixRuntimeNormalize(roleCode);
+
+  const normalizedPermission =
+    mairixRuntimeNormalize(permissionCode);
+
+
+  for (
+    let i = 0;
+    i < data.rows.length;
+    i++
+  ) {
+
+    const row =
+      data.rows[i];
+
+    const rowRole =
+      mairixRuntimeNormalize(
+        row[roleIndex]
+      );
+
+    const rowPermission =
+      mairixRuntimeNormalize(
+        row[permissionIndex]
+      );
+
+
+    if (
+      rowRole === normalizedRole &&
+      rowPermission === normalizedPermission
+    ) {
+
+      return {
+        headers:
+          data.headers,
+
+        headerMap:
+          headerMap,
+
+        row:
+          row,
+
+        rowNumber:
+          i + 2
+      };
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * CHECK ROLE PERMISSION
+ ************************************************/
+
+function mairixRuntimeHasRolePermission(
+  roleCode,
+  permissionCode,
+  action
+) {
+
+  const normalizedRole =
+    mairixRuntimeNormalize(roleCode);
+
+  const normalizedPermission =
+    mairixRuntimeNormalize(permissionCode);
+
+  const normalizedAction =
+    mairixRuntimeNormalizeAction(action);
+
+
+  if (
+    !normalizedRole ||
+    !normalizedPermission
+  ) {
+    return false;
+  }
+
+
+  const result =
+    mairixRuntimeFindPermissionRow(
+      normalizedRole,
+      normalizedPermission
+    );
+
+
+  if (!result) {
+
+    return false;
+
+  }
+
+
+  const activeIndex =
+    mairixRuntimeRequireHeader(
+      result.headerMap,
+      MAIRIX_RUNTIME_PERMISSION_HEADERS.ACTIVE,
+      MAIRIX_RUNTIME_PERMISSION_SHEET
+    );
+
+
+  const actionHeader =
+    mairixRuntimeGetActionHeader(
+      normalizedAction
+    );
+
+
+  const actionIndex =
+    mairixRuntimeRequireHeader(
+      result.headerMap,
+      actionHeader,
+      MAIRIX_RUNTIME_PERMISSION_SHEET
+    );
+
+
+  const active =
+    mairixRuntimeToBoolean(
+      result.row[activeIndex]
+    );
+
+
+  if (!active) {
+
+    return false;
+
+  }
+
+
+  return mairixRuntimeToBoolean(
+    result.row[actionIndex]
+  );
+
+}
+
+
+/************************************************
+ * ADMIN OVERRIDE
+ *
+ * ADMIN gets access according to matrix.
+ * No hidden hard-coded permissions.
+ *
+ ************************************************/
+
+function mairixRuntimeHasPermission(
+  userId,
+  permissionCode,
+  action
+) {
+
+  if (!userId) {
+    return false;
+  }
+
+
+  const role =
+    mairixRuntimeResolveRole(
+      userId
+    );
+
+
+  if (
+    role.active === false
+  ) {
+    return false;
+  }
+
+
+  return mairixRuntimeHasRolePermission(
+    role.roleCode,
+    permissionCode,
+    action
+  );
+
+}
+
+
+/************************************************
+ * REQUIRE PERMISSION
+ ************************************************/
+
+function mairixRuntimeRequirePermission(
+  userId,
+  permissionCode,
+  action
+) {
+
+  const allowed =
+    mairixRuntimeHasPermission(
+      userId,
+      permissionCode,
+      action
+    );
+
+
+  if (!allowed) {
+
+    if (
+      typeof mairixRuntimeRecordRejection ===
+      "function"
+    ) {
+
+      mairixRuntimeRecordRejection(
+        userId,
+        permissionCode,
+        "PERMISSION_DENIED:" +
+        mairixRuntimeNormalize(action)
+      );
+
+    }
+
+
+    throw new Error(
+      "Permission denied: " +
+      permissionCode +
+      " / " +
+      mairixRuntimeNormalize(action)
+    );
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * CURRENT USER PERMISSION
+ ************************************************/
+
+function mairixRuntimeCurrentUserHasPermission(
+  permissionCode,
+  action
+) {
+
+  const currentUser =
+    mairixRuntimeGetCurrentUser();
+
+  return mairixRuntimeHasPermission(
+    currentUser.userId,
+    permissionCode,
+    action
+  );
+
+}
+
+
+/************************************************
+ * REQUIRE CURRENT USER PERMISSION
+ ************************************************/
+
+function mairixRuntimeRequireCurrentUserPermission(
+  permissionCode,
+  action
+) {
+
+  const currentUser =
+    mairixRuntimeGetCurrentUser();
+
+  return mairixRuntimeRequirePermission(
+    currentUser.userId,
+    permissionCode,
+    action
+  );
+
+}
+
+
+/************************************************
+ * GENERIC REQUIRE FUNCTIONS
+ ************************************************/
+
+function requireMairixView(permissionCode) {
+
+  return mairixRuntimeRequireCurrentUserPermission(
+    permissionCode,
+    "VIEW"
+  );
+
+}
+
+
+function requireMairixCreate(permissionCode) {
+
+  return mairixRuntimeRequireCurrentUserPermission(
+    permissionCode,
+    "CREATE"
+  );
+
+}
+
+
+function requireMairixEdit(permissionCode) {
+
+  return mairixRuntimeRequireCurrentUserPermission(
+    permissionCode,
+    "EDIT"
+  );
+
+}
+
+
+function requireMairixDelete(permissionCode) {
+
+  return mairixRuntimeRequireCurrentUserPermission(
+    permissionCode,
+    "DELETE"
+  );
+
+}
+
+
+function requireMairixExport(permissionCode) {
+
+  return mairixRuntimeRequireCurrentUserPermission(
+    permissionCode,
+    "EXPORT"
+  );
+
+}
+
+
+/************************************************
+ * SALES REQUIRE FUNCTIONS
+ ************************************************/
+
+function requireSalesView() {
+
+  return requireMairixView(
+    "SALES"
+  );
+
+}
+
+
+function requireSalesCreate() {
+
+  return requireMairixCreate(
+    "SALES"
+  );
+
+}
+
+
+function requireSalesEdit() {
+
+  return requireMairixEdit(
+    "SALES"
+  );
+
+}
+
+
+function requireSalesDelete() {
+
+  return requireMairixDelete(
+    "SALES"
+  );
+
+}
+
+
+function requireSalesExport() {
+
+  return requireMairixExport(
+    "SALES"
+  );
+
+}
+
+
+/************************************************
+ * SALES RETURNS REQUIRE FUNCTIONS
+ ************************************************/
+
+function requireSalesReturnsView() {
+
+  return requireMairixView(
+    "SALES_RETURNS"
+  );
+
+}
+
+
+function requireSalesReturnsCreate() {
+
+  return requireMairixCreate(
+    "SALES_RETURNS"
+  );
+
+}
+
+
+function requireSalesReturnsEdit() {
+
+  return requireMairixEdit(
+    "SALES_RETURNS"
+  );
+
+}
+
+
+function requireSalesReturnsDelete() {
+
+  return requireMairixDelete(
+    "SALES_RETURNS"
+  );
+
+}
+
+
+function requireSalesReturnsExport() {
+
+  return requireMairixExport(
+    "SALES_RETURNS"
+  );
+
+}
+
+
+/************************************************
+ * SALES DISCOUNT
+ *
+ * CREATE means:
+ * user can apply a sales discount.
+ *
+ ************************************************/
+
+function requireSalesDiscount() {
+
+  return requireMairixCreate(
+    "SALES_DISCOUNT"
+  );
+
+}
+
+
+function mairixRuntimeCanApplySalesDiscount() {
+
+  return mairixRuntimeCurrentUserHasPermission(
+    "SALES_DISCOUNT",
+    "CREATE"
+  );
+
+}
+
+
+/************************************************
+ * PURCHASES REQUIRE FUNCTIONS
+ ************************************************/
+
+function requirePurchasesView() {
+
+  return requireMairixView(
+    "PURCHASES"
+  );
+
+}
+
+
+function requirePurchasesCreate() {
+
+  return requireMairixCreate(
+    "PURCHASES"
+  );
+
+}
+
+
+function requirePurchasesEdit() {
+
+  return requireMairixEdit(
+    "PURCHASES"
+  );
+
+}
+
+
+function requirePurchasesDelete() {
+
+  return requireMairixDelete(
+    "PURCHASES"
+  );
+
+}
+
+
+function requirePurchasesExport() {
+
+  return requireMairixExport(
+    "PURCHASES"
+  );
+
+}
+
+
+/************************************************
+ * REPORT PERMISSION
+ *
+ * Date filtering is VIEW.
+ * It is NOT EDIT.
+ *
+ ************************************************/
+
+function requireReportView(reportCode) {
+
+  return requireMairixView(
+    reportCode
+  );
+
+}
+
+
+function canViewReport(reportCode) {
+
+  return mairixRuntimeCurrentUserHasPermission(
+    reportCode,
+    "VIEW"
+  );
+
+}
+
+
+function canExportReport(reportCode) {
+
+  return mairixRuntimeCurrentUserHasPermission(
+    reportCode,
+    "EXPORT"
+  );
+
+}
+
+
+/************************************************
+ * DEBUG CURRENT USER
+ ************************************************/
+
+function mairixDebugCurrentRuntimeUser() {
+
+  const user =
+    mairixRuntimeGetCurrentUser();
+
+  Logger.log(
+    JSON.stringify(
+      user,
+      null,
+      2
+    )
+  );
+
+  return user;
+
+}
+
+
+/************************************************
+ * DEBUG PERMISSION
+ ************************************************/
+
+function mairixDebugPermission(
+  permissionCode,
+  action
+) {
+
+  const user =
+    mairixRuntimeGetCurrentUser();
+
+  const role =
+    mairixRuntimeResolveRole(
+      user.userId
+    );
+
+  const allowed =
+    mairixRuntimeHasPermission(
+      user.userId,
+      permissionCode,
+      action
+    );
+
+  const result = {
+    userId:
+      user.userId,
+
+    employeeCode:
+      user.employeeCode || "",
+
+    roleCode:
+      role.roleCode,
+
+    permissionCode:
+      permissionCode,
+
+    action:
+      action,
+
+    allowed:
+      allowed
+  };
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  return result;
+
+}
+
+
+/************************************************
+ * FULL RUNTIME TEST
+ ************************************************/
+
+function mairixTestRuntimePermissionEngine() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FINAL RUNTIME PERMISSION TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const currentUser =
+    mairixRuntimeGetCurrentUser();
+
+
+  Logger.log(
+    "CURRENT USER:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      currentUser,
+      null,
+      2
+    )
+  );
+
+
+  const role =
+    mairixRuntimeResolveRole(
+      currentUser.userId
+    );
+
+
+  Logger.log(
+    "------------------------------------------"
+  );
+
+  Logger.log(
+    "ROLE:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      role,
+      null,
+      2
+    )
+  );
+
+
+  const tests = [
+
+    {
+      permissionCode: "SALES",
+      action: "VIEW"
+    },
+
+    {
+      permissionCode: "SALES",
+      action: "CREATE"
+    },
+
+    {
+      permissionCode: "SALES",
+      action: "EDIT"
+    },
+
+    {
+      permissionCode: "SALES",
+      action: "DELETE"
+    },
+
+    {
+      permissionCode: "SALES",
+      action: "EXPORT"
+    },
+
+    {
+      permissionCode: "SALES_DISCOUNT",
+      action: "CREATE"
+    }
+
+  ];
+
+
+  const results = [];
+
+
+  Logger.log(
+    "------------------------------------------"
+  );
+
+  Logger.log(
+    "PERMISSION TESTS:"
+  );
+
+
+  tests.forEach(
+    function(test) {
+
+      let allowed = false;
+      let error = "";
+
+      try {
+
+        allowed =
+          mairixRuntimeHasPermission(
+            currentUser.userId,
+            test.permissionCode,
+            test.action
+          );
+
+      } catch (e) {
+
+        error =
+          String(e);
+
+      }
+
+
+      const result = {
+
+        permissionCode:
+          test.permissionCode,
+
+        action:
+          test.action,
+
+        allowed:
+          allowed,
+
+        error:
+          error
+
+      };
+
+
+      results.push(result);
+
+      Logger.log(
+        JSON.stringify(result)
+      );
+
+    }
+  );
+
+
+  const allowedCount =
+    results.filter(
+      function(item) {
+        return item.allowed;
+      }
+    ).length;
+
+
+  const deniedCount =
+    results.length -
+    allowedCount;
+
+
+  const summary = {
+
+    success: true,
+
+    currentUser:
+      currentUser,
+
+    role:
+      role,
+
+    permissions:
+      results,
+
+    summary: {
+
+      permissionsTested:
+        results.length,
+
+      allowed:
+        allowedCount,
+
+      denied:
+        deniedCount
+
+    }
+
+  };
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "SUMMARY:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      summary.summary,
+      null,
+      2
+    )
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return summary;
+
+}

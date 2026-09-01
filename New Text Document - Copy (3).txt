@@ -1,0 +1,61 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 73-MAIRIX_ConcurrencyDuplicateProtection.gs
+ *
+ * Concurrency / duplicate-protection contract.
+ *
+ * Existing transaction cores remain authoritative.
+ * This file provides reusable guard patterns.
+ ************************************************/
+
+function mairixWithConcurrencyGuard(lockName, callback) {
+  if (typeof callback !== "function") {
+    throw new Error("Concurrency callback is required.");
+  }
+
+  var lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(30000)) {
+    throw new Error("SYSTEM_BUSY_TRANSACTION_LOCK");
+  }
+
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function mairixAssertUniqueTransactionReference(referenceId, existingReferences) {
+  if (!referenceId) throw new Error("Transaction reference is required.");
+
+  var refs = Array.isArray(existingReferences)
+    ? existingReferences
+    : [];
+
+  if (refs.indexOf(referenceId) !== -1) {
+    throw new Error("DUPLICATE_TRANSACTION_REFERENCE");
+  }
+
+  return true;
+}
+
+function testMairixConcurrencyDuplicateContract() {
+  mairixAssertUniqueTransactionReference("TX-TEST-001", []);
+
+  try {
+    mairixAssertUniqueTransactionReference("TX-TEST-001", ["TX-TEST-001"]);
+    throw new Error("Duplicate reference was accepted.");
+  } catch (e) {
+    if (e.message !== "DUPLICATE_TRANSACTION_REFERENCE") throw e;
+  }
+
+  var result = mairixWithConcurrencyGuard("TEST", function() {
+    return "LOCKED_EXECUTION";
+  });
+
+  if (result !== "LOCKED_EXECUTION") throw new Error("Lock execution failed.");
+
+  Logger.log("73 CONCURRENCY + DUPLICATE PROTECTION: PASS");
+  return { success: true, lock: true, duplicateGuard: true };
+}

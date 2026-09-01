@@ -1,0 +1,2071 @@
+ /************************************************
+ * MAIRIX ERP
+ * 16-MAIRIX_Expenses.gs
+ *
+ * EXPENSES ENGINE
+ *
+ * المسؤوليات:
+ *
+ * 1) تسجيل المصروفات
+ * 2) تصنيف المصروف
+ * 3) تحديد طريقة تحميل المصروف
+ * 4) ربط المصروف بصنف
+ * 5) ربط المصروف بفاتورة شراء
+ * 6) تسجيل المصروف العمومي
+ * 7) ربط المصروف ببند القوائم المالية
+ * 8) تسجيل التأثير النقدي / الآجل
+ * 9) تسجيل أثر تكلفة المخزون عند الحاجة
+ * 10) إنشاء مرجع مركزي للحركة
+ * 11) دعم عدد غير محدود من أنواع المصروفات
+ * 12) منع التعديل اليدوي على الأرصدة
+ *
+ * DESIGN
+ *
+ * Expense Loading:
+ *
+ *   PURCHASE
+ *      |
+ *      +--> يدخل في تكلفة الشراء
+ *      +--> يؤثر على WAC
+ *
+ *   ITEM
+ *      |
+ *      +--> يدخل على تكلفة صنف محدد
+ *
+ *   GENERAL
+ *      |
+ *      +--> مصروف قائمة دخل
+ *      +--> لا يؤثر على WAC
+ *
+ *
+ * FINANCIAL SIGN:
+ *
+ * Expense = NEGATIVE
+ *
+ * Cash Effect:
+ *   Paid = NEGATIVE
+ *
+ * Payable Effect:
+ *   Expense on credit = NEGATIVE cash
+ *                         +
+ *                         LIABILITY increase
+ *
+ * IMPORTANT:
+ *
+ * كل حركة لها Reference مركزي.
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+const MAIRIX_EXPENSE = {
+
+  TYPE:
+    "EXPENSE",
+
+  STATUS_POSTED:
+    "POSTED",
+
+  STATUS_VOID:
+    "VOID",
+
+  LOAD_PURCHASE:
+    "PURCHASE",
+
+  LOAD_ITEM:
+    "ITEM",
+
+  LOAD_GENERAL:
+    "GENERAL",
+
+  PAYMENT_CASH:
+    "CASH",
+
+  PAYMENT_BANK:
+    "BANK",
+
+  PAYMENT_CREDIT:
+    "CREDIT",
+
+  REFERENCE_PREFIX:
+    "EXP"
+
+};
+
+
+/************************************************
+ * CREATE EXPENSE
+ ************************************************/
+
+function createExpense(data) {
+
+  const currentUser =
+    requireCurrentUser();
+
+
+  requireExpensesCreate(
+    currentUser.userId
+  );
+
+
+  if (!data) {
+
+    throw new Error(
+      "Expense data is required."
+    );
+
+  }
+
+
+  /**********************************************
+   * BASIC DATA
+   **********************************************/
+
+  const expenseDate =
+    data.date
+      ? new Date(data.date)
+      : new Date();
+
+
+  if (
+    isNaN(
+      expenseDate.getTime()
+    )
+  ) {
+
+    throw new Error(
+      "Invalid expense date."
+    );
+
+  }
+
+
+  const description =
+    mairixCleanText(
+      data.description ||
+      data.statement ||
+      data.name
+    );
+
+
+  if (!description) {
+
+    throw new Error(
+      "Expense description is required."
+    );
+
+  }
+
+
+  const amount =
+    Number(
+      data.amount
+    );
+
+
+  if (
+    !isFinite(amount) ||
+    amount <= 0
+  ) {
+
+    throw new Error(
+      "Expense amount must be greater than zero."
+    );
+
+  }
+
+
+  /**********************************************
+   * EXPENSE CATEGORY
+   **********************************************/
+
+  const category =
+    normalizeExpenseCategory(
+      data.category
+    );
+
+
+  /**********************************************
+   * LOADING METHOD
+   **********************************************/
+
+  const loadingMethod =
+    normalizeExpenseLoadingMethod(
+      data.loadingMethod
+    );
+
+
+  /**********************************************
+   * PAYMENT METHOD
+   **********************************************/
+
+  const paymentMethod =
+    normalizeExpensePaymentMethod(
+      data.paymentMethod
+    );
+
+
+  /**********************************************
+   * VALIDATE LOADING REFERENCE
+   **********************************************/
+
+  const itemId =
+    mairixCleanText(
+      data.itemId
+    );
+
+
+  const purchaseReference =
+    mairixCleanText(
+      data.purchaseReference
+    );
+
+
+  validateExpenseLoadingReference({
+
+    loadingMethod:
+      loadingMethod,
+
+    itemId:
+      itemId,
+
+    purchaseReference:
+      purchaseReference
+
+  });
+
+
+  /**********************************************
+   * FINANCIAL STATEMENT MAPPING
+   **********************************************/
+
+  const financialStatementCode =
+    mairixCleanText(
+      data.financialStatementCode
+    );
+
+
+  const financialAccountCode =
+    mairixCleanText(
+      data.financialAccountCode
+    );
+
+
+  /*
+   * GENERAL expenses MUST have a
+   * financial statement mapping.
+   */
+
+  if (
+    loadingMethod ===
+      MAIRIX_EXPENSE.LOAD_GENERAL &&
+    !financialStatementCode
+  ) {
+
+    throw new Error(
+      "General expense must be linked to a financial statement line."
+    );
+
+  }
+
+
+  /**********************************************
+   * SALESMAN COMMISSION
+   **********************************************/
+
+  const salesmanId =
+    mairixCleanText(
+      data.salesmanId
+    );
+
+
+  const salesmanName =
+    mairixCleanText(
+      data.salesmanName
+    );
+
+
+  if (
+    category ===
+      "COM" &&
+    !salesmanId
+  ) {
+
+    throw new Error(
+      "Salesman ID is required for commission expenses."
+    );
+
+  }
+
+
+  /**********************************************
+   * EXPENSE ID
+   **********************************************/
+
+  const expenseId =
+    generateExpenseId();
+
+
+  /**********************************************
+   * CENTRAL REFERENCE
+   **********************************************/
+
+  const reference =
+    generateExpenseReference();
+
+
+  /**********************************************
+   * EXPENSE SHEET
+   **********************************************/
+
+  const sheet =
+    getExpenseSheet();
+
+
+  const headers =
+    getExpenseHeaders(
+      sheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Expense ID",
+    expenseId
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Reference",
+    reference
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Date",
+    expenseDate
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Description",
+    description
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Category",
+    category
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Loading Method",
+    loadingMethod
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Item ID",
+    itemId
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Purchase Reference",
+    purchaseReference
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Salesman ID",
+    salesmanId
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Salesman Name",
+    salesmanName
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Amount",
+    amount
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Payment Method",
+    paymentMethod
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Financial Statement Code",
+    financialStatementCode
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Financial Account Code",
+    financialAccountCode
+  );
+
+
+  /**********************************************
+   * SIGNED FINANCIAL EFFECT
+   **********************************************/
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Expense Effect",
+    -amount
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Cash Effect",
+    paymentMethod ===
+      MAIRIX_EXPENSE.PAYMENT_CREDIT
+      ? 0
+      : -amount
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Expense Payable Effect",
+    paymentMethod ===
+      MAIRIX_EXPENSE.PAYMENT_CREDIT
+      ? amount
+      : 0
+  );
+
+
+  /*
+   * Inventory Cost Effect
+   *
+   * Purchase / Item loading:
+   * negative expense effect is NOT treated
+   * as general P&L expense.
+   *
+   * Instead it becomes inventory cost.
+   */
+
+  const inventoryCostEffect =
+    (
+      loadingMethod ===
+        MAIRIX_EXPENSE.LOAD_PURCHASE ||
+      loadingMethod ===
+        MAIRIX_EXPENSE.LOAD_ITEM
+    )
+      ? amount
+      : 0;
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Inventory Cost Effect",
+    inventoryCostEffect
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Status",
+    MAIRIX_EXPENSE.STATUS_POSTED
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "User ID",
+    currentUser.userId
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "User Name",
+    currentUser.name
+  );
+
+
+  setExpenseHeaderValue(
+    row,
+    headers,
+    "Notes",
+    mairixCleanText(
+      data.notes
+    )
+  );
+
+
+  /**********************************************
+   * SAVE
+   **********************************************/
+
+  const newRow =
+    sheet.getLastRow() + 1;
+
+
+  sheet
+    .getRange(
+      newRow,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  /**********************************************
+   * CENTRAL REFERENCE
+   **********************************************/
+
+  registerExpenseCentralReference({
+
+    expenseId:
+      expenseId,
+
+    reference:
+      reference,
+
+    date:
+      expenseDate,
+
+    category:
+      category,
+
+    loadingMethod:
+      loadingMethod,
+
+    itemId:
+      itemId,
+
+    purchaseReference:
+      purchaseReference,
+
+    amount:
+      amount,
+
+    userId:
+      currentUser.userId
+
+  });
+
+
+  /**********************************************
+   * FINANCIAL ENGINE
+   **********************************************/
+
+  createExpenseFinancialEntry({
+
+    expenseId:
+      expenseId,
+
+    reference:
+      reference,
+
+    date:
+      expenseDate,
+
+    category:
+      category,
+
+    loadingMethod:
+      loadingMethod,
+
+    amount:
+      amount,
+
+    paymentMethod:
+      paymentMethod,
+
+    financialStatementCode:
+      financialStatementCode,
+
+    financialAccountCode:
+      financialAccountCode,
+
+    itemId:
+      itemId,
+
+    purchaseReference:
+      purchaseReference,
+
+    salesmanId:
+      salesmanId,
+
+    userId:
+      currentUser.userId
+
+  });
+
+
+  /**********************************************
+   * INVENTORY COST
+   **********************************************/
+
+  if (
+    inventoryCostEffect > 0
+  ) {
+
+    createExpenseInventoryCostEntry({
+
+      expenseId:
+        expenseId,
+
+      reference:
+        reference,
+
+      amount:
+        amount,
+
+      loadingMethod:
+        loadingMethod,
+
+      itemId:
+        itemId,
+
+      purchaseReference:
+        purchaseReference,
+
+      date:
+        expenseDate,
+
+      userId:
+        currentUser.userId
+
+    });
+
+  }
+
+
+  /**********************************************
+   * CASH / PAYABLE
+   **********************************************/
+
+  createExpenseSettlementEntry({
+
+    expenseId:
+      expenseId,
+
+    reference:
+      reference,
+
+    amount:
+      amount,
+
+    paymentMethod:
+      paymentMethod,
+
+    date:
+      expenseDate,
+
+    userId:
+      currentUser.userId
+
+  });
+
+
+  /**********************************************
+   * SALESMAN COMMISSION
+   **********************************************/
+
+  if (
+    category === "COM"
+  ) {
+
+    createCommissionExpenseSettlement({
+
+      expenseId:
+        expenseId,
+
+      reference:
+        reference,
+
+      salesmanId:
+        salesmanId,
+
+      salesmanName:
+        salesmanName,
+
+      amount:
+        amount,
+
+      date:
+        expenseDate,
+
+      userId:
+        currentUser.userId
+
+    });
+
+  }
+
+
+  /**********************************************
+   * AUDIT
+   **********************************************/
+
+  writeUserLog(
+    "CREATE_EXPENSE",
+    expenseId,
+    "Reference: " +
+      reference +
+      " | Category: " +
+      category +
+      " | Loading: " +
+      loadingMethod +
+      " | Amount: " +
+      amount +
+      " | Payment: " +
+      paymentMethod +
+      " | User: " +
+      currentUser.email
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    expenseId:
+      expenseId,
+
+    reference:
+      reference,
+
+    category:
+      category,
+
+    loadingMethod:
+      loadingMethod,
+
+    amount:
+      amount,
+
+    paymentMethod:
+      paymentMethod,
+
+    expenseEffect:
+      -amount,
+
+    cashEffect:
+      paymentMethod ===
+        MAIRIX_EXPENSE.PAYMENT_CREDIT
+        ? 0
+        : -amount,
+
+    payableEffect:
+      paymentMethod ===
+        MAIRIX_EXPENSE.PAYMENT_CREDIT
+        ? amount
+        : 0,
+
+    inventoryCostEffect:
+      inventoryCostEffect,
+
+    status:
+      MAIRIX_EXPENSE.STATUS_POSTED
+
+  };
+
+}
+
+
+/************************************************
+ * CATEGORY
+ *
+ * لا يوجد حصر نهائي للأنواع.
+ *
+ * القيم الافتراضية:
+ *
+ * SHP = Shipping
+ * TRN = Transport
+ * SAL = Salaries
+ * COM = Salesman Commission
+ * OTH = Other
+ *
+ * ويمكن إضافة أكواد أخرى من إعدادات النظام.
+ ************************************************/
+
+function normalizeExpenseCategory(
+  category
+) {
+
+  const value =
+    mairixCleanText(
+      category
+    ).toUpperCase();
+
+
+  if (!value) {
+
+    throw new Error(
+      "Expense category is required."
+    );
+
+  }
+
+
+  /*
+   * لو Settings Engine يوفر
+   * قائمة التصنيفات،
+   * نستخدمها.
+   */
+
+  if (
+    typeof isExpenseCategoryAllowed ===
+    "function"
+  ) {
+
+    if (
+      !isExpenseCategoryAllowed(
+        value
+      )
+    ) {
+
+      throw new Error(
+        "Expense category is not allowed: " +
+        value
+      );
+
+    }
+
+  }
+
+
+  return value;
+
+}
+
+
+/************************************************
+ * LOADING METHOD
+ ************************************************/
+
+function normalizeExpenseLoadingMethod(
+  method
+) {
+
+  const value =
+    mairixCleanText(
+      method
+    ).toUpperCase();
+
+
+  if (
+    value ===
+      MAIRIX_EXPENSE.LOAD_PURCHASE
+  ) {
+
+    return value;
+
+  }
+
+
+  if (
+    value ===
+      MAIRIX_EXPENSE.LOAD_ITEM
+  ) {
+
+    return value;
+
+  }
+
+
+  if (
+    value ===
+      MAIRIX_EXPENSE.LOAD_GENERAL
+  ) {
+
+    return value;
+
+  }
+
+
+  throw new Error(
+    "Invalid expense loading method: " +
+    value
+  );
+
+}
+
+
+/************************************************
+ * PAYMENT METHOD
+ ************************************************/
+
+function normalizeExpensePaymentMethod(
+  method
+) {
+
+  const value =
+    mairixCleanText(
+      method
+    ).toUpperCase();
+
+
+  if (
+    value === "CASH"
+  ) {
+
+    return "CASH";
+
+  }
+
+
+  if (
+    value === "BANK"
+  ) {
+
+    return "BANK";
+
+  }
+
+
+  if (
+    value === "CREDIT"
+  ) {
+
+    return "CREDIT";
+
+  }
+
+
+  throw new Error(
+    "Invalid expense payment method: " +
+    value
+  );
+
+}
+
+
+/************************************************
+ * VALIDATE LOADING REFERENCE
+ ************************************************/
+
+function validateExpenseLoadingReference(
+  data
+) {
+
+  if (
+    data.loadingMethod ===
+      MAIRIX_EXPENSE.LOAD_PURCHASE
+  ) {
+
+    if (
+      !data.purchaseReference
+    ) {
+
+      throw new Error(
+        "Purchase Reference is required when loading method is PURCHASE."
+      );
+
+    }
+
+
+    if (
+      typeof getPurchaseByReference ===
+      "function"
+    ) {
+
+      const purchase =
+        getPurchaseByReference(
+          data.purchaseReference
+        );
+
+
+      if (!purchase) {
+
+        throw new Error(
+          "Purchase reference not found: " +
+          data.purchaseReference
+        );
+
+      }
+
+    }
+
+
+    return;
+
+  }
+
+
+  if (
+    data.loadingMethod ===
+      MAIRIX_EXPENSE.LOAD_ITEM
+  ) {
+
+    if (
+      !data.itemId
+    ) {
+
+      throw new Error(
+        "Item ID is required when loading method is ITEM."
+      );
+
+    }
+
+
+    if (
+      typeof getItemRecord ===
+      "function"
+    ) {
+
+      const item =
+        getItemRecord(
+          data.itemId
+        );
+
+
+      if (!item) {
+
+        throw new Error(
+          "Item not found: " +
+          data.itemId
+        );
+
+      }
+
+    }
+
+
+    return;
+
+  }
+
+
+  if (
+    data.loadingMethod ===
+      MAIRIX_EXPENSE.LOAD_GENERAL
+  ) {
+
+    /*
+     * General expense must not be tied
+     * to purchase or item.
+     */
+
+    if (
+      data.itemId ||
+      data.purchaseReference
+    ) {
+
+      throw new Error(
+        "GENERAL expense cannot be linked to an item or purchase."
+      );
+
+    }
+
+
+    return;
+
+  }
+
+
+  throw new Error(
+    "Invalid expense loading method."
+  );
+
+}
+
+
+/************************************************
+ * GET EXPENSE SHEET
+ ************************************************/
+
+function getExpenseSheet() {
+
+  return getMairixSchemaSheet(
+    "EXPENSES"
+  );
+
+}
+
+
+/************************************************
+ * HEADERS
+ ************************************************/
+
+function getExpenseHeaders(
+  sheet
+) {
+
+  return sheet
+    .getRange(
+      1,
+      1,
+      1,
+      sheet.getLastColumn()
+    )
+    .getDisplayValues()[0]
+    .map(
+      function(header) {
+
+        return mairixCleanText(
+          header
+        );
+
+      }
+    );
+
+}
+
+
+function setExpenseHeaderValue(
+  row,
+  headers,
+  header,
+  value
+) {
+
+  const index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (
+    index === -1
+  ) {
+
+    return;
+
+  }
+
+
+  row[index] =
+    value;
+
+}
+
+
+/************************************************
+ * GENERATE EXPENSE ID
+ *
+ * EXP-YYYYMMDD-0001
+ ************************************************/
+
+function generateExpenseId() {
+
+  const sheet =
+    getExpenseSheet();
+
+
+  const dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  const prefix =
+    "EXP-" +
+    dateKey +
+    "-";
+
+
+  let counter =
+    1;
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const headers =
+      getExpenseHeaders(
+        sheet
+      );
+
+
+    const index =
+      headers.indexOf(
+        "Expense ID"
+      );
+
+
+    if (
+      index !== -1
+    ) {
+
+      const values =
+        sheet
+          .getRange(
+            2,
+            index + 1,
+            lastRow - 1,
+            1
+          )
+          .getDisplayValues();
+
+
+      values.forEach(
+        function(row) {
+
+          const value =
+            mairixCleanText(
+              row[0]
+            );
+
+
+          if (
+            value.indexOf(
+              prefix
+            ) !== 0
+          ) {
+
+            return;
+
+          }
+
+
+          const number =
+            parseInt(
+              value.substring(
+                prefix.length
+              ),
+              10
+            );
+
+
+          if (
+            !isNaN(number) &&
+            number >= counter
+          ) {
+
+            counter =
+              number + 1;
+
+          }
+
+        }
+      );
+
+    }
+
+  }
+
+
+  return (
+    prefix +
+    String(counter)
+      .padStart(
+        4,
+        "0"
+      )
+  );
+
+}
+
+
+/************************************************
+ * GENERATE CENTRAL REFERENCE
+ *
+ * REF-EXP-YYYYMMDD-0001
+ ************************************************/
+
+function generateExpenseReference() {
+
+  const sheet =
+    getExpenseSheet();
+
+
+  const dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  const prefix =
+    "REF-EXP-" +
+    dateKey +
+    "-";
+
+
+  let counter =
+    1;
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const headers =
+      getExpenseHeaders(
+        sheet
+      );
+
+
+    const index =
+      headers.indexOf(
+        "Reference"
+      );
+
+
+    if (
+      index !== -1
+    ) {
+
+      const values =
+        sheet
+          .getRange(
+            2,
+            index + 1,
+            lastRow - 1,
+            1
+          )
+          .getDisplayValues();
+
+
+      values.forEach(
+        function(row) {
+
+          const value =
+            mairixCleanText(
+              row[0]
+            );
+
+
+          if (
+            value.indexOf(
+              prefix
+            ) !== 0
+          ) {
+
+            return;
+
+          }
+
+
+          const number =
+            parseInt(
+              value.substring(
+                prefix.length
+              ),
+              10
+            );
+
+
+          if (
+            !isNaN(number) &&
+            number >= counter
+          ) {
+
+            counter =
+              number + 1;
+
+          }
+
+        }
+      );
+
+    }
+
+  }
+
+
+  return (
+    prefix +
+    String(counter)
+      .padStart(
+        4,
+        "0"
+      )
+  );
+
+}
+
+
+/************************************************
+ * CENTRAL REFERENCE
+ ************************************************/
+
+function registerExpenseCentralReference(
+  data
+) {
+
+  if (
+    typeof createCentralReference ===
+    "function"
+  ) {
+
+    return createCentralReference({
+
+      reference:
+        data.reference,
+
+      type:
+        MAIRIX_EXPENSE.TYPE,
+
+      date:
+        data.date,
+
+      primaryId:
+        data.expenseId,
+
+      category:
+        data.category,
+
+      loadingMethod:
+        data.loadingMethod,
+
+      itemId:
+        data.itemId,
+
+      purchaseReference:
+        data.purchaseReference,
+
+      amount:
+        data.amount,
+
+      status:
+        MAIRIX_EXPENSE.STATUS_POSTED,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  Logger.log(
+    "Central Reference Engine not installed yet: " +
+    data.reference
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    deferred:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * FINANCIAL ENGINE
+ ************************************************/
+
+function createExpenseFinancialEntry(
+  data
+) {
+
+  if (
+    typeof createFinancialTransaction ===
+    "function"
+  ) {
+
+    return createFinancialTransaction({
+
+      reference:
+        data.reference,
+
+      type:
+        MAIRIX_EXPENSE.TYPE,
+
+      date:
+        data.date,
+
+      amount:
+        -data.amount,
+
+      signedAmount:
+        -data.amount,
+
+      category:
+        data.category,
+
+      loadingMethod:
+        data.loadingMethod,
+
+      paymentMethod:
+        data.paymentMethod,
+
+      financialStatementCode:
+        data.financialStatementCode,
+
+      financialAccountCode:
+        data.financialAccountCode,
+
+      itemId:
+        data.itemId,
+
+      purchaseReference:
+        data.purchaseReference,
+
+      salesmanId:
+        data.salesmanId,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  Logger.log(
+    "Financial Engine not installed yet: " +
+    data.reference
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    deferred:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * INVENTORY COST ENGINE
+ ************************************************/
+
+function createExpenseInventoryCostEntry(
+  data
+) {
+
+  /*
+   * PURCHASE:
+   *
+   * المصروف يضاف إلى تكلفة الدفعة
+   *
+   * ITEM:
+   *
+   * المصروف يضاف إلى تكلفة الصنف.
+   */
+
+  if (
+    typeof addExpenseToInventoryCost ===
+    "function"
+  ) {
+
+    return addExpenseToInventoryCost({
+
+      reference:
+        data.reference,
+
+      expenseId:
+        data.expenseId,
+
+      amount:
+        data.amount,
+
+      loadingMethod:
+        data.loadingMethod,
+
+      itemId:
+        data.itemId,
+
+      purchaseReference:
+        data.purchaseReference,
+
+      date:
+        data.date,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  Logger.log(
+    "Inventory Cost Engine not installed yet: " +
+    data.reference
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    deferred:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * CASH / PAYABLE SETTLEMENT
+ ************************************************/
+
+function createExpenseSettlementEntry(
+  data
+) {
+
+  /*
+   * CASH / BANK:
+   *
+   * Cash Effect = NEGATIVE
+   *
+   * CREDIT:
+   *
+   * Cash Effect = ZERO
+   * Payable Effect = POSITIVE
+   */
+
+  if (
+    typeof createCashTransaction ===
+    "function" &&
+    data.paymentMethod !==
+      MAIRIX_EXPENSE.PAYMENT_CREDIT
+  ) {
+
+    return createCashTransaction({
+
+      reference:
+        data.reference,
+
+      type:
+        MAIRIX_EXPENSE.TYPE,
+
+      date:
+        data.date,
+
+      amount:
+        -data.amount,
+
+      signedAmount:
+        -data.amount,
+
+      direction:
+        "OUT",
+
+      paymentMethod:
+        data.paymentMethod,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  if (
+    typeof createExpensePayableEntry ===
+    "function" &&
+    data.paymentMethod ===
+      MAIRIX_EXPENSE.PAYMENT_CREDIT
+  ) {
+
+    return createExpensePayableEntry({
+
+      reference:
+        data.reference,
+
+      date:
+        data.date,
+
+      amount:
+        data.amount,
+
+      signedAmount:
+        data.amount,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  Logger.log(
+    "Expense settlement engine not installed yet: " +
+    data.reference
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    deferred:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * SALESMAN COMMISSION SETTLEMENT
+ ************************************************/
+
+function createCommissionExpenseSettlement(
+  data
+) {
+
+  if (
+    typeof settleSalesmanCommission ===
+    "function"
+  ) {
+
+    return settleSalesmanCommission({
+
+      reference:
+        data.reference,
+
+      expenseId:
+        data.expenseId,
+
+      salesmanId:
+        data.salesmanId,
+
+      salesmanName:
+        data.salesmanName,
+
+      amount:
+        data.amount,
+
+      date:
+        data.date,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  Logger.log(
+    "Commission settlement engine not installed yet: " +
+    data.reference
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    deferred:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * TEST EXPENSE ENGINE STRUCTURE
+ *
+ * Structure-only test.
+ * Does not create a financial transaction.
+ ************************************************/
+
+function testExpenseEngineStructure() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX EXPENSE ENGINE"
+  );
+
+  Logger.log(
+    "STRUCTURE TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * 1. EXPENSES SHEET
+   **********************************************/
+
+  const sheet =
+    getMairixSchemaSheet(
+      "EXPENSES"
+    );
+
+
+  const headers =
+    getSheetHeaders(
+      sheet
+    );
+
+
+  const requiredHeaders = [
+
+    "Expense Code",
+
+    "Reference ID",
+
+    "Expense Date",
+
+    "Description",
+
+    "Category Code",
+
+    "Category Name",
+
+    "Loading Method",
+
+    "Product Code",
+
+    "Purchase Reference ID",
+
+    "Salesman Code",
+
+    "Amount",
+
+    "Financial Account Code",
+
+    "Cost Effect",
+
+    "General Expense Effect",
+
+    "Created By",
+
+    "Created At",
+
+    "Updated At"
+
+  ];
+
+
+  const missing = [];
+
+
+  requiredHeaders.forEach(
+    function(header) {
+
+      if (
+        headers.indexOf(
+          header
+        ) === -1
+      ) {
+
+        missing.push(
+          header
+        );
+
+      }
+
+    }
+  );
+
+
+  if (
+    missing.length
+  ) {
+
+    throw new Error(
+      "EXPENSES sheet is missing headers: " +
+      missing.join(", ")
+    );
+
+  }
+
+
+  Logger.log(
+    "EXPENSES headers: PASS"
+  );
+
+
+  /**********************************************
+   * 2. LOADING METHODS
+   **********************************************/
+
+  Logger.log(
+    "Expense loading methods:"
+  );
+
+  Logger.log(
+    "1. PURCHASE_REFERENCE"
+  );
+
+  Logger.log(
+    "2. ITEM"
+  );
+
+  Logger.log(
+    "3. GENERAL"
+  );
+
+
+  /**********************************************
+   * 3. PURCHASE-LOADED EXPENSE
+   **********************************************/
+
+  Logger.log(
+    "Purchase-linked expense:"
+  );
+
+  Logger.log(
+    "Purchase Reference ID = REQUIRED"
+  );
+
+  Logger.log(
+    "Cost Effect contributes to purchase/item cost"
+  );
+
+
+  /**********************************************
+   * 4. ITEM-LOADED EXPENSE
+   **********************************************/
+
+  Logger.log(
+    "Item-linked expense:"
+  );
+
+  Logger.log(
+    "Product Code = REQUIRED"
+  );
+
+  Logger.log(
+    "Cost Effect contributes to item cost"
+  );
+
+
+  /**********************************************
+   * 5. GENERAL EXPENSE
+   **********************************************/
+
+  Logger.log(
+    "General expense:"
+  );
+
+  Logger.log(
+    "No Purchase Reference required"
+  );
+
+  Logger.log(
+    "No Product Code required"
+  );
+
+  Logger.log(
+    "General Expense Effect contributes to P&L"
+  );
+
+
+  /**********************************************
+   * 6. SALESMAN COMMISSION EXPENSE
+   **********************************************/
+
+  Logger.log(
+    "Salesman commission support:"
+  );
+
+  Logger.log(
+    "Salesman Code = available"
+  );
+
+
+  /**********************************************
+   * 7. CENTRAL REFERENCE
+   **********************************************/
+
+  Logger.log(
+    "Central reference = REQUIRED"
+  );
+
+
+  /**********************************************
+   * 8. NO FINANCIAL TRANSACTION
+   **********************************************/
+
+  Logger.log(
+    "Structure test only = NO TRANSACTION CREATED"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "EXPENSE ENGINE STRUCTURE: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

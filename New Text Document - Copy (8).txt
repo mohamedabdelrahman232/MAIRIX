@@ -1,0 +1,63 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 68-MAIRIX_EmployeeEvaluationIntegration.gs
+ *
+ * Employee Evaluation is an independent historical module.
+ *
+ * Evaluation records must never mutate historical sales,
+ * commissions, ledgers, inventory, tax, or expense records.
+ ************************************************/
+
+const MAIRIX_EVALUATION_PERMISSIONS = {
+  VIEW: "EMPLOYEE_EVALUATION_VIEW",
+  CREATE: "EMPLOYEE_EVALUATION_CREATE",
+  EDIT: "EMPLOYEE_EVALUATION_EDIT",
+  DELETE: "EMPLOYEE_EVALUATION_DELETE",
+  EXPORT: "EMPLOYEE_EVALUATION_EXPORT"
+};
+
+function mairixCalculateWeightedEvaluation(criteria) {
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    throw new Error("Evaluation criteria are required.");
+  }
+
+  var totalWeight = 0;
+  var weightedScore = 0;
+
+  criteria.forEach(function(row) {
+    var weight = Number(row.weight);
+    var score = Number(row.score);
+
+    if (!Number.isFinite(weight) || weight < 0) {
+      throw new Error("Invalid evaluation weight.");
+    }
+    if (!Number.isFinite(score) || score < 0) {
+      throw new Error("Invalid evaluation score.");
+    }
+
+    totalWeight += weight;
+    weightedScore += score * weight;
+  });
+
+  if (totalWeight <= 0) {
+    throw new Error("Total evaluation weight must be greater than zero.");
+  }
+
+  return weightedScore / totalWeight;
+}
+
+function testMairixEmployeeEvaluationContract() {
+  var score = mairixCalculateWeightedEvaluation([
+    { weight: 50, score: 80 },
+    { weight: 50, score: 100 }
+  ]);
+
+  if (score !== 90) throw new Error("Weighted evaluation calculation failed.");
+
+  Logger.log("68 EMPLOYEE EVALUATION CONTRACT: PASS");
+  return {
+    success: true,
+    permissions: MAIRIX_EVALUATION_PERMISSIONS,
+    historicalRecords: true
+  };
+}

@@ -1,0 +1,5349 @@
+/************************************************
+ * MAIRIX ERP
+ * 30-MAIRIX_TRANSACTION_ENGINE
+ *
+ * CENTRAL TRANSACTION / ROLLBACK ENGINE
+ *
+ * VERSION:
+ * 2.0.0
+ *
+ * PURPOSE:
+ *
+ * 1. Central transaction wrapper.
+ * 2. Prevent concurrent transactions.
+ * 3. Integrate with the CENTRAL REFERENCE ENGINE.
+ * 4. Snapshot existing sheet ranges before mutation.
+ * 5. Track appended rows.
+ * 6. Restore snapshots on failure.
+ * 7. Remove transaction-created rows on rollback.
+ * 8. Release lock in all cases.
+ * 9. Record rejected transactions.
+ * 10. Preserve the original business error.
+ *
+ * IMPORTANT:
+ *
+ * This engine does NOT replace business logic.
+ *
+ * Business engines remain responsible for:
+ *
+ * - validation
+ * - permissions
+ * - calculations
+ * - inventory
+ * - ledgers
+ * - financial links
+ * - loyalty
+ * - commissions
+ * - taxes
+ *
+ * This engine provides transactional protection
+ * around those operations.
+ *
+ *
+ * CENTRAL REFERENCE RULE:
+ *
+ * One transaction
+ *       |
+ *       +---- Reference ID
+ *                 |
+ *                 +---- TRANSACTIONS
+ *                 +---- TRANSACTION_LINES
+ *                 +---- INVENTORY_LEDGER
+ *                 +---- FINANCIAL_LEDGER
+ *                 +---- CUSTOMER_LEDGER
+ *                 +---- VENDOR_LEDGER
+ *                 +---- SALESMAN_LEDGER
+ *                 +---- TAX_LEDGER
+ *                 +---- COMMISSIONS
+ *                 +---- LOYALTY
+ *                 +---- EXPENSES
+ *                 +---- AUDIT_LOG
+ *
+ * CHILD ENGINES MUST NEVER GENERATE
+ * A NEW CENTRAL REFERENCE.
+ ************************************************/
+
+
+/************************************************
+ * TRANSACTION ENGINE VERSION
+ ************************************************/
+
+const MAIRIX_TRANSACTION_ENGINE_VERSION =
+  "2.0.0";
+
+
+/************************************************
+ * TRANSACTION STATE
+ ************************************************/
+
+const MAIRIX_TRANSACTION_STATE = {
+
+  STARTED:
+    "STARTED",
+
+  COMMITTED:
+    "COMMITTED",
+
+  ROLLED_BACK:
+    "ROLLED_BACK",
+
+  FAILED:
+    "FAILED"
+
+};
+
+
+/************************************************
+ * TRANSACTION ERROR TYPE
+ ************************************************/
+
+const MAIRIX_TRANSACTION_ERROR_CODE = {
+
+  VALIDATION:
+    "MAIRIX_VALIDATION_REJECTED",
+
+  PERMISSION:
+    "MAIRIX_PERMISSION_REJECTED",
+
+  BUSINESS_RULE:
+    "MAIRIX_BUSINESS_RULE_REJECTED",
+
+  TRANSACTION:
+    "MAIRIX_TRANSACTION_REJECTED",
+
+  ROLLBACK:
+    "MAIRIX_ROLLBACK_FAILED"
+
+};
+
+
+/************************************************
+ * CREATE TRANSACTION ID
+ ************************************************/
+
+function mairixGenerateTransactionId() {
+
+  return (
+    "TX-" +
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMddHHmmss"
+    ) +
+    "-" +
+    Utilities.getUuid()
+  );
+
+}
+
+
+/************************************************
+ * TRANSACTION CONTEXT
+ ************************************************/
+
+function mairixCreateTransactionContext(
+  options
+) {
+
+  const config =
+    options || {};
+
+
+  return {
+
+    transactionId:
+      config.transactionId ||
+      mairixGenerateTransactionId(),
+
+    source:
+      mairixCleanText(
+        config.source ||
+        "MAIRIX"
+      ),
+
+    reference:
+      config.reference
+        ? validateMairixReferenceId(
+            config.reference
+          )
+        : "",
+
+    transactionType:
+      mairixCleanText(
+        config.transactionType ||
+        ""
+      ).toUpperCase(),
+
+    state:
+      MAIRIX_TRANSACTION_STATE.STARTED,
+
+    snapshots:
+      [],
+
+    appendOperations:
+      [],
+
+    deletedRowOperations:
+      [],
+
+    startedAt:
+      new Date(),
+
+    committedAt:
+      null,
+
+    rolledBackAt:
+      null,
+
+    error:
+      null,
+
+    rollbackError:
+      null
+
+  };
+
+}
+
+
+/************************************************
+ * GET TRANSACTION LOCK
+ ************************************************/
+
+function mairixGetTransactionLock() {
+
+  return LockService
+    .getScriptLock();
+
+}
+
+
+/************************************************
+ * PREPARE CENTRAL REFERENCE
+ *
+ * IMPORTANT:
+ *
+ * This function is intentionally called BEFORE
+ * the transaction lock is acquired.
+ *
+ * generateMairixReferenceId() already uses the
+ * ScriptLock internally.
+ *
+ * Therefore:
+ *
+ * generate reference
+ *       |
+ *       v
+ * acquire transaction lock
+ *
+ * NOT:
+ *
+ * acquire transaction lock
+ *       |
+ *       v
+ * generate reference
+ *
+ * because both use the same ScriptLock.
+ ************************************************/
+
+function mairixPrepareTransactionReference(
+  options
+) {
+
+  const config =
+    options || {};
+
+
+  if (
+    config.reference
+  ) {
+
+    return validateMairixReferenceId(
+      config.reference
+    );
+
+  }
+
+
+  const referenceResult =
+    createMairixTransactionReference();
+
+
+  if (
+    !referenceResult ||
+    !referenceResult.referenceId
+  ) {
+
+    throw new Error(
+      "Central Reference ID could not be generated."
+    );
+
+  }
+
+
+  return validateMairixReferenceId(
+    referenceResult.referenceId
+  );
+
+}
+
+
+/************************************************
+ * BEGIN TRANSACTION
+ *
+ * IMPORTANT:
+ *
+ * This function does NOT generate a new
+ * Reference ID.
+ *
+ * The caller must provide the reference when
+ * available.
+ ************************************************/
+
+function mairixBeginTransaction(
+  options
+) {
+
+  const config =
+    options || {};
+
+
+  const lock =
+    mairixGetTransactionLock();
+
+
+  const acquired =
+    lock.tryLock(
+      30000
+    );
+
+
+  if (!acquired) {
+
+    throw new Error(
+      "MAIRIX transaction lock could not be acquired."
+    );
+
+  }
+
+
+  try {
+
+    return mairixCreateTransactionContext(
+      config
+    );
+
+  } catch (error) {
+
+    try {
+
+      lock.releaseLock();
+
+    } catch (releaseError) {
+
+      Logger.log(
+        "Transaction lock release failed: " +
+        releaseError.message
+      );
+
+    }
+
+    throw error;
+
+  }
+
+}
+
+
+/************************************************
+ * SNAPSHOT SHEET RANGE
+ *
+ * Used for existing cells that may be changed.
+ *
+ * IMPORTANT:
+ *
+ * Call this BEFORE changing the range.
+ ************************************************/
+
+function mairixTransactionSnapshotRange(
+  transaction,
+  sheet,
+  row,
+  column,
+  numRows,
+  numColumns
+) {
+
+  if (
+    !transaction
+  ) {
+
+    throw new Error(
+      "Transaction context is required."
+    );
+
+  }
+
+
+  if (
+    transaction.state !==
+    MAIRIX_TRANSACTION_STATE.STARTED
+  ) {
+
+    throw new Error(
+      "Transaction is not active."
+    );
+
+  }
+
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Sheet is required for transaction snapshot."
+    );
+
+  }
+
+
+  if (
+    row < 1 ||
+    column < 1 ||
+    numRows < 1 ||
+    numColumns < 1
+  ) {
+
+    throw new Error(
+      "Invalid transaction snapshot range."
+    );
+
+  }
+
+
+  const range =
+    sheet.getRange(
+      row,
+      column,
+      numRows,
+      numColumns
+    );
+
+
+  const snapshot = {
+
+    type:
+      "RANGE",
+
+    sheetName:
+      sheet.getName(),
+
+    row:
+      row,
+
+    column:
+      column,
+
+    numRows:
+      numRows,
+
+    numColumns:
+      numColumns,
+
+    values:
+      range.getValues(),
+
+    formulas:
+      range.getFormulas(),
+
+    numberFormats:
+      range.getNumberFormats(),
+
+    backgrounds:
+      range.getBackgrounds(),
+
+    fontColors:
+      range.getFontColors(),
+
+    fontWeights:
+      range.getFontWeights(),
+
+    horizontalAlignments:
+      range.getHorizontalAlignments(),
+
+    verticalAlignments:
+      range.getVerticalAlignments()
+
+  };
+
+
+  transaction.snapshots.push(
+    snapshot
+  );
+
+
+  return snapshot;
+
+}
+
+
+/************************************************
+ * SNAPSHOT FULL USED RANGE
+ *
+ * Convenience helper.
+ *
+ * Captures the current used range of a sheet.
+ *
+ * This is useful for small reference/ledger
+ * sheets and test sheets.
+ ************************************************/
+
+function mairixTransactionSnapshotSheet(
+  transaction,
+  sheet
+) {
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Sheet is required for transaction snapshot."
+    );
+
+  }
+
+
+  const lastRow =
+    Math.max(
+      sheet.getLastRow(),
+      1
+    );
+
+
+  const lastColumn =
+    Math.max(
+      sheet.getLastColumn(),
+      1
+    );
+
+
+  return mairixTransactionSnapshotRange(
+    transaction,
+    sheet,
+    1,
+    1,
+    lastRow,
+    lastColumn
+  );
+
+}
+
+
+/************************************************
+ * TRACK APPENDED ROWS
+ *
+ * This is the important addition for real
+ * transaction rollback.
+ *
+ * Example:
+ *
+ * Before append:
+ *     lastRow = 100
+ *
+ * Business engine appends 5 rows:
+ *     rows 101 - 105
+ *
+ * On rollback:
+ *     rows 101 - 105 are removed.
+ *
+ * This prevents orphan ledger rows.
+ *
+ * IMPORTANT:
+ *
+ * Use this immediately before/after an append
+ * operation according to the helper below.
+ ************************************************/
+
+function mairixTransactionTrackAppendRows(
+  transaction,
+  sheet,
+  startRow,
+  numRows
+) {
+
+  if (
+    !transaction
+  ) {
+
+    throw new Error(
+      "Transaction context is required."
+    );
+
+  }
+
+
+  if (
+    transaction.state !==
+    MAIRIX_TRANSACTION_STATE.STARTED
+  ) {
+
+    throw new Error(
+      "Transaction is not active."
+    );
+
+  }
+
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Sheet is required."
+    );
+
+  }
+
+
+  if (
+    startRow < 1 ||
+    numRows < 1
+  ) {
+
+    throw new Error(
+      "Invalid appended row range."
+    );
+
+  }
+
+
+  const operation = {
+
+    type:
+      "APPEND",
+
+    sheetName:
+      sheet.getName(),
+
+    startRow:
+      startRow,
+
+    numRows:
+      numRows
+
+  };
+
+
+  transaction.appendOperations.push(
+    operation
+  );
+
+
+  return operation;
+
+}
+
+
+/************************************************
+ * APPEND ROWS THROUGH TRANSACTION ENGINE
+ *
+ * Preferred helper for business engines that
+ * append rows.
+ *
+ * It writes the rows and automatically records
+ * them for rollback.
+ *
+ * Example:
+ *
+ * mairixTransactionAppendRows(
+ *   transaction,
+ *   sheet,
+ *   rows
+ * );
+ ************************************************/
+
+function mairixTransactionAppendRows(
+  transaction,
+  sheet,
+  rows
+) {
+
+  if (
+    !transaction
+  ) {
+
+    throw new Error(
+      "Transaction context is required."
+    );
+
+  }
+
+
+  if (
+    transaction.state !==
+    MAIRIX_TRANSACTION_STATE.STARTED
+  ) {
+
+    throw new Error(
+      "Transaction is not active."
+    );
+
+  }
+
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Sheet is required."
+    );
+
+  }
+
+
+  if (
+    !Array.isArray(rows) ||
+    rows.length === 0
+  ) {
+
+    throw new Error(
+      "Rows are required for transaction append."
+    );
+
+  }
+
+
+  const width =
+    rows[0].length;
+
+
+  if (
+    !width
+  ) {
+
+    throw new Error(
+      "Transaction append rows cannot be empty."
+    );
+
+  }
+
+
+  for (
+    let i = 0;
+    i < rows.length;
+    i++
+  ) {
+
+    if (
+      !Array.isArray(rows[i]) ||
+      rows[i].length !== width
+    ) {
+
+      throw new Error(
+        "All appended rows must have the same number of columns."
+      );
+
+    }
+
+  }
+
+
+  const startRow =
+    Math.max(
+      sheet.getLastRow() + 1,
+      1
+    );
+
+
+  const range =
+    sheet.getRange(
+      startRow,
+      1,
+      rows.length,
+      width
+    );
+
+
+  range.setValues(
+    rows
+  );
+
+
+  mairixTransactionTrackAppendRows(
+    transaction,
+    sheet,
+    startRow,
+    rows.length
+  );
+
+
+  return {
+
+    startRow:
+      startRow,
+
+    numRows:
+      rows.length,
+
+    range:
+      range
+
+  };
+
+}
+
+
+/************************************************
+ * TRACK DELETED ROWS
+ *
+ * This is provided for operations that delete
+ * existing rows.
+ *
+ * IMPORTANT:
+ *
+ * The deleted range must be snapshotted BEFORE
+ * deletion.
+ *
+ * In most ERP operations we prefer status-based
+ * changes instead of physical row deletion.
+ ************************************************/
+
+function mairixTransactionTrackDeletedRows(
+  transaction,
+  sheet,
+  startRow,
+  numRows
+) {
+
+  if (
+    !transaction
+  ) {
+
+    throw new Error(
+      "Transaction context is required."
+    );
+
+  }
+
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Sheet is required."
+    );
+
+  }
+
+
+  if (
+    startRow < 1 ||
+    numRows < 1
+  ) {
+
+    throw new Error(
+      "Invalid deleted row range."
+    );
+
+  }
+
+
+  const lastColumn =
+    Math.max(
+      sheet.getLastColumn(),
+      1
+    );
+
+
+  const snapshot =
+    mairixTransactionSnapshotRange(
+      transaction,
+      sheet,
+      startRow,
+      1,
+      numRows,
+      lastColumn
+    );
+
+
+  const operation = {
+
+    type:
+      "DELETE",
+
+    sheetName:
+      sheet.getName(),
+
+    startRow:
+      startRow,
+
+    numRows:
+      numRows,
+
+    snapshot:
+      snapshot
+
+  };
+
+
+  transaction.deletedRowOperations.push(
+    operation
+  );
+
+
+  return operation;
+
+}
+
+
+/************************************************
+ * RESTORE RANGE SNAPSHOT
+ ************************************************/
+
+function mairixRestoreTransactionSnapshot(
+  snapshot
+) {
+
+  if (
+    !snapshot
+  ) {
+
+    throw new Error(
+      "Transaction snapshot is required."
+    );
+
+  }
+
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      snapshot.sheetName
+    );
+
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Rollback failed: sheet not found: " +
+      snapshot.sheetName
+    );
+
+  }
+
+
+  const range =
+    sheet.getRange(
+      snapshot.row,
+      snapshot.column,
+      snapshot.numRows,
+      snapshot.numColumns
+    );
+
+
+  /**********************************************
+   * 1. RESTORE VALUES
+   **********************************************/
+
+  range.setValues(
+    snapshot.values
+  );
+
+
+  /**********************************************
+   * 2. RESTORE ORIGINAL FORMULAS
+   *
+   * Values are restored first.
+   *
+   * Then formulas are restored only where
+   * formulas originally existed.
+   **********************************************/
+
+  for (
+    let rowIndex = 0;
+    rowIndex < snapshot.numRows;
+    rowIndex++
+  ) {
+
+    for (
+      let columnIndex = 0;
+      columnIndex < snapshot.numColumns;
+      columnIndex++
+    ) {
+
+      const formula =
+        snapshot.formulas[rowIndex][columnIndex];
+
+
+      if (
+        formula
+      ) {
+
+        sheet
+          .getRange(
+            snapshot.row + rowIndex,
+            snapshot.column + columnIndex
+          )
+          .setFormula(
+            formula
+          );
+
+      }
+
+    }
+
+  }
+
+
+  /**********************************************
+   * 3. RESTORE NUMBER FORMATS
+   **********************************************/
+
+  range.setNumberFormats(
+    snapshot.numberFormats
+  );
+
+
+  /**********************************************
+   * 4. RESTORE BACKGROUNDS
+   **********************************************/
+
+  range.setBackgrounds(
+    snapshot.backgrounds
+  );
+
+
+  /**********************************************
+   * 5. RESTORE FONT COLORS
+   **********************************************/
+
+  range.setFontColors(
+    snapshot.fontColors
+  );
+
+
+  /**********************************************
+   * 6. RESTORE FONT WEIGHTS
+   **********************************************/
+
+  range.setFontWeights(
+    snapshot.fontWeights
+  );
+
+
+  /**********************************************
+   * 7. RESTORE HORIZONTAL ALIGNMENT
+   **********************************************/
+
+  range.setHorizontalAlignments(
+    snapshot.horizontalAlignments
+  );
+
+
+  /**********************************************
+   * 8. RESTORE VERTICAL ALIGNMENT
+   **********************************************/
+
+  range.setVerticalAlignments(
+    snapshot.verticalAlignments
+  );
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * REMOVE APPENDED ROWS
+ *
+ * Removes rows created during the transaction.
+ *
+ * IMPORTANT:
+ *
+ * We process in reverse order.
+ ************************************************/
+
+function mairixRollbackAppendedRows(
+  transaction
+) {
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const operations =
+    transaction.appendOperations || [];
+
+
+  for (
+    let i =
+      operations.length - 1;
+    i >= 0;
+    i--
+  ) {
+
+    const operation =
+      operations[i];
+
+
+    const sheet =
+      spreadsheet.getSheetByName(
+        operation.sheetName
+      );
+
+
+    if (
+      !sheet
+    ) {
+
+      throw new Error(
+        "Rollback failed: appended-row sheet not found: " +
+        operation.sheetName
+      );
+
+    }
+
+
+    const maxRows =
+      sheet.getMaxRows();
+
+
+    if (
+      operation.startRow >
+      maxRows
+    ) {
+
+      continue;
+
+    }
+
+
+    const availableRows =
+      maxRows -
+      operation.startRow +
+      1;
+
+
+    const rowsToRemove =
+      Math.min(
+        operation.numRows,
+        availableRows
+      );
+
+
+    if (
+      rowsToRemove > 0
+    ) {
+
+      sheet.deleteRows(
+        operation.startRow,
+        rowsToRemove
+      );
+
+    }
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * ROLLBACK TRANSACTION
+ *
+ * Order:
+ *
+ * 1. Remove appended rows.
+ * 2. Restore existing snapshots.
+ *
+ * Appended rows are removed first because
+ * existing snapshots may belong to rows before
+ * the appended data.
+ ************************************************/
+
+function mairixRollbackTransaction(
+  transaction,
+  error
+) {
+
+  if (
+    !transaction
+  ) {
+
+    throw new Error(
+      "Transaction context is required for rollback."
+    );
+
+  }
+
+
+  transaction.error =
+    error || null;
+
+
+  let rollbackError =
+    null;
+
+
+  try {
+
+    /********************************************
+     * 1. REMOVE APPENDED ROWS
+     ********************************************/
+
+    mairixRollbackAppendedRows(
+      transaction
+    );
+
+
+    /********************************************
+     * 2. RESTORE RANGE SNAPSHOTS
+     *
+     * Reverse order is intentional.
+     ********************************************/
+
+    for (
+      let i =
+        transaction.snapshots.length - 1;
+      i >= 0;
+      i--
+    ) {
+
+      mairixRestoreTransactionSnapshot(
+        transaction.snapshots[i]
+      );
+
+    }
+
+
+    /********************************************
+     * FINAL STATE
+     ********************************************/
+
+    transaction.state =
+      MAIRIX_TRANSACTION_STATE.ROLLED_BACK;
+
+
+    transaction.rolledBackAt =
+      new Date();
+
+
+    return transaction;
+
+  } catch (rollbackException) {
+
+    rollbackError =
+      rollbackException;
+
+
+    transaction.rollbackError =
+      rollbackException;
+
+
+    transaction.state =
+      MAIRIX_TRANSACTION_STATE.FAILED;
+
+
+    throw rollbackException;
+
+  }
+
+}
+
+
+/************************************************
+ * COMMIT TRANSACTION
+ ************************************************/
+
+function mairixCommitTransaction(
+  transaction
+) {
+
+  if (
+    !transaction
+  ) {
+
+    throw new Error(
+      "Transaction context is required for commit."
+    );
+
+  }
+
+
+  if (
+    transaction.state !==
+    MAIRIX_TRANSACTION_STATE.STARTED
+  ) {
+
+    throw new Error(
+      "Transaction is not active."
+    );
+
+  }
+
+
+  transaction.state =
+    MAIRIX_TRANSACTION_STATE.COMMITTED;
+
+
+  transaction.committedAt =
+    new Date();
+
+
+  return transaction;
+
+}
+
+
+/************************************************
+ * END TRANSACTION
+ *
+ * Always release the ScriptLock.
+ ************************************************/
+
+function mairixEndTransaction(
+  transaction
+) {
+
+  const lock =
+    mairixGetTransactionLock();
+
+
+  try {
+
+    lock.releaseLock();
+
+  } catch (error) {
+
+    Logger.log(
+      "MAIRIX transaction lock release failed: " +
+      error.message
+    );
+
+  }
+
+
+  return transaction;
+
+}
+
+
+/************************************************
+ * CLASSIFY TRANSACTION ERROR
+ *
+ * Business engines can provide:
+ *
+ * error.code
+ *
+ * or:
+ *
+ * error.mairixCode
+ *
+ * If neither exists, the error is classified
+ * as a transaction/business failure.
+ ************************************************/
+
+function mairixClassifyTransactionError(
+  error
+) {
+
+  if (
+    !error
+  ) {
+
+    return MAIRIX_TRANSACTION_ERROR_CODE.TRANSACTION;
+
+  }
+
+
+  const explicitCode =
+    mairixCleanText(
+      error.mairixCode ||
+      error.code ||
+      ""
+    ).toUpperCase();
+
+
+  if (
+    explicitCode.indexOf(
+      "PERMISSION"
+    ) !== -1
+  ) {
+
+    return MAIRIX_TRANSACTION_ERROR_CODE.PERMISSION;
+
+  }
+
+
+  if (
+    explicitCode.indexOf(
+      "VALIDATION"
+    ) !== -1
+  ) {
+
+    return MAIRIX_TRANSACTION_ERROR_CODE.VALIDATION;
+
+  }
+
+
+  if (
+    explicitCode.indexOf(
+      "BUSINESS"
+    ) !== -1
+  ) {
+
+    return MAIRIX_TRANSACTION_ERROR_CODE.BUSINESS_RULE;
+
+  }
+
+
+  const message =
+    mairixCleanText(
+      error.message ||
+      String(error)
+    ).toUpperCase();
+
+
+  if (
+    message.indexOf(
+      "PERMISSION"
+    ) !== -1
+  ) {
+
+    return MAIRIX_TRANSACTION_ERROR_CODE.PERMISSION;
+
+  }
+
+
+  if (
+    message.indexOf(
+      "VALIDATION"
+    ) !== -1
+  ) {
+
+    return MAIRIX_TRANSACTION_ERROR_CODE.VALIDATION;
+
+  }
+
+
+  return MAIRIX_TRANSACTION_ERROR_CODE.TRANSACTION;
+
+}
+
+
+/************************************************
+ * BUILD REJECTION RECORD
+ ************************************************/
+
+function mairixBuildRejectionRecord(
+  transaction,
+  error,
+  rollbackStatus
+) {
+
+  const code =
+    mairixClassifyTransactionError(
+      error
+    );
+
+
+  return {
+
+    timestamp:
+      new Date(),
+
+    source:
+      transaction.source,
+
+    code:
+      code,
+
+    message:
+      error &&
+      error.message
+        ? error.message
+        : String(error),
+
+    reference:
+      transaction.reference,
+
+    transactionId:
+      transaction.transactionId,
+
+    transactionType:
+      transaction.transactionType,
+
+    rejected:
+      true,
+
+    rollback:
+      rollbackStatus,
+
+    engineVersion:
+      MAIRIX_TRANSACTION_ENGINE_VERSION
+
+  };
+
+}
+
+
+/************************************************
+ * RECORD REJECTION
+ *
+ * Existing rejection engine remains the owner
+ * of the actual Rejection Report write.
+ ************************************************/
+
+function mairixRecordTransactionRejection(
+  transaction,
+  error,
+  rollbackStatus
+) {
+
+  const record =
+    mairixBuildRejectionRecord(
+      transaction,
+      error,
+      rollbackStatus
+    );
+
+
+  if (
+    typeof mairixRecordRejection !==
+    "function"
+  ) {
+
+    Logger.log(
+      "MAIRIX Rejection Report function is unavailable."
+    );
+
+    Logger.log(
+      JSON.stringify(
+        record
+      )
+    );
+
+    return false;
+
+  }
+
+
+  mairixRecordRejection(
+    record
+  );
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * CENTRAL TRANSACTION EXECUTOR
+ *
+ * PREFERRED USAGE:
+ *
+ * mairixRunTransaction(
+ *
+ *   {
+ *     source:
+ *       "SALES",
+ *
+ *     transactionType:
+ *       "SALE"
+ *
+ *   },
+ *
+ *   function(tx) {
+ *
+ *     const reference =
+ *       tx.reference;
+ *
+ *     ...
+ *
+ *     return result;
+ *
+ *   }
+ *
+ * );
+ *
+ *
+ * The executor automatically:
+ *
+ * 1. Generates central Reference.
+ * 2. Acquires transaction lock.
+ * 3. Executes operation.
+ * 4. Commits on success.
+ * 5. Rolls back on failure.
+ * 6. Records rejection.
+ * 7. Releases lock.
+ ************************************************/
+
+function mairixRunTransaction(
+  options,
+  operation
+) {
+
+  if (
+    typeof operation !==
+    "function"
+  ) {
+
+    throw new Error(
+      "MAIRIX transaction operation must be a function."
+    );
+
+  }
+
+
+  const config =
+    options || {};
+
+
+  /**********************************************
+   * PREPARE CENTRAL REFERENCE
+   *
+   * MUST happen before transaction lock.
+   **********************************************/
+
+  let reference;
+
+
+  try {
+
+    reference =
+      mairixPrepareTransactionReference(
+        config
+      );
+
+  } catch (referenceError) {
+
+    /*
+     * No transaction lock has been acquired yet.
+     *
+     * Therefore no rollback is necessary.
+     *
+     * Record rejection if possible.
+     */
+
+    try {
+
+      mairixRecordRejection({
+
+        timestamp:
+          new Date(),
+
+        source:
+          mairixCleanText(
+            config.source ||
+            "MAIRIX"
+          ),
+
+        code:
+          "MAIRIX_REFERENCE_REJECTED",
+
+        message:
+          referenceError.message ||
+          String(referenceError),
+
+        reference:
+          config.reference ||
+          "",
+
+        transactionId:
+          "",
+
+        transactionType:
+          mairixCleanText(
+            config.transactionType ||
+            ""
+          ).toUpperCase(),
+
+        rejected:
+          true,
+
+        rollback:
+          "NOT_REQUIRED",
+
+        engineVersion:
+          MAIRIX_TRANSACTION_ENGINE_VERSION
+
+      });
+
+    } catch (rejectionError) {
+
+      Logger.log(
+        "Reference rejection recording failed: " +
+        rejectionError.message
+      );
+
+    }
+
+
+    return {
+
+      success:
+        false,
+
+      transactionId:
+        null,
+
+      reference:
+        config.reference ||
+        "",
+
+      state:
+        MAIRIX_TRANSACTION_STATE.FAILED,
+
+      rolledBack:
+        false,
+
+      error: {
+
+        code:
+          "MAIRIX_REFERENCE_REJECTED",
+
+        message:
+          referenceError.message ||
+          String(referenceError)
+
+      }
+
+    };
+
+  }
+
+
+  /**********************************************
+   * BEGIN TRANSACTION
+   **********************************************/
+
+  let transaction;
+
+
+  try {
+
+    transaction =
+      mairixBeginTransaction({
+
+        transactionId:
+          config.transactionId,
+
+        source:
+          config.source,
+
+        reference:
+          reference,
+
+        transactionType:
+          config.transactionType
+
+      });
+
+  } catch (beginError) {
+
+    try {
+
+      mairixRecordRejection({
+
+        timestamp:
+          new Date(),
+
+        source:
+          mairixCleanText(
+            config.source ||
+            "MAIRIX"
+          ),
+
+        code:
+          "MAIRIX_TRANSACTION_BEGIN_REJECTED",
+
+        message:
+          beginError.message ||
+          String(beginError),
+
+        reference:
+          reference,
+
+        transactionId:
+          "",
+
+        transactionType:
+          mairixCleanText(
+            config.transactionType ||
+            ""
+          ).toUpperCase(),
+
+        rejected:
+          true,
+
+        rollback:
+          "NOT_REQUIRED",
+
+        engineVersion:
+          MAIRIX_TRANSACTION_ENGINE_VERSION
+
+      });
+
+    } catch (rejectionError) {
+
+      Logger.log(
+        "Transaction begin rejection recording failed: " +
+        rejectionError.message
+      );
+
+    }
+
+
+    return {
+
+      success:
+        false,
+
+      transactionId:
+        null,
+
+      reference:
+        reference,
+
+      state:
+        MAIRIX_TRANSACTION_STATE.FAILED,
+
+      rolledBack:
+        false,
+
+      error: {
+
+        code:
+          "MAIRIX_TRANSACTION_BEGIN_REJECTED",
+
+        message:
+          beginError.message ||
+          String(beginError)
+
+      }
+
+    };
+
+  }
+
+
+  /**********************************************
+   * EXECUTE BUSINESS OPERATION
+   **********************************************/
+
+  try {
+
+    const result =
+      operation(
+        transaction
+      );
+
+
+    /********************************************
+     * COMMIT
+     ********************************************/
+
+    mairixCommitTransaction(
+      transaction
+    );
+
+
+    /********************************************
+     * RELEASE LOCK
+     ********************************************/
+
+    mairixEndTransaction(
+      transaction
+    );
+
+
+    return {
+
+      success:
+        true,
+
+      transactionId:
+        transaction.transactionId,
+
+      reference:
+        transaction.reference,
+
+      transactionType:
+        transaction.transactionType,
+
+      state:
+        transaction.state,
+
+      rolledBack:
+        false,
+
+      result:
+        result === undefined
+          ? null
+          : result
+
+    };
+
+  } catch (error) {
+
+    /********************************************
+     * ORIGINAL ERROR
+     ********************************************/
+
+    transaction.error =
+      error;
+
+
+    transaction.state =
+      MAIRIX_TRANSACTION_STATE.FAILED;
+
+
+    /********************************************
+     * ROLLBACK
+     ********************************************/
+
+    let rollbackError =
+      null;
+
+
+    try {
+
+      mairixRollbackTransaction(
+        transaction,
+        error
+      );
+
+    } catch (rollbackException) {
+
+      rollbackError =
+        rollbackException;
+
+    }
+
+
+    /********************************************
+     * RELEASE LOCK
+     ********************************************/
+
+    mairixEndTransaction(
+      transaction
+    );
+
+
+    /********************************************
+     * REJECTION REPORT
+     ********************************************/
+
+    try {
+
+      mairixRecordTransactionRejection(
+        transaction,
+        error,
+        rollbackError
+          ? "FAILED"
+          : "SUCCESS"
+      );
+
+    } catch (rejectionError) {
+
+      Logger.log(
+        "Transaction rejection recording failed: " +
+        rejectionError.message
+      );
+
+    }
+
+
+    /********************************************
+     * ROLLBACK FAILURE
+     *
+     * NEVER HIDE THIS.
+     ********************************************/
+
+    if (
+      rollbackError
+    ) {
+
+      return {
+
+        success:
+          false,
+
+        transactionId:
+          transaction.transactionId,
+
+        reference:
+          transaction.reference,
+
+        transactionType:
+          transaction.transactionType,
+
+        state:
+          transaction.state,
+
+        rolledBack:
+          false,
+
+        rollbackFailed:
+          true,
+
+        error: {
+
+          code:
+            MAIRIX_TRANSACTION_ERROR_CODE.ROLLBACK,
+
+          message:
+            error &&
+            error.message
+              ? error.message
+              : String(error)
+
+        },
+
+        rollbackError: {
+
+          message:
+            rollbackError.message ||
+            String(rollbackError)
+
+        }
+
+      };
+
+    }
+
+
+    /********************************************
+     * NORMAL BUSINESS FAILURE
+     *
+     * Everything was rolled back.
+     ********************************************/
+
+    return {
+
+      success:
+        false,
+
+      transactionId:
+        transaction.transactionId,
+
+      reference:
+        transaction.reference,
+
+      transactionType:
+        transaction.transactionType,
+
+      state:
+        transaction.state,
+
+      rolledBack:
+        true,
+
+      rollbackFailed:
+        false,
+
+      error: {
+
+        code:
+          mairixClassifyTransactionError(
+            error
+          ),
+
+        message:
+          error &&
+          error.message
+            ? error.message
+            : String(error)
+
+      }
+
+    };
+
+  }
+
+}
+
+
+/************************************************
+ * ASSERT TRANSACTION REFERENCE
+ *
+ * Business engines can use this before writing
+ * any child record.
+ ************************************************/
+
+function mairixRequireTransactionReference(
+  transaction
+) {
+
+  if (
+    !transaction
+  ) {
+
+    throw new Error(
+      "MAIRIX transaction context is required."
+    );
+
+  }
+
+
+  if (
+    transaction.state !==
+    MAIRIX_TRANSACTION_STATE.STARTED
+  ) {
+
+    throw new Error(
+      "MAIRIX transaction is not active."
+    );
+
+  }
+
+
+  return requireMairixReference(
+    transaction.reference
+  );
+
+}
+
+
+/************************************************
+ * ASSERT CHILD REFERENCE
+ *
+ * Ensures a child ledger uses exactly the
+ * central transaction reference.
+ ************************************************/
+
+function mairixAssertTransactionChildReference(
+  transaction,
+  childReference
+) {
+
+  const centralReference =
+    mairixRequireTransactionReference(
+      transaction
+    );
+
+
+  const child =
+    requireMairixReference(
+      childReference
+    );
+
+
+  if (
+    child !==
+    centralReference
+  ) {
+
+    throw new Error(
+      "Child Reference ID does not match the central transaction Reference ID. " +
+      "Central: " +
+      centralReference +
+      " | Child: " +
+      child
+    );
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * TRANSACTION ENGINE HEALTH CHECK
+ ************************************************/
+
+function testMairixTransactionEngineHealth() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TRANSACTION ENGINE HEALTH"
+  );
+
+  Logger.log(
+    "VERSION: " +
+    MAIRIX_TRANSACTION_ENGINE_VERSION
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const result =
+    mairixRunTransaction(
+
+      {
+
+        source:
+          "TRANSACTION_HEALTH_TEST",
+
+        transactionType:
+          "HEALTH_TEST"
+
+      },
+
+      function(
+        transaction
+      ) {
+
+        if (
+          !transaction.transactionId
+        ) {
+
+          throw new Error(
+            "Transaction ID was not generated."
+          );
+
+        }
+
+
+        if (
+          !transaction.reference
+        ) {
+
+          throw new Error(
+            "Central Reference ID was not generated."
+          );
+
+        }
+
+
+        validateMairixReferenceId(
+          transaction.reference
+        );
+
+
+        return {
+
+          transactionId:
+            transaction.transactionId,
+
+          reference:
+            transaction.reference,
+
+          state:
+            transaction.state
+
+        };
+
+      }
+
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !result ||
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "Transaction engine health test failed."
+    );
+
+  }
+
+
+  if (
+    result.state !==
+    MAIRIX_TRANSACTION_STATE.COMMITTED
+  ) {
+
+    throw new Error(
+      "Transaction did not commit correctly."
+    );
+
+  }
+
+
+  if (
+    !result.reference
+  ) {
+
+    throw new Error(
+      "Committed transaction has no Reference ID."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TRANSACTION ENGINE HEALTH: PASS"
+  );
+
+  Logger.log(
+    "REFERENCE GENERATED."
+  );
+
+  Logger.log(
+    "TRANSACTION COMMITTED."
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * REAL MULTI-SHEET ROLLBACK TEST
+ *
+ * PURPOSE:
+ *
+ * Prove that one transaction can:
+ *
+ * 1. Generate a central Reference.
+ * 2. Modify multiple sheets.
+ * 3. Append rows.
+ * 4. Fail intentionally.
+ * 5. Roll back all changes.
+ *
+ * This test does NOT touch production
+ * transaction tables.
+ ************************************************/
+
+function testMairixTransactionRollbackMultiSheet() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX REAL MULTI-SHEET ROLLBACK TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheetAName =
+    "MAIRIX_TX_MULTI_A";
+
+
+  const sheetBName =
+    "MAIRIX_TX_MULTI_B";
+
+
+  let sheetA =
+    spreadsheet.getSheetByName(
+      sheetAName
+    );
+
+
+  let sheetB =
+    spreadsheet.getSheetByName(
+      sheetBName
+    );
+
+
+  if (
+    !sheetA
+  ) {
+
+    sheetA =
+      spreadsheet.insertSheet(
+        sheetAName
+      );
+
+  }
+
+
+  if (
+    !sheetB
+  ) {
+
+    sheetB =
+      spreadsheet.insertSheet(
+        sheetBName
+      );
+
+  }
+
+
+  /**********************************************
+   * RESET TEST SHEETS
+   **********************************************/
+
+  sheetA
+    .clear();
+
+
+  sheetB
+    .clear();
+
+
+  sheetA
+    .getRange(
+      1,
+      1,
+      3,
+      2
+    )
+    .setValues(
+      [
+
+        [
+          "STATUS",
+          "VALUE"
+        ],
+
+        [
+          "BEFORE",
+          100
+        ],
+
+        [
+          "KEEP",
+          200
+        ]
+
+      ]
+    );
+
+
+  sheetB
+    .getRange(
+      1,
+      1,
+      3,
+      2
+    )
+    .setValues(
+      [
+
+        [
+          "STATUS",
+          "VALUE"
+        ],
+
+        [
+          "BEFORE",
+          300
+        ],
+
+        [
+          "KEEP",
+          400
+        ]
+
+      ]
+    );
+
+
+  const beforeA =
+    sheetA
+      .getRange(
+        1,
+        1,
+        3,
+        2
+      )
+      .getValues();
+
+
+  const beforeB =
+    sheetB
+      .getRange(
+        1,
+        1,
+        3,
+        2
+      )
+      .getValues();
+
+
+  /**********************************************
+   * TRANSACTION
+   **********************************************/
+
+  const result =
+    mairixRunTransaction(
+
+      {
+
+        source:
+          "MULTI_SHEET_ROLLBACK_TEST",
+
+        transactionType:
+          "ROLLBACK_TEST"
+
+      },
+
+      function(
+        transaction
+      ) {
+
+        Logger.log(
+          "CENTRAL REFERENCE: " +
+          transaction.reference
+        );
+
+
+        /**************************************
+         * SNAPSHOT SHEET A
+         **************************************/
+
+        mairixTransactionSnapshotRange(
+          transaction,
+          sheetA,
+          1,
+          1,
+          3,
+          2
+        );
+
+
+        /**************************************
+         * SNAPSHOT SHEET B
+         **************************************/
+
+        mairixTransactionSnapshotRange(
+          transaction,
+          sheetB,
+          1,
+          1,
+          3,
+          2
+        );
+
+
+        /**************************************
+         * MODIFY SHEET A
+         **************************************/
+
+        sheetA
+          .getRange(
+            2,
+            1,
+            2,
+            2
+          )
+          .setValues(
+            [
+
+              [
+                "CHANGED",
+                999
+              ],
+
+              [
+                "CHANGED",
+                888
+              ]
+
+            ]
+          );
+
+
+        /**************************************
+         * MODIFY SHEET B
+         **************************************/
+
+        sheetB
+          .getRange(
+            2,
+            1,
+            2,
+            2
+          )
+          .setValues(
+            [
+
+              [
+                "CHANGED",
+                777
+              ],
+
+              [
+                "CHANGED",
+                666
+              ]
+
+            ]
+          );
+
+
+        /**************************************
+         * APPEND ROW TO SHEET A
+         **************************************/
+
+        mairixTransactionAppendRows(
+          transaction,
+          sheetA,
+          [
+
+            [
+              "APPENDED",
+              555
+            ]
+
+          ]
+        );
+
+
+        /**************************************
+         * APPEND ROW TO SHEET B
+         **************************************/
+
+        mairixTransactionAppendRows(
+          transaction,
+          sheetB,
+          [
+
+            [
+              "APPENDED",
+              444
+            ]
+
+          ]
+        );
+
+
+        SpreadsheetApp
+          .flush();
+
+
+        Logger.log(
+          "INTENTIONAL FAILURE"
+        );
+
+
+        throw new Error(
+          "INTENTIONAL_MULTI_SHEET_ROLLBACK_FAILURE"
+        );
+
+      }
+
+    );
+
+
+  /**********************************************
+   * VERIFY TRANSACTION FAILED
+   **********************************************/
+
+  if (
+    !result ||
+    result.success !== false
+  ) {
+
+    throw new Error(
+      "Multi-sheet rollback test failed: transaction did not fail."
+    );
+
+  }
+
+
+  if (
+    result.rolledBack !== true
+  ) {
+
+    throw new Error(
+      "Multi-sheet rollback test failed: rollback was not confirmed."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY SHEET A
+   **********************************************/
+
+  const afterA =
+    sheetA
+      .getRange(
+        1,
+        1,
+        3,
+        2
+      )
+      .getValues();
+
+
+  /**********************************************
+   * VERIFY SHEET B
+   **********************************************/
+
+  const afterB =
+    sheetB
+      .getRange(
+        1,
+        1,
+        3,
+        2
+      )
+      .getValues();
+
+
+  if (
+    JSON.stringify(
+      beforeA
+    ) !==
+    JSON.stringify(
+      afterA
+    )
+  ) {
+
+    throw new Error(
+      "MULTI-SHEET ROLLBACK FAILED: Sheet A was not restored."
+    );
+
+  }
+
+
+  if (
+    JSON.stringify(
+      beforeB
+    ) !==
+    JSON.stringify(
+      afterB
+    )
+  ) {
+
+    throw new Error(
+      "MULTI-SHEET ROLLBACK FAILED: Sheet B was not restored."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY APPENDED ROWS ARE GONE
+   **********************************************/
+
+  const sheetALastRow =
+    sheetA.getLastRow();
+
+
+  const sheetBLastRow =
+    sheetB.getLastRow();
+
+
+  if (
+    sheetALastRow !== 3
+  ) {
+
+    throw new Error(
+      "MULTI-SHEET ROLLBACK FAILED: Sheet A appended row remains."
+    );
+
+  }
+
+
+  if (
+    sheetBLastRow !== 3
+  ) {
+
+    throw new Error(
+      "MULTI-SHEET ROLLBACK FAILED: Sheet B appended row remains."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MULTI-SHEET ROLLBACK: PASS"
+  );
+
+  Logger.log(
+    "SHEET A RESTORED."
+  );
+
+  Logger.log(
+    "SHEET B RESTORED."
+  );
+
+  Logger.log(
+    "APPENDED ROWS REMOVED."
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    transactionReference:
+      result.reference,
+
+    rolledBack:
+      result.rolledBack
+
+  };
+
+}
+
+
+/************************************************
+ * CENTRAL REFERENCE CONSISTENCY TEST
+ *
+ * Proves that child records cannot use a
+ * different Reference ID from the transaction.
+ ************************************************/
+
+function testMairixTransactionReferenceConsistency() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TRANSACTION REFERENCE CONSISTENCY TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const result =
+    mairixRunTransaction(
+
+      {
+
+        source:
+          "REFERENCE_CONSISTENCY_TEST",
+
+        transactionType:
+          "REFERENCE_TEST"
+
+      },
+
+      function(
+        transaction
+      ) {
+
+        const centralReference =
+          mairixRequireTransactionReference(
+            transaction
+          );
+
+
+        /*
+         * Correct child reference must pass.
+         */
+
+        mairixAssertTransactionChildReference(
+          transaction,
+          centralReference
+        );
+
+
+        /*
+         * Different valid reference must fail.
+         */
+
+        const differentReference =
+          generateMairixReferenceId();
+
+
+        let mismatchRejected =
+          false;
+
+
+        try {
+
+          mairixAssertTransactionChildReference(
+            transaction,
+            differentReference
+          );
+
+        } catch (error) {
+
+          mismatchRejected =
+            true;
+
+        }
+
+
+        if (
+          !mismatchRejected
+        ) {
+
+          throw new Error(
+            "Reference consistency test failed: mismatched child reference was accepted."
+          );
+
+        }
+
+
+        return {
+
+          reference:
+            centralReference,
+
+          mismatchRejected:
+            mismatchRejected
+
+        };
+
+      }
+
+    );
+
+
+  if (
+    !result ||
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "Reference consistency test failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "REFERENCE CONSISTENCY TEST: PASS"
+  );
+
+  Logger.log(
+    "CENTRAL REFERENCE ENFORCED."
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return result;
+
+}
+
+/************************************************
+ * MAIRIX ERP
+ * 30-MAIRIX_TRANSACTION_ENGINE
+ *
+ * CENTRAL NUMBERING + MASTER DATA CODING
+ * EXTENSION
+ *
+ * PURPOSE:
+ *
+ * 1. Centralized code generation.
+ * 2. Prevent duplicate codes.
+ * 3. Read prefixes from SETTINGS.
+ * 4. Read padding from SETTINGS.
+ * 5. Synchronize numbering with existing data.
+ * 6. Integrate with MASTER DATA.
+ * 7. Support transactional safety.
+ *
+ * IMPORTANT:
+ *
+ * This extension belongs to the existing
+ * 30-MAIRIX_TRANSACTION_ENGINE.
+ *
+ * Do NOT replace the existing transaction engine.
+ * Append this code at the END of file 30.
+ ************************************************/
+
+
+/************************************************
+ * CENTRAL NUMBERING VERSION
+ ************************************************/
+
+const MAIRIX_CENTRAL_NUMBERING_VERSION =
+  "1.0.0";
+
+
+/************************************************
+ * NUMBERING ENTITY TYPES
+ ************************************************/
+
+const MAIRIX_NUMBERING_ENTITY = {
+
+  CUSTOMER:
+    "CUSTOMER",
+
+  VENDOR:
+    "VENDOR",
+
+  EMPLOYEE:
+    "EMPLOYEE",
+
+  USER:
+    "USER",
+
+  ITEM:
+    "ITEM",
+
+  WAREHOUSE:
+    "WAREHOUSE",
+
+  EXPENSE:
+    "EXPENSE",
+
+  INVENTORY_COUNT:
+    "INVENTORY_COUNT",
+
+  INVENTORY_COUNT_TASK:
+    "INVENTORY_COUNT_TASK",
+
+  INVENTORY_COUNT_LINE:
+    "INVENTORY_COUNT_LINE"
+
+};
+
+
+/************************************************
+ * NUMBERING REGISTRY
+ *
+ * SETTINGS KEY
+ * PREFIX DEFAULT
+ * SHEET
+ * CODE COLUMN CANDIDATES
+ ************************************************/
+
+const MAIRIX_NUMBERING_REGISTRY = {
+
+  CUSTOMER: {
+
+    settingsKey:
+      "CUSTOMER_CODE_PREFIX",
+
+    defaultPrefix:
+      "CUS",
+
+    sheet:
+      "CUSTOMERS",
+
+    codeColumns: [
+      "CUSTOMER_CODE",
+      "CODE",
+      "CUSTOMER ID"
+    ]
+
+  },
+
+
+  VENDOR: {
+
+    settingsKey:
+      "VENDOR_CODE_PREFIX",
+
+    defaultPrefix:
+      "VEN",
+
+    sheet:
+      "VENDORS",
+
+    codeColumns: [
+      "VENDOR_CODE",
+      "CODE",
+      "VENDOR ID"
+    ]
+
+  },
+
+
+  EMPLOYEE: {
+
+    settingsKey:
+      "EMPLOYEE_CODE_PREFIX",
+
+    defaultPrefix:
+      "EMP",
+
+    sheet:
+      "EMPLOYEES",
+
+    codeColumns: [
+      "EMPLOYEE_CODE",
+      "CODE",
+      "EMPLOYEE ID"
+    ]
+
+  },
+
+
+  USER: {
+
+    settingsKey:
+      "USER_CODE_PREFIX",
+
+    defaultPrefix:
+      "USR",
+
+    sheet:
+      "USERS",
+
+    codeColumns: [
+      "USER_CODE",
+      "CODE",
+      "USER ID"
+    ]
+
+  },
+
+
+  ITEM: {
+
+    settingsKey:
+      "ITEM_CODE_PREFIX",
+
+    defaultPrefix:
+      "ITM",
+
+    sheet:
+      "ITEMS",
+
+    codeColumns: [
+      "ITEM_CODE",
+      "CODE",
+      "ITEM ID"
+    ]
+
+  },
+
+
+  WAREHOUSE: {
+
+    settingsKey:
+      "WAREHOUSE_CODE_PREFIX",
+
+    defaultPrefix:
+      "WH",
+
+    sheet:
+      "WAREHOUSES",
+
+    codeColumns: [
+      "WAREHOUSE_CODE",
+      "CODE",
+      "WAREHOUSE ID"
+    ]
+
+  },
+
+
+  EXPENSE: {
+
+    settingsKey:
+      "EXPENSE_CODE_PREFIX",
+
+    defaultPrefix:
+      "EXP",
+
+    sheet:
+      "EXPENSES",
+
+    codeColumns: [
+      "EXPENSE_CODE",
+      "CODE",
+      "EXPENSE ID"
+    ]
+
+  },
+
+
+  INVENTORY_COUNT: {
+
+    settingsKey:
+      "INVENTORY_COUNT_CODE_PREFIX",
+
+    defaultPrefix:
+      "IC",
+
+    sheet:
+      "INVENTORY_COUNTS",
+
+    codeColumns: [
+      "INVENTORY_COUNT_CODE",
+      "COUNT_CODE",
+      "CODE"
+    ]
+
+  },
+
+
+  INVENTORY_COUNT_TASK: {
+
+    settingsKey:
+      "INVENTORY_COUNT_TASK_CODE_PREFIX",
+
+    defaultPrefix:
+      "ICT",
+
+    sheet:
+      "INVENTORY_COUNT_TASKS",
+
+    codeColumns: [
+      "INVENTORY_COUNT_TASK_CODE",
+      "TASK_CODE",
+      "CODE"
+    ]
+
+  },
+
+
+  INVENTORY_COUNT_LINE: {
+
+    settingsKey:
+      "INVENTORY_COUNT_LINE_CODE_PREFIX",
+
+    defaultPrefix:
+      "ICL",
+
+    sheet:
+      "INVENTORY_COUNT_LINES",
+
+    codeColumns: [
+      "INVENTORY_COUNT_LINE_CODE",
+      "LINE_CODE",
+      "CODE"
+    ]
+
+  }
+
+};
+
+
+/************************************************
+ * NUMBERING DEFAULT SETTINGS
+ *
+ * These are FALLBACKS only.
+ *
+ * SETTINGS remains the primary source.
+ ************************************************/
+
+const MAIRIX_NUMBERING_DEFAULTS = {
+
+  CODE_SEQUENCE_PADDING:
+    5,
+
+  CODE_SEPARATOR:
+    "-"
+
+};
+
+
+/************************************************
+ * GET NUMBERING LOCK
+ ************************************************/
+
+function mairixGetNumberingLock() {
+
+  return LockService
+    .getScriptLock();
+
+}
+
+
+/************************************************
+ * NORMALIZE NUMBERING ENTITY
+ ************************************************/
+
+function mairixNormalizeNumberingEntity(
+  entityType
+) {
+
+  const entity =
+    String(
+      entityType || ""
+    )
+    .trim()
+    .toUpperCase();
+
+
+  if (
+    !entity
+  ) {
+
+    throw new Error(
+      "Numbering entity type is required."
+    );
+
+  }
+
+
+  if (
+    !MAIRIX_NUMBERING_REGISTRY[entity]
+  ) {
+
+    throw new Error(
+      "Unsupported numbering entity: " +
+      entity
+    );
+
+  }
+
+
+  return entity;
+
+}
+
+
+/************************************************
+ * GET NUMBERING ENTITY CONFIG
+ *
+ * IMPORTANT:
+ * Always returns a valid registry configuration.
+ ************************************************/
+function mairixGetNumberingEntityConfig(
+  entityType
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+  const config =
+    MAIRIX_NUMBERING_REGISTRY[entity];
+
+  if (
+    !config ||
+    typeof config !== "object"
+  ) {
+
+    throw new Error(
+      "Numbering configuration was not found for entity: " +
+      entity
+    );
+
+  }
+
+  if (
+    !config.sheet
+  ) {
+
+    throw new Error(
+      "Numbering configuration is missing sheet for entity: " +
+      entity
+    );
+
+  }
+
+  if (
+    !Array.isArray(
+      config.codeColumns
+    ) ||
+    config.codeColumns.length === 0
+  ) {
+
+    throw new Error(
+      "Numbering configuration is missing codeColumns for entity: " +
+      entity
+    );
+
+  }
+
+  return config;
+
+}
+
+
+/************************************************
+ * GET SETTINGS SHEET
+ ************************************************/
+
+function mairixGetSettingsSheetForNumbering() {
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      "SETTINGS"
+    );
+
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "SETTINGS sheet was not found."
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * READ SETTING VALUE
+ *
+ * Flexible reader for common SETTINGS layouts:
+ *
+ * KEY | VALUE
+ *
+ * or
+ *
+ * SETTING_KEY | SETTING_VALUE
+ ************************************************/
+
+function mairixReadNumberingSetting(
+  settingKey,
+  defaultValue
+) {
+
+  const sheet =
+    mairixGetSettingsSheetForNumbering();
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 2
+  ) {
+
+    return defaultValue;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getValues()[0]
+      .map(
+        function(header) {
+
+          return String(
+            header || ""
+          )
+          .trim()
+          .toUpperCase();
+
+        }
+      );
+
+
+  let keyColumn =
+    headers.indexOf(
+      "KEY"
+    );
+
+
+  if (
+    keyColumn === -1
+  ) {
+
+    keyColumn =
+      headers.indexOf(
+        "SETTING_KEY"
+      );
+
+  }
+
+
+  let valueColumn =
+    headers.indexOf(
+      "VALUE"
+    );
+
+
+  if (
+    valueColumn === -1
+  ) {
+
+    valueColumn =
+      headers.indexOf(
+        "SETTING_VALUE"
+      );
+
+  }
+
+
+  if (
+    keyColumn === -1 ||
+    valueColumn === -1
+  ) {
+
+    return defaultValue;
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  const targetKey =
+    String(
+      settingKey
+    )
+    .trim()
+    .toUpperCase();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const currentKey =
+      String(
+        values[i][keyColumn] || ""
+      )
+      .trim()
+      .toUpperCase();
+
+
+    if (
+      currentKey === targetKey
+    ) {
+
+      const value =
+        values[i][valueColumn];
+
+
+      if (
+        value === "" ||
+        value === null ||
+        typeof value === "undefined"
+      ) {
+
+        return defaultValue;
+
+      }
+
+
+      return value;
+
+    }
+
+  }
+
+
+  return defaultValue;
+
+}
+
+
+/************************************************
+ * GET PREFIX
+ ************************************************/
+
+function mairixGetCodePrefix(
+  entityType
+) {
+
+  const config =
+    mairixGetNumberingEntityConfig(
+      entityType
+    );
+
+
+  const value =
+    mairixReadNumberingSetting(
+      config.settingsKey,
+      config.defaultPrefix
+    );
+
+
+  const prefix =
+    String(
+      value || config.defaultPrefix
+    )
+    .trim()
+    .toUpperCase();
+
+
+  if (
+    !prefix
+  ) {
+
+    throw new Error(
+      "Code prefix cannot be empty for " +
+      entityType
+    );
+
+  }
+
+
+  return prefix;
+
+}
+
+
+/************************************************
+ * GET CODE SEPARATOR
+ ************************************************/
+
+function mairixGetCodeSeparator() {
+
+  const separator =
+    mairixReadNumberingSetting(
+      "CODE_SEPARATOR",
+      MAIRIX_NUMBERING_DEFAULTS
+        .CODE_SEPARATOR
+    );
+
+
+  return String(
+    separator
+  );
+
+}
+
+
+/************************************************
+ * GET CODE PADDING
+ ************************************************/
+
+function mairixGetCodePadding() {
+
+  const rawValue =
+    mairixReadNumberingSetting(
+      "CODE_SEQUENCE_PADDING",
+      MAIRIX_NUMBERING_DEFAULTS
+        .CODE_SEQUENCE_PADDING
+    );
+
+
+  const padding =
+    Number(
+      rawValue
+    );
+
+
+  if (
+    !Number.isFinite(
+      padding
+    )
+  ) {
+
+    return MAIRIX_NUMBERING_DEFAULTS
+      .CODE_SEQUENCE_PADDING;
+
+  }
+
+
+  return Math.max(
+    1,
+    Math.floor(padding)
+  );
+
+}
+
+
+/************************************************
+ * GET SEQUENCE STORAGE KEY
+ *
+ * Stored in Script Properties.
+ *
+ * Example:
+ *
+ * MAIRIX_SEQUENCE_CUSTOMER
+ ************************************************/
+
+function mairixGetSequenceStorageKey(
+  entityType
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+
+  return (
+    "MAIRIX_SEQUENCE_" +
+    entity
+  );
+
+}
+
+
+/************************************************
+ * PARSE CODE SEQUENCE
+ *
+ * Examples:
+ *
+ * CUS-00015 -> 15
+ * ITM-120 -> 120
+ ************************************************/
+
+function mairixParseCodeSequence(
+  code
+) {
+
+  const text =
+    String(
+      code || ""
+    )
+    .trim();
+
+
+  if (
+    !text
+  ) {
+
+    return 0;
+
+  }
+
+
+  const match =
+    text.match(
+      /(\d+)$/
+    );
+
+
+  if (
+    !match
+  ) {
+
+    return 0;
+
+  }
+
+
+  return Number(
+    match[1]
+  ) || 0;
+
+}
+
+
+/************************************************
+ * FIND MASTER DATA CODE COLUMN
+ ************************************************/
+
+function mairixFindCodeColumn(
+  sheet,
+  candidates
+) {
+
+  if (
+    !sheet
+  ) {
+
+    return null;
+
+  }
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastColumn < 1
+  ) {
+
+    return null;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getValues()[0]
+      .map(
+        function(header) {
+
+          return String(
+            header || ""
+          )
+          .trim()
+          .toUpperCase();
+
+        }
+      );
+
+
+  for (
+    let i = 0;
+    i < candidates.length;
+    i++
+  ) {
+
+    const candidate =
+      String(
+        candidates[i]
+      )
+      .trim()
+      .toUpperCase();
+
+
+    const index =
+      headers.indexOf(
+        candidate
+      );
+
+
+    if (
+      index !== -1
+    ) {
+
+      return index + 1;
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET HIGHEST EXISTING SEQUENCE
+ *
+ * Protects existing master data and historical
+ * records.
+ *
+ * Returns zero when the configured sheet or
+ * code column does not yet exist.
+ ************************************************/
+function mairixGetHighestExistingSequence(
+  entityType
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+  const config =
+    mairixGetNumberingEntityConfig(
+      entity
+    );
+
+  if (
+    !config ||
+    !config.sheet
+  ) {
+
+    throw new Error(
+      "Invalid numbering configuration for entity: " +
+      entity
+    );
+
+  }
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  if (
+    !spreadsheet
+  ) {
+
+    throw new Error(
+      "Active spreadsheet could not be accessed."
+    );
+
+  }
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      config.sheet
+    );
+
+  /*
+   * Sheet does not exist yet.
+   *
+   * This is acceptable during initial setup.
+   */
+  if (
+    !sheet
+  ) {
+
+    return 0;
+
+  }
+
+  const codeColumn =
+    mairixFindCodeColumn(
+      sheet,
+      config.codeColumns || []
+    );
+
+  /*
+   * Sheet exists but its code column has not
+   * been created yet.
+   */
+  if (
+    !codeColumn
+  ) {
+
+    return 0;
+
+  }
+
+  const lastRow =
+    sheet.getLastRow();
+
+  /*
+   * Header only or empty sheet.
+   */
+  if (
+    lastRow < 2
+  ) {
+
+    return 0;
+
+  }
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        codeColumn,
+        lastRow - 1,
+        1
+      )
+      .getValues();
+
+  let highest =
+    0;
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const sequence =
+      mairixParseCodeSequence(
+        values[i][0]
+      );
+
+    if (
+      Number.isFinite(sequence) &&
+      sequence > highest
+    ) {
+
+      highest =
+        sequence;
+
+    }
+
+  }
+
+  return highest;
+
+}
+
+
+/************************************************
+ * GET STORED SEQUENCE
+ ************************************************/
+
+function mairixGetStoredSequence(
+  entityType
+) {
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+
+  const key =
+    mairixGetSequenceStorageKey(
+      entityType
+    );
+
+
+  const value =
+    properties.getProperty(
+      key
+    );
+
+
+  const sequence =
+    Number(
+      value
+    );
+
+
+  if (
+    !Number.isFinite(
+      sequence
+    )
+  ) {
+
+    return 0;
+
+  }
+
+
+  return Math.max(
+    0,
+    Math.floor(sequence)
+  );
+
+}
+
+
+/************************************************
+ * SET STORED SEQUENCE
+ ************************************************/
+
+function mairixSetStoredSequence(
+  entityType,
+  sequence
+) {
+
+  const safeSequence =
+    Number(
+      sequence
+    );
+
+
+  if (
+    !Number.isFinite(
+      safeSequence
+    ) ||
+    safeSequence < 0
+  ) {
+
+    throw new Error(
+      "Invalid sequence value."
+    );
+
+  }
+
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+
+  properties.setProperty(
+    mairixGetSequenceStorageKey(
+      entityType
+    ),
+    String(
+      Math.floor(
+        safeSequence
+      )
+    )
+  );
+
+
+  return safeSequence;
+
+}
+
+
+/************************************************
+ * FORMAT CENTRAL CODE
+ ************************************************/
+
+function mairixFormatCentralCode(
+  entityType,
+  sequence
+) {
+
+  const prefix =
+    mairixGetCodePrefix(
+      entityType
+    );
+
+
+  const separator =
+    mairixGetCodeSeparator();
+
+
+  const padding =
+    mairixGetCodePadding();
+
+
+  const numericSequence =
+    Math.max(
+      1,
+      Math.floor(
+        Number(sequence)
+      )
+    );
+
+
+  const paddedSequence =
+    String(
+      numericSequence
+    )
+    .padStart(
+      padding,
+      "0"
+    );
+
+
+  return (
+    prefix +
+    separator +
+    paddedSequence
+  );
+
+}
+
+
+/************************************************
+ * GENERATE NEXT CENTRAL CODE
+ *
+ * IMPORTANT:
+ *
+ * Uses ScriptLock.
+ *
+ * Existing sheet values are checked so
+ * numbering can continue safely after
+ * migration or manual historical data.
+ ************************************************/
+
+function mairixGenerateNextCode(
+  entityType
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+
+  const lock =
+    mairixGetNumberingLock();
+
+
+  const acquired =
+    lock.tryLock(
+      30000
+    );
+
+
+  if (
+    !acquired
+  ) {
+
+    throw new Error(
+      "MAIRIX numbering lock could not be acquired."
+    );
+
+  }
+
+
+  try {
+
+    const storedSequence =
+      mairixGetStoredSequence(
+        entity
+      );
+
+
+    const existingSequence =
+      mairixGetHighestExistingSequence(
+        entity
+      );
+
+
+    const baseSequence =
+      Math.max(
+        storedSequence,
+        existingSequence
+      );
+
+
+    const nextSequence =
+      baseSequence + 1;
+
+
+    const code =
+      mairixFormatCentralCode(
+        entity,
+        nextSequence
+      );
+
+
+    mairixSetStoredSequence(
+      entity,
+      nextSequence
+    );
+
+
+    return {
+
+      success:
+        true,
+
+      entityType:
+        entity,
+
+      code:
+        code,
+
+      sequence:
+        nextSequence,
+
+      prefix:
+        mairixGetCodePrefix(
+          entity
+        ),
+
+      generatedAt:
+        new Date()
+
+    };
+
+  } finally {
+
+    try {
+
+      lock.releaseLock();
+
+    } catch (error) {
+
+      Logger.log(
+        "Numbering lock release failed: " +
+        error.message
+      );
+
+    }
+
+  }
+
+}
+
+
+/************************************************
+ * PUBLIC SHORTCUT
+ ************************************************/
+
+function mairixGetNextCode(
+  entityType
+) {
+
+  return mairixGenerateNextCode(
+    entityType
+  );
+
+}
+
+
+/************************************************
+ * CHECK CODE EXISTS
+ ************************************************/
+
+function mairixCodeExists(
+  entityType,
+  code
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+
+  const config =
+    mairixGetNumberingEntityConfig(
+      entity
+    );
+
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      config.sheet
+    );
+
+
+  if (
+    !sheet
+  ) {
+
+    return false;
+
+  }
+
+
+  const codeColumn =
+    mairixFindCodeColumn(
+      sheet,
+      config.codeColumns
+    );
+
+
+  if (
+    !codeColumn
+  ) {
+
+    return false;
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return false;
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        codeColumn,
+        lastRow - 1,
+        1
+      )
+      .getValues();
+
+
+  const target =
+    String(
+      code || ""
+    )
+    .trim()
+    .toUpperCase();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const current =
+      String(
+        values[i][0] || ""
+      )
+      .trim()
+      .toUpperCase();
+
+
+    if (
+      current === target
+    ) {
+
+      return true;
+
+    }
+
+  }
+
+
+  return false;
+
+}
+
+
+/************************************************
+ * VALIDATE CENTRAL CODE
+ ************************************************/
+
+function mairixValidateCentralCode(
+  entityType,
+  code
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+
+  const value =
+    String(
+      code || ""
+    )
+    .trim()
+    .toUpperCase();
+
+
+  if (
+    !value
+  ) {
+
+    throw new Error(
+      "Central code is required."
+    );
+
+  }
+
+
+  const prefix =
+    mairixGetCodePrefix(
+      entity
+    );
+
+
+  const separator =
+    mairixGetCodeSeparator();
+
+
+  const expectedPrefix =
+    prefix +
+    separator;
+
+
+  if (
+    value.indexOf(
+      expectedPrefix
+    ) !== 0
+  ) {
+
+    throw new Error(
+      "Invalid code prefix for " +
+      entity +
+      ": " +
+      value
+    );
+
+  }
+
+
+  const sequence =
+    mairixParseCodeSequence(
+      value
+    );
+
+
+  if (
+    sequence < 1
+  ) {
+
+    throw new Error(
+      "Invalid code sequence: " +
+      value
+    );
+
+  }
+
+
+  return {
+
+    valid:
+      true,
+
+    entityType:
+      entity,
+
+    code:
+      value,
+
+    sequence:
+      sequence
+
+  };
+
+}
+
+
+/************************************************
+ * SYNCHRONIZE ENTITY SEQUENCE
+ *
+ * Run after importing historical data.
+ ************************************************/
+
+function mairixSynchronizeEntitySequence(
+  entityType
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+
+  const lock =
+    mairixGetNumberingLock();
+
+
+  const acquired =
+    lock.tryLock(
+      30000
+    );
+
+
+  if (
+    !acquired
+  ) {
+
+    throw new Error(
+      "MAIRIX numbering lock could not be acquired."
+    );
+
+  }
+
+
+  try {
+
+    const highestExisting =
+      mairixGetHighestExistingSequence(
+        entity
+      );
+
+
+    const stored =
+      mairixGetStoredSequence(
+        entity
+      );
+
+
+    const synchronized =
+      Math.max(
+        highestExisting,
+        stored
+      );
+
+
+    mairixSetStoredSequence(
+      entity,
+      synchronized
+    );
+
+
+    return {
+
+      success:
+        true,
+
+      entityType:
+        entity,
+
+      sequence:
+        synchronized,
+
+      synchronizedAt:
+        new Date()
+
+    };
+
+  } finally {
+
+    try {
+
+      lock.releaseLock();
+
+    } catch (error) {
+
+      Logger.log(
+        "Numbering synchronization lock release failed."
+      );
+
+    }
+
+  }
+
+}
+
+
+/************************************************
+ * SYNCHRONIZE ALL SEQUENCES
+ *
+ * Validates registry first, then synchronizes
+ * every configured entity safely.
+ ************************************************/
+function mairixSynchronizeAllSequences() {
+
+  const validation =
+    mairixValidateNumberingRegistry();
+
+  const entities =
+    Object.keys(
+      MAIRIX_NUMBERING_REGISTRY
+    );
+
+  const results =
+    [];
+
+  const failures =
+    [];
+
+  for (
+    let i = 0;
+    i < entities.length;
+    i++
+  ) {
+
+    const entity =
+      entities[i];
+
+    try {
+
+      const result =
+        mairixSynchronizeEntitySequence(
+          entity
+        );
+
+      results.push(
+        result
+      );
+
+    } catch (error) {
+
+      failures.push({
+        entityType: entity,
+        error: error.message
+      });
+
+    }
+
+  }
+
+  return {
+    success:
+      failures.length === 0,
+
+    validation:
+      validation,
+
+    results:
+      results,
+
+    failures:
+      failures,
+
+    synchronizedAt:
+      new Date()
+  };
+
+}
+
+
+/************************************************
+ * GENERATE MASTER DATA CODE
+ *
+ * Used ONLY for new records.
+ *
+ * Manual code input must not override
+ * central numbering.
+ ************************************************/
+
+function mairixGenerateMasterDataCode(
+  entityType,
+  requestedCode
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+
+  const manualCode =
+    String(
+      requestedCode || ""
+    )
+    .trim();
+
+
+  if (
+    manualCode
+  ) {
+
+    throw new Error(
+      "Manual code entry is not allowed for new " +
+      entity +
+      " records. Central numbering must generate the code."
+    );
+
+  }
+
+
+  return mairixGenerateNextCode(
+    entity
+  );
+
+}
+
+
+/************************************************
+ * CREATE MASTER DATA RECORD
+ *
+ * Generic helper.
+ *
+ * Required:
+ *
+ * entityType
+ * data
+ *
+ * The code is generated automatically.
+ ************************************************/
+
+function mairixCreateMasterDataRecord(
+  entityType,
+  data
+) {
+
+  const entity =
+    mairixNormalizeNumberingEntity(
+      entityType
+    );
+
+
+  const config =
+    mairixGetNumberingEntityConfig(
+      entity
+    );
+
+
+  if (
+    !data ||
+    typeof data !== "object"
+  ) {
+
+    throw new Error(
+      "Master data payload is required."
+    );
+
+  }
+
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      config.sheet
+    );
+
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Master data sheet not found: " +
+      config.sheet
+    );
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getValues()[0];
+
+
+  const codeColumn =
+    mairixFindCodeColumn(
+      sheet,
+      config.codeColumns
+    );
+
+
+  if (
+    !codeColumn
+  ) {
+
+    throw new Error(
+      "Code column was not found in " +
+      config.sheet
+    );
+
+  }
+
+
+  const codeResult =
+    mairixGenerateMasterDataCode(
+      entity,
+      data.code
+    );
+
+
+  const generatedCode =
+    codeResult.code;
+
+
+  const normalizedData =
+    {};
+
+
+  Object.keys(
+    data
+  )
+  .forEach(
+    function(key) {
+
+      normalizedData[
+        String(key)
+          .trim()
+          .toUpperCase()
+      ] =
+        data[key];
+
+    }
+  );
+
+
+  const row =
+    [];
+
+
+  for (
+    let i = 0;
+    i < headers.length;
+    i++
+  ) {
+
+    const header =
+      String(
+        headers[i] || ""
+      )
+      .trim()
+      .toUpperCase();
+
+
+    if (
+      i + 1 === codeColumn
+    ) {
+
+      row.push(
+        generatedCode
+      );
+
+      continue;
+
+    }
+
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        normalizedData,
+        header
+      )
+    ) {
+
+      row.push(
+        normalizedData[header]
+      );
+
+    } else {
+
+      row.push(
+        ""
+      );
+
+    }
+
+  }
+
+
+  const transaction =
+    mairixBeginTransaction({
+
+      source:
+        "MASTER_DATA",
+
+      transactionType:
+        "CREATE_" + entity
+
+    });
+
+
+  try {
+
+    const appendResult =
+      mairixTransactionAppendRows(
+        transaction,
+        sheet,
+        [row]
+      );
+
+
+    mairixCommitTransaction(
+      transaction
+    );
+
+
+    return {
+
+      success:
+        true,
+
+      entityType:
+        entity,
+
+      code:
+        generatedCode,
+
+      row:
+        appendResult.startRow,
+
+      createdAt:
+        new Date()
+
+    };
+
+  } catch (error) {
+
+    mairixRollbackTransaction(
+      transaction,
+      error
+    );
+
+
+    throw error;
+
+  }
+
+}
+
+
+/************************************************
+ * ENTITY-SPECIFIC MASTER DATA SHORTCUTS
+ ************************************************/
+
+function mairixCreateCustomer(
+  data
+) {
+
+  return mairixCreateMasterDataRecord(
+    MAIRIX_NUMBERING_ENTITY.CUSTOMER,
+    data
+  );
+
+}
+
+
+function mairixCreateVendor(
+  data
+) {
+
+  return mairixCreateMasterDataRecord(
+    MAIRIX_NUMBERING_ENTITY.VENDOR,
+    data
+  );
+
+}
+
+
+function mairixCreateEmployee(
+  data
+) {
+
+  return mairixCreateMasterDataRecord(
+    MAIRIX_NUMBERING_ENTITY.EMPLOYEE,
+    data
+  );
+
+}
+
+
+function mairixCreateUser(
+  data
+) {
+
+  return mairixCreateMasterDataRecord(
+    MAIRIX_NUMBERING_ENTITY.USER,
+    data
+  );
+
+}
+
+
+function mairixCreateItem(
+  data
+) {
+
+  return mairixCreateMasterDataRecord(
+    MAIRIX_NUMBERING_ENTITY.ITEM,
+    data
+  );
+
+}
+
+
+function mairixCreateWarehouse(
+  data
+) {
+
+  return mairixCreateMasterDataRecord(
+    MAIRIX_NUMBERING_ENTITY.WAREHOUSE,
+    data
+  );
+
+}
+
+/************************************************
+ * VALIDATE NUMBERING REGISTRY
+ *
+ * Ensures every registered entity has a complete
+ * configuration before synchronization or code
+ * generation.
+ ************************************************/
+function mairixValidateNumberingRegistry() {
+
+  const entities =
+    Object.keys(
+      MAIRIX_NUMBERING_REGISTRY || {}
+    );
+
+  if (
+    entities.length === 0
+  ) {
+
+    throw new Error(
+      "MAIRIX numbering registry is empty."
+    );
+
+  }
+
+  const results =
+    [];
+
+  for (
+    let i = 0;
+    i < entities.length;
+    i++
+  ) {
+
+    const entity =
+      entities[i];
+
+    const config =
+      MAIRIX_NUMBERING_REGISTRY[entity];
+
+    if (
+      !config ||
+      typeof config !== "object"
+    ) {
+
+      throw new Error(
+        "Invalid numbering configuration for: " +
+        entity
+      );
+
+    }
+
+    if (
+      !config.sheet
+    ) {
+
+      throw new Error(
+        "Missing sheet configuration for: " +
+        entity
+      );
+
+    }
+
+    if (
+      !Array.isArray(
+        config.codeColumns
+      ) ||
+      config.codeColumns.length === 0
+    ) {
+
+      throw new Error(
+        "Missing codeColumns configuration for: " +
+        entity
+      );
+
+    }
+
+    if (
+      !config.settingsKey
+    ) {
+
+      throw new Error(
+        "Missing settingsKey configuration for: " +
+        entity
+      );
+
+    }
+
+    results.push({
+      entity: entity,
+      sheet: config.sheet,
+      settingsKey: config.settingsKey,
+      valid: true
+    });
+
+  }
+
+  return {
+    success: true,
+    total: results.length,
+    entities: results,
+    validatedAt: new Date()
+  };
+
+}
+
+/************************************************
+ * GET NUMBERING CONFIGURATION
+ *
+ * Useful for UI/API.
+ ************************************************/
+
+function mairixGetCentralNumberingConfig() {
+
+  const entities =
+    Object.keys(
+      MAIRIX_NUMBERING_REGISTRY
+    );
+
+
+  const configuration =
+    {};
+
+
+  for (
+    let i = 0;
+    i < entities.length;
+    i++
+  ) {
+
+    const entity =
+      entities[i];
+
+
+    configuration[entity] = {
+
+      prefix:
+        mairixGetCodePrefix(
+          entity
+        ),
+
+      separator:
+        mairixGetCodeSeparator(),
+
+      padding:
+        mairixGetCodePadding(),
+
+      nextSequence:
+        Math.max(
+          mairixGetStoredSequence(
+            entity
+          ),
+          mairixGetHighestExistingSequence(
+            entity
+          )
+        ) + 1
+
+    };
+
+  }
+
+
+  return {
+
+    success:
+      true,
+
+    version:
+      MAIRIX_CENTRAL_NUMBERING_VERSION,
+
+    entities:
+      configuration
+
+  };
+
+}
+
+
+/************************************************
+ * NUMBERING HEALTH CHECK
+ ************************************************/
+
+function mairixTestCentralNumberingEngine() {
+
+  const results =
+    [];
+
+
+  const entities = [
+
+    "CUSTOMER",
+    "VENDOR",
+    "EMPLOYEE",
+    "USER",
+    "ITEM",
+    "WAREHOUSE",
+    "EXPENSE"
+
+  ];
+
+
+  for (
+    let i = 0;
+    i < entities.length;
+    i++
+  ) {
+
+    const entity =
+      entities[i];
+
+
+    try {
+
+      const prefix =
+        mairixGetCodePrefix(
+          entity
+        );
+
+
+      const padding =
+        mairixGetCodePadding();
+
+
+      results.push({
+
+        entityType:
+          entity,
+
+        success:
+          !!prefix &&
+          padding >= 1,
+
+        prefix:
+          prefix,
+
+        padding:
+          padding
+
+      });
+
+    } catch (error) {
+
+      results.push({
+
+        entityType:
+          entity,
+
+        success:
+          false,
+
+        error:
+          error.message
+
+      });
+
+    }
+
+  }
+
+
+  const failed =
+    results.filter(
+      function(result) {
+
+        return !result.success;
+
+      }
+    );
+
+
+  return {
+
+    name:
+      "CENTRAL NUMBERING ENGINE",
+
+    success:
+      failed.length === 0,
+
+    results:
+      results,
+
+    failed:
+      failed.length,
+
+    testedAt:
+      new Date()
+
+  };
+
+}
+
+
+/************************************************
+ * END OF CENTRAL NUMBERING EXTENSION
+ ************************************************/

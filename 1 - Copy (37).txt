@@ -1,0 +1,784 @@
+<!--
+============================================================
+MAIRIX ERP
+SALES RETURN SCREEN
+
+FILE:
+41-MAIRIX_UI_SalesReturn.html
+
+FLOW:
+
+Customer
+  ↓
+Original Invoices
+  ↓
+Select Invoice
+  ↓
+Select Items
+  ↓
+Return Quantity
+  ↓
+Submit
+
+IMPORTANT:
+
+Return must remain linked to the original sale.
+
+UI does not calculate the authoritative reversal.
+
+Server decides:
+
+- Original invoice validity
+- Returned quantity
+- Remaining returnable quantity
+- Warehouse authorization
+- Financial reversal
+- Inventory reversal
+- Loyalty reversal
+- Commission reversal
+- Transaction / rollback
+============================================================
+-->
+
+<style>
+
+  .mairix-return-card {
+
+    background:
+      #ffffff;
+
+    border:
+      1px solid #e0e0e0;
+
+    border-radius:
+      10px;
+
+    padding:
+      16px;
+
+    margin-bottom:
+      14px;
+
+  }
+
+
+  .mairix-return-actions {
+
+    display:
+      flex;
+
+    gap:
+      8px;
+
+    flex-wrap:
+      wrap;
+
+  }
+
+</style>
+
+
+<div
+  id="mairixSalesReturnScreen"
+>
+
+  <div
+    class="mairix-return-card"
+  >
+
+    <div
+      id="mairixReturnCustomerHost"
+    ></div>
+
+  </div>
+
+
+  <div
+    class="mairix-return-card"
+  >
+
+    <div
+      class="mairix-field"
+    >
+
+      <label
+        class="mairix-field-label"
+      >
+        رقم الفاتورة الأصلية
+      </label>
+
+
+      <input
+        id="mairixReturnInvoiceId"
+        class="mairix-input"
+        type="text"
+        autocomplete="off"
+      >
+
+    </div>
+
+
+    <button
+      id="mairixReturnLoadInvoice"
+      type="button"
+      class="mairix-button"
+    >
+      تحميل الفاتورة
+    </button>
+
+  </div>
+
+
+  <div
+    id="mairixReturnItemsHost"
+    class="mairix-return-card"
+  >
+
+    <div>
+      اختر الفاتورة الأصلية أولًا.
+    </div>
+
+  </div>
+
+
+  <div
+    class="mairix-return-card"
+  >
+
+    <div
+      class="mairix-return-actions"
+    >
+
+      <button
+        id="mairixReturnClear"
+        type="button"
+        class="mairix-button"
+      >
+        تفريغ
+      </button>
+
+
+      <button
+        id="mairixReturnSubmit"
+        type="button"
+        class="mairix-button"
+      >
+        تسجيل المرتجع
+      </button>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+<script>
+
+/************************************************************
+ * RETURN STATE
+ ************************************************************/
+
+var MAIRIX_UI_RETURN_STATE = {
+
+  customer:
+    null,
+
+  invoice:
+    null,
+
+  items:
+    [],
+
+  submitting:
+    false
+
+};
+
+
+/************************************************************
+ * CUSTOMER
+ ************************************************************/
+
+function mairixUIReturnSetCustomer(
+  customer
+) {
+
+  MAIRIX_UI_RETURN_STATE.customer =
+    customer;
+
+}
+
+
+/************************************************************
+ * LOAD ORIGINAL INVOICE
+ ************************************************************/
+
+function mairixUIReturnLoadInvoice() {
+
+  var invoiceId =
+    String(
+      document.getElementById(
+        "mairixReturnInvoiceId"
+      ).value ||
+      ""
+    ).trim();
+
+
+  if (!invoiceId) {
+
+    mairixUIReturnShowMessage(
+      "رقم الفاتورة مطلوب."
+    );
+
+    return;
+
+  }
+
+
+  if (
+    typeof mairixUIApiGetSaleInvoice !==
+    "function"
+  ) {
+
+    mairixUIReturnShowMessage(
+      "خدمة الفاتورة غير متاحة حاليًا."
+    );
+
+    return;
+
+  }
+
+
+  mairixUIApiGetSaleInvoice(
+    invoiceId,
+    function(result) {
+
+      if (
+        !result ||
+        result.success !== true
+      ) {
+
+        mairixUIReturnShowMessage(
+          (
+            result &&
+            result.error &&
+            result.error.message
+          ) ||
+          "تعذر تحميل الفاتورة."
+        );
+
+        return;
+
+      }
+
+
+      var invoice =
+        result.data ||
+        result.invoice ||
+        null;
+
+
+      if (!invoice) {
+
+        mairixUIReturnShowMessage(
+          "الفاتورة غير موجودة."
+        );
+
+        return;
+
+      }
+
+
+      MAIRIX_UI_RETURN_STATE.invoice =
+        invoice;
+
+
+      MAIRIX_UI_RETURN_STATE.items =
+        Array.isArray(
+          invoice.items
+        )
+          ? invoice.items.map(
+              function(item) {
+
+                return {
+
+                  productCode:
+                    item.productCode ||
+                    item.itemCode ||
+                    "",
+
+                  productName:
+                    item.productName ||
+                    item.name ||
+                    "",
+
+                  barcode:
+                    item.barcode ||
+                    "",
+
+                  soldQuantity:
+                    Number(
+                      item.quantity ||
+                      0
+                    ),
+
+                  returnQuantity:
+                    0
+
+                };
+
+              }
+            )
+          : [];
+
+
+      mairixUIReturnRenderItems();
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * RENDER RETURN ITEMS
+ ************************************************************/
+
+function mairixUIReturnRenderItems() {
+
+  var host =
+    document.getElementById(
+      "mairixReturnItemsHost"
+    );
+
+
+  if (!host) {
+
+    return;
+
+  }
+
+
+  host.innerHTML = "";
+
+
+  if (
+    MAIRIX_UI_RETURN_STATE.items.length ===
+    0
+  ) {
+
+    host.textContent =
+      "لا توجد أصناف قابلة للعرض.";
+
+    return;
+
+  }
+
+
+  MAIRIX_UI_RETURN_STATE.items.forEach(
+    function(item) {
+
+      var wrapper =
+        document.createElement(
+          "div"
+        );
+
+
+      wrapper.className =
+        "mairix-field";
+
+
+      var label =
+        document.createElement(
+          "label"
+        );
+
+
+      label.className =
+        "mairix-field-label";
+
+
+      label.textContent =
+        (
+          item.productName ||
+          item.productCode
+        ) +
+        " — المباع: " +
+        item.soldQuantity;
+
+
+      wrapper.appendChild(
+        label
+      );
+
+
+      var quantity =
+        document.createElement(
+          "input"
+        );
+
+
+      quantity.type =
+        "number";
+
+      quantity.min =
+        "0";
+
+      quantity.max =
+        String(
+          item.soldQuantity
+        );
+
+      quantity.step =
+        "0.001";
+
+      quantity.className =
+        "mairix-input";
+
+      quantity.value =
+        "0";
+
+
+      quantity.addEventListener(
+        "input",
+        function() {
+
+          item.returnQuantity =
+            Number(
+              quantity.value ||
+              0
+            );
+
+        }
+      );
+
+
+      wrapper.appendChild(
+        quantity
+      );
+
+
+      host.appendChild(
+        wrapper
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * BUILD RETURN PAYLOAD
+ ************************************************************/
+
+function mairixUIReturnBuildPayload() {
+
+  var invoiceId =
+    String(
+      document.getElementById(
+        "mairixReturnInvoiceId"
+      ).value ||
+      ""
+    ).trim();
+
+
+  var items =
+    MAIRIX_UI_RETURN_STATE.items
+      .filter(
+        function(item) {
+
+          return Number(
+            item.returnQuantity
+          ) > 0;
+
+        }
+      )
+      .map(
+        function(item) {
+
+          return {
+
+            productCode:
+              item.productCode,
+
+            quantity:
+              Number(
+                item.returnQuantity
+              )
+
+          };
+
+        }
+      );
+
+
+  return {
+
+    invoiceId:
+      invoiceId,
+
+    items:
+      items
+
+  };
+
+}
+
+
+/************************************************************
+ * SUBMIT RETURN
+ ************************************************************/
+
+function mairixUIReturnSubmit() {
+
+  if (
+    MAIRIX_UI_RETURN_STATE.submitting
+  ) {
+
+    return;
+
+  }
+
+
+  var payload;
+
+
+  try {
+
+    payload =
+      mairixUIReturnBuildPayload();
+
+
+    if (
+      !payload.invoiceId
+    ) {
+
+      throw new Error(
+        "رقم الفاتورة مطلوب."
+      );
+
+    }
+
+
+    if (
+      payload.items.length ===
+      0
+    ) {
+
+      throw new Error(
+        "يجب اختيار كمية مرتجعة واحدة على الأقل."
+      );
+
+    }
+
+  } catch (
+    error
+  ) {
+
+    mairixUIReturnShowMessage(
+      error.message
+    );
+
+    return;
+
+  }
+
+
+  if (
+    typeof mairixUIApiCreateSalesReturn !==
+    "function"
+  ) {
+
+    mairixUIReturnShowMessage(
+      "خدمة المرتجعات غير متاحة حاليًا."
+    );
+
+    return;
+
+  }
+
+
+  MAIRIX_UI_RETURN_STATE.submitting =
+    true;
+
+
+  mairixUIApiCreateSalesReturn(
+    payload,
+    function(result) {
+
+      MAIRIX_UI_RETURN_STATE.submitting =
+        false;
+
+
+      if (
+        !result ||
+        result.success !== true
+      ) {
+
+        mairixUIReturnShowMessage(
+          (
+            result &&
+            result.error &&
+            result.error.message
+          ) ||
+          "تعذر تسجيل المرتجع."
+        );
+
+        return;
+
+      }
+
+
+      mairixUIReturnShowMessage(
+        "تم تسجيل المرتجع بنجاح."
+      );
+
+
+      mairixUIReturnClear();
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * CLEAR
+ ************************************************************/
+
+function mairixUIReturnClear() {
+
+  MAIRIX_UI_RETURN_STATE = {
+
+    customer:
+      null,
+
+    invoice:
+      null,
+
+    items:
+      [],
+
+    submitting:
+      false
+
+  };
+
+
+  var invoice =
+    document.getElementById(
+      "mairixReturnInvoiceId"
+    );
+
+
+  if (invoice) {
+
+    invoice.value =
+      "";
+
+  }
+
+
+  mairixUIReturnRenderItems();
+
+}
+
+
+/************************************************************
+ * MESSAGE
+ ************************************************************/
+
+function mairixUIReturnShowMessage(
+  message
+) {
+
+  var host =
+    document.getElementById(
+      "mairixReturnItemsHost"
+    );
+
+
+  if (!host) {
+
+    return;
+
+  }
+
+
+  host.textContent =
+    message ||
+    "";
+
+}
+
+
+/************************************************************
+ * MOUNT
+ ************************************************************/
+
+function mairixUISalesReturnMount() {
+
+  var customerHost =
+    document.getElementById(
+      "mairixReturnCustomerHost"
+    );
+
+
+  if (
+    customerHost &&
+    typeof mairixUICreateCustomerDropdown ===
+    "function"
+  ) {
+
+    var dropdown =
+      mairixUICreateCustomerDropdown(
+        {
+
+          onSelect:
+            mairixUIReturnSetCustomer
+
+        }
+      );
+
+
+    customerHost.appendChild(
+      dropdown
+    );
+
+  }
+
+
+  document
+    .getElementById(
+      "mairixReturnLoadInvoice"
+    )
+    .addEventListener(
+      "click",
+      mairixUIReturnLoadInvoice
+    );
+
+
+  document
+    .getElementById(
+      "mairixReturnClear"
+    )
+    .addEventListener(
+      "click",
+      mairixUIReturnClear
+    );
+
+
+  document
+    .getElementById(
+      "mairixReturnSubmit"
+    )
+    .addEventListener(
+      "click",
+      mairixUIReturnSubmit
+    );
+
+}
+
+</script>

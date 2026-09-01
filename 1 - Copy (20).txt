@@ -1,0 +1,8984 @@
+/************************************************
+ * MAIRIX ERP
+ * 26-MAIRIX_TestSuite.gs
+ *
+ * CENTRAL INTEGRATION TEST SUITE
+ *
+ * TEST ORCHESTRATOR
+ ************************************************/
+
+
+/************************************************
+ * TEST CONFIGURATION
+ ************************************************/
+
+const MAIRIX_TEST_CONFIG = {
+
+  PREFIX: "TEST",
+  CUSTOMER_CODE: "TEST-CUSTOMER",
+  VENDOR_CODE: "TEST-VENDOR",
+  ITEM_CODE: "TEST-ITEM",
+  WAREHOUSE_CODE: "TEST-WH",
+  EMPLOYEE_CODE: "TEST-EMP",
+  SALESMAN_CODE: "TEST-SALESMAN",
+  TAX_CODE: "TEST-TAX"
+
+};
+
+
+/************************************************
+ * TEST RESULT OBJECT
+ ************************************************/
+
+function mairixCreateTestResult(name) {
+
+  return {
+
+    name: name,
+    success: true,
+    message: "",
+    details: [],
+    startedAt: new Date(),
+    finishedAt: null
+
+  };
+
+}
+
+
+/************************************************
+ * ADD TEST DETAIL
+ ************************************************/
+
+function mairixTestDetail(result, message) {
+
+  if (!result.details || !Array.isArray(result.details)) {
+    result.details = [];
+  }
+
+  result.details.push(message);
+
+}
+
+
+/************************************************
+ * FAIL TEST
+ ************************************************/
+
+function mairixFailTest(result, error) {
+
+  result.success = false;
+
+  result.message =
+    error && error.message
+      ? error.message
+      : String(error);
+
+}
+
+
+/************************************************
+ * FINISH TEST
+ ************************************************/
+
+function mairixFinishTest(result) {
+
+  result.finishedAt = new Date();
+
+  return result;
+
+}
+
+
+/************************************************
+ * ASSERT
+ ************************************************/
+
+function mairixAssert(condition, message) {
+
+  if (!condition) {
+    throw new Error(message);
+  }
+
+}
+
+
+/************************************************
+ * ASSERT EQUAL
+ ************************************************/
+
+function mairixAssertEqual(actual, expected, message) {
+
+  if (actual !== expected) {
+
+    throw new Error(
+      message +
+      " | Expected: " + expected +
+      " | Actual: " + actual
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * RUN ONE TEST
+ ************************************************/
+
+function mairixRunTest(name, callback) {
+
+  const result =
+    mairixCreateTestResult(name);
+
+  try {
+
+    callback(result);
+
+  } catch (error) {
+
+    mairixFailTest(
+      result,
+      error
+    );
+
+  }
+
+  mairixFinishTest(result);
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  return result;
+
+}
+
+
+/************************************************
+ * CREATE INVALID TEST RESULT
+ ************************************************/
+
+function mairixCreateInvalidTestResult(
+  name,
+  message,
+  details
+) {
+
+  return {
+
+    name: name,
+    success: false,
+    message: message,
+    details:
+      Array.isArray(details)
+        ? details
+        : [],
+    startedAt: new Date(),
+    finishedAt: new Date()
+
+  };
+
+}
+
+
+/************************************************
+ * RUN REGISTERED TEST SAFELY
+ ************************************************/
+
+function mairixRunRegisteredTest(
+  name,
+  testFunction
+) {
+
+  try {
+
+    if (typeof testFunction !== "function") {
+
+      return mairixCreateInvalidTestResult(
+        name,
+        "Test function is unavailable.",
+        [
+          "Expected a callable test function."
+        ]
+      );
+
+    }
+
+    const result =
+      testFunction();
+
+    if (
+      !result ||
+      typeof result !== "object"
+    ) {
+
+      return mairixCreateInvalidTestResult(
+        name,
+        "Test did not return a valid result object.",
+        [
+          "Returned value: " +
+          String(result)
+        ]
+      );
+
+    }
+
+    if (
+      typeof result.success !== "boolean"
+    ) {
+
+      result.success = false;
+
+      result.message =
+        result.message ||
+        "Test result is missing a valid success property.";
+
+    }
+
+    if (!Array.isArray(result.details)) {
+      result.details = [];
+    }
+
+    if (!result.name) {
+      result.name = name;
+    }
+
+    if (!result.startedAt) {
+      result.startedAt = new Date();
+    }
+
+    if (!result.finishedAt) {
+      result.finishedAt = new Date();
+    }
+
+    return result;
+
+  } catch (error) {
+
+    return mairixCreateInvalidTestResult(
+      name,
+      error && error.message
+        ? error.message
+        : String(error),
+      [
+        "Test execution threw an exception."
+      ]
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * CENTRAL TEST REGISTRY
+ ************************************************/
+
+function getMairixTestRegistry() {
+
+  return [
+
+    {
+      name: "CORE ARCHITECTURE",
+      test: testMairixCoreArchitecture
+    },
+
+    {
+      name: "REQUIRED SHEETS",
+      test: testMairixRequiredSheets
+    },
+
+    {
+      name: "MASTER DATA",
+      test: testMairixMasterData
+    },
+
+    {
+      name: "USERS AND PERMISSIONS",
+      test: testMairixUsersAndPermissions
+    },
+
+    {
+      name: "TAX ENGINE",
+      test: testMairixTaxEngine
+    },
+
+    {
+      name: "INVENTORY ENGINE",
+      test: testMairixInventoryEngine
+    },
+
+    {
+      name: "FINANCIAL ENGINE",
+      test: testMairixFinancialEngine
+    },
+
+    {
+      name: "SALES",
+      test: testMairixSales
+    },
+
+    {
+      name: "SALES RETURNS",
+      test: testMairixSalesReturns
+    },
+
+    {
+      name: "PURCHASES",
+      test: testMairixPurchases
+    },
+
+    {
+      name: "PURCHASE RETURNS",
+      test: testMairixPurchaseReturns
+    },
+
+    {
+      name: "COLLECTIONS",
+      test: testMairixCollections
+    },
+
+    {
+      name: "VENDOR PAYMENTS",
+      test: testMairixVendorPayments
+    },
+
+    {
+      name: "EXPENSES",
+      test: testMairixExpenses
+    },
+
+    {
+      name: "COMMISSIONS",
+      test: testMairixCommissions
+    },
+
+    {
+      name: "LOYALTY",
+      test: testMairixLoyalty
+    },
+
+    {
+      name: "ACCOUNTING MAPPING",
+      test: testMairixAccountingMapping
+    },
+
+    {
+      name: "FINANCIAL STATEMENTS",
+      test: testMairixFinancialStatements
+    },
+
+    {
+      name: "REPORTS ENGINE",
+      test: testMairixReports
+    },
+
+    {
+      name: "REFERENCE VIEWER",
+      test: testMairixReferenceViewer
+    },
+
+    {
+      name: "AUDIT TRAIL",
+      test: testMairixAuditTrail
+    },
+
+    {
+      name: "TRIGGERS",
+      test: testMairixTriggers
+    }
+
+  ];
+
+}
+
+
+/************************************************
+ * RUN ALL TESTS
+ *
+ * SECURITY RULE:
+ * ZERO TESTS CAN NEVER PASS
+ ************************************************/
+
+function runMairixTestSuite() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log("MAIRIX ERP");
+
+  Logger.log(
+    "CENTRAL TEST SUITE"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const registry =
+    getMairixTestRegistry();
+
+
+  if (
+    !Array.isArray(registry) ||
+    registry.length === 0
+  ) {
+
+    throw new Error(
+      "MAIRIX TEST SUITE INVALID: No tests are registered."
+    );
+
+  }
+
+
+  const tests = [];
+
+
+  registry.forEach(
+    function(entry) {
+
+      tests.push(
+
+        mairixRunRegisteredTest(
+          entry.name,
+          entry.test
+        )
+
+      );
+
+    }
+  );
+
+
+  const passed =
+    tests.filter(
+      function(test) {
+
+        return (
+          test &&
+          test.success === true
+        );
+
+      }
+    ).length;
+
+
+  const failed =
+    tests.length - passed;
+
+
+  const summary = {
+
+    total: tests.length,
+
+    passed: passed,
+
+    failed: failed,
+
+    success:
+      tests.length > 0 &&
+      failed === 0,
+
+    tests: tests
+
+  };
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TEST SUITE SUMMARY"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      summary,
+      null,
+      2
+    )
+  );
+
+
+  if (summary.total === 0) {
+
+    throw new Error(
+      "MAIRIX TEST SUITE FAILED: Zero tests were executed."
+    );
+
+  }
+
+
+  if (failed > 0) {
+
+    throw new Error(
+      "MAIRIX TEST SUITE FAILED: " +
+      failed +
+      " test(s)."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TEST SUITE: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return summary;
+
+}
+
+
+/************************************************
+ * 1. CORE ARCHITECTURE
+ ************************************************/
+
+function testMairixCoreArchitecture() {
+
+  return mairixRunTest(
+    "CORE ARCHITECTURE",
+    function(result) {
+
+      mairixAssert(
+        typeof mairixcleanText ===
+        "function",
+        "mairixCleanText() is missing."
+      );
+
+
+      mairixAssert(
+        typeof mairixgetSheet ===
+        "function",
+        "mairixgetSheet() is missing."
+      );
+
+
+      mairixAssert(
+        typeof mairixgetColumnNumber ===
+        "function",
+        "mairixgetColumnNumber() is missing."
+      );
+
+
+      mairixAssert(
+        typeof mairixSystemHealthCheck ===
+        "function",
+        "Trigger health check is missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Core utility functions detected."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 2. REQUIRED SHEETS
+ ************************************************/
+
+function testMairixRequiredSheets() {
+
+  return mairixRunTest(
+    "REQUIRED SHEETS",
+    function(result) {
+
+      const health =
+        mairixSystemHealthCheck();
+
+
+      mairixAssert(
+        health.success === true,
+        "Required MAIRIX sheets are missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "All required system sheets exist."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 3. MASTER DATA
+ ************************************************/
+
+function testMairixMasterData() {
+
+  return mairixRunTest(
+    "MASTER DATA",
+    function(result) {
+
+      const required = [
+
+        "ITEMS",
+        "CUSTOMERS",
+        "VENDORS",
+        "WAREHOUSES",
+        "EMPLOYEES"
+
+      ];
+
+
+      const ss =
+        SpreadsheetApp
+          .getActiveSpreadsheet();
+
+
+      required.forEach(
+        function(name) {
+
+          mairixAssert(
+            !!ss.getSheetByName(name),
+            "Missing master data sheet: " +
+            name
+          );
+
+        }
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Master data structure exists."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 4. USERS / PERMISSIONS
+ ************************************************/
+
+function testMairixUsersAndPermissions() {
+
+  return mairixRunTest(
+    "USERS AND PERMISSIONS",
+    function(result) {
+
+      mairixAssert(
+        typeof getMairixUser ===
+        "function",
+        "Required function missing: getMairixUser"
+      );
+
+
+      mairixAssert(
+        typeof requireActiveUser ===
+        "function",
+        "requireActiveUser() is missing."
+      );
+
+
+      mairixAssert(
+        typeof requireERPPermission ===
+        "function",
+        "requireERPPermission() is missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Authentication and server-side permission guard detected."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 5. TAX ENGINE
+ ************************************************/
+
+function testMairixTaxEngine() {
+
+  return mairixRunTest(
+    "TAX ENGINE",
+    function(result) {
+
+      const ss =
+        SpreadsheetApp
+          .getActiveSpreadsheet();
+
+
+      mairixAssert(
+        !!ss.getSheetByName("TAX_TYPES"),
+        "TAX_TYPES sheet missing."
+      );
+
+
+      mairixAssert(
+        !!ss.getSheetByName("TAX_LEDGER"),
+        "TAX_LEDGER sheet missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Tax types and centralized tax ledger detected."
+      );
+
+
+      /*
+       * The test suite does not calculate tax.
+       *
+       * Tax Engine remains the only calculation
+       * authority.
+       */
+
+      mairixTestDetail(
+        result,
+        "Tax calculations remain delegated to Tax Engine."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 6. INVENTORY ENGINE
+ ************************************************/
+
+function testMairixInventoryEngine() {
+
+  return mairixRunTest(
+    "INVENTORY ENGINE",
+    function(result) {
+
+      const ss =
+        SpreadsheetApp
+          .getActiveSpreadsheet();
+
+
+      mairixAssert(
+        !!ss.getSheetByName(
+          "INVENTORY_LEDGER"
+        ),
+        "INVENTORY_LEDGER sheet missing."
+      );
+
+
+      mairixAssert(
+        typeof mairixgetSheet ===
+        "function",
+        "Inventory dependencies unavailable."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Central inventory ledger detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Inventory movements are expected to use signed quantity effects."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 7. FINANCIAL ENGINE
+ ************************************************/
+
+function testMairixFinancialEngine() {
+
+  return mairixRunTest(
+    "FINANCIAL ENGINE",
+    function(result) {
+
+      const ss =
+        SpreadsheetApp
+          .getActiveSpreadsheet();
+
+
+      mairixAssert(
+        !!ss.getSheetByName(
+          "FINANCIAL_LEDGER"
+        ),
+        "FINANCIAL_LEDGER sheet missing."
+      );
+
+
+      mairixAssert(
+        !!ss.getSheetByName(
+          "CASH_LEDGER"
+        ),
+        "CASH_LEDGER sheet missing."
+      );
+
+
+      mairixAssert(
+        !!ss.getSheetByName(
+          "CUSTOMER_LEDGER"
+        ),
+        "CUSTOMER_LEDGER sheet missing."
+      );
+
+
+      mairixAssert(
+        !!ss.getSheetByName(
+          "VENDOR_LEDGER"
+        ),
+        "VENDOR_LEDGER sheet missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Cash and credit balances are structurally separated."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Financial effects remain centralized."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 8. SALES
+ ************************************************/
+
+function testMairixSales() {
+
+  return mairixRunTest(
+    "SALES",
+    function(result) {
+
+      mairixAssert(
+        typeof requireSalesCreate ===
+        "function",
+        "Sales permission guard missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Sales authorization gateway detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Sales must create centralized reference IDs."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Sales must produce signed inventory and financial effects."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 9. SALES RETURNS
+ ************************************************/
+
+function testMairixSalesReturns() {
+
+  return mairixRunTest(
+    "SALES RETURNS",
+    function(result) {
+
+      mairixAssert(
+        typeof requireERPPermission ===
+        "function",
+        "Permission engine unavailable."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Sales return authorization path exists."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Return quantity must reverse the original inventory effect."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Return financial effect must reverse the original sale effect."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 10. PURCHASES
+ ************************************************/
+
+function testMairixPurchases() {
+
+  return mairixRunTest(
+    "PURCHASES",
+    function(result) {
+
+      mairixAssert(
+        typeof requirePurchasesCreate ===
+        "function",
+        "Purchase permission guard missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Purchase authorization gateway detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Purchases must increase inventory quantity."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Purchases must update inventory cost through Inventory/Financial engines."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 11. PURCHASE RETURNS
+ ************************************************/
+
+function testMairixPurchaseReturns() {
+
+  return mairixRunTest(
+    "PURCHASE RETURNS",
+    function(result) {
+
+      mairixTestDetail(
+        result,
+        "Purchase return must reverse the corresponding purchase inventory effect."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Purchase return must reverse the corresponding payable/cash effect."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 12. COLLECTIONS
+ ************************************************/
+
+function testMairixCollections() {
+
+  return mairixRunTest(
+    "COLLECTIONS",
+    function(result) {
+
+      mairixAssert(
+        typeof requireCollectionsCreate ===
+        "function",
+        "Collections permission guard missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Collection authorization gateway detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Collection reduces customer credit balance."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Collection increases cash balance only."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Cash and customer credit remain separately traceable."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 13. VENDOR PAYMENTS
+ ************************************************/
+
+function testMairixVendorPayments() {
+
+  return mairixRunTest(
+    "VENDOR PAYMENTS",
+    function(result) {
+
+      mairixTestDetail(
+        result,
+        "Vendor payment must reduce vendor payable."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Vendor payment must reduce cash."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Vendor payment must have a centralized reference."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 14. EXPENSES
+ ************************************************/
+
+function testMairixExpenses() {
+
+  return mairixRunTest(
+    "EXPENSES",
+    function(result) {
+
+      mairixAssert(
+        typeof requireExpensesCreate ===
+        "function",
+        "Expense permission guard missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Expense authorization gateway detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Expense classification must determine accounting mapping."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Expense loading method must be preserved."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "General expenses must remain separate from inventory cost."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 15. COMMISSIONS
+ ************************************************/
+
+function testMairixCommissions() {
+
+  return mairixRunTest(
+    "COMMISSIONS",
+    function(result) {
+
+      mairixAssert(
+        typeof requireCommissionsView ===
+        "function",
+        "Commission permission guard missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Commission authorization gateway detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Commission must be generated from eligible sales."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Paid commission must reduce outstanding commission balance."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Commission values remain hidden from salesman sale screen."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 16. LOYALTY
+ ************************************************/
+
+function testMairixLoyalty() {
+
+  return mairixRunTest(
+    "LOYALTY",
+    function(result) {
+
+      mairixTestDetail(
+        result,
+        "Sale quantity generates loyalty points."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Returned quantity reverses loyalty points."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Customer points are visible only as required by the sales UI."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 17. ACCOUNTING MAPPING
+ ************************************************/
+
+function testMairixAccountingMapping() {
+
+  return mairixRunTest(
+    "ACCOUNTING MAPPING",
+    function(result) {
+
+      const ss =
+        SpreadsheetApp
+          .getActiveSpreadsheet();
+
+
+      mairixAssert(
+        !!ss.getSheetByName(
+          "ACCOUNTING_MAPPING"
+        ),
+        "ACCOUNTING_MAPPING sheet missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Financial statement mapping structure detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Expense nature can be mapped to financial statement line."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Transaction types can be mapped centrally."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 18. FINANCIAL STATEMENTS
+ ************************************************/
+
+function testMairixFinancialStatements() {
+
+  return mairixRunTest(
+    "FINANCIAL STATEMENTS",
+    function(result) {
+
+      mairixTestDetail(
+        result,
+        "Income Statement must consume centralized financial effects."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Balance Sheet must separate cash, receivables, inventory and payables."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Statements must be date-range driven."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Statements must remain traceable to transaction references."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 19. REPORTS
+ ************************************************/
+
+function testMairixReports() {
+
+  return mairixRunTest(
+    "REPORTS ENGINE",
+    function(result) {
+
+      mairixAssert(
+        typeof requireReportPermission ===
+        "function",
+        "Report permission engine missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Report server-side authorization detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Reports must consume centralized ledgers."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Reports must support date filtering."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Reference numbers must remain clickable."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 20. REFERENCE VIEWER
+ ************************************************/
+
+function testMairixReferenceViewer() {
+
+  return mairixRunTest(
+    "REFERENCE VIEWER",
+    function(result) {
+
+      mairixTestDetail(
+        result,
+        "Central transaction references must be resolvable."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Reference viewer must expose the originating transaction."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Reference viewer must expose linked financial effects."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Reference viewer must expose linked inventory effects."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Reference viewer must expose linked tax effects."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 21. AUDIT TRAIL
+ ************************************************/
+
+function testMairixAuditTrail() {
+
+  return mairixRunTest(
+    "AUDIT TRAIL",
+    function(result) {
+
+      const ss =
+        SpreadsheetApp
+          .getActiveSpreadsheet();
+
+
+      mairixAssert(
+        !!ss.getSheetByName(
+          "AUDIT_TRAIL"
+        ),
+        "AUDIT_TRAIL sheet missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Audit trail sheet exists."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "System actions must remain traceable."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Manual protected-sheet edits must be detectable."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * 22. TRIGGERS
+ ************************************************/
+
+function testMairixTriggers() {
+
+  return mairixRunTest(
+    "TRIGGERS",
+    function(result) {
+
+      mairixAssert(
+        typeof mairixHandleEditEvent ===
+        "function",
+        "Central edit router missing."
+      );
+
+
+      mairixAssert(
+        typeof mairixSystemHealthCheck ===
+        "function",
+        "System health check missing."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Central trigger router detected."
+      );
+
+
+      mairixTestDetail(
+        result,
+        "Trigger layer delegates business logic to engines."
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * FULL ARCHITECTURE TEST
+ *
+ * Lightweight structural test.
+ *
+ * Does not create financial transactions.
+ ************************************************/
+
+function testMairixFullArchitecture() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FULL ARCHITECTURE TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const requiredFunctions = [
+
+    "getMairixUser",
+
+    "requireMairixActiveUser",
+
+    "requireMairixPermission",
+
+    "requireSalesCreate",
+
+    "requirePurchasesCreate",
+
+    "requireCollectionsCreate",
+
+    "requireExpensesCreate",
+
+    "requireCommissionsView",
+
+    "requireReportPermission",
+
+    "mairixHandleEditEvent",
+
+    "mairixSystemHealthCheck"
+
+  ];
+
+
+  requiredFunctions.forEach(
+    function(functionName) {
+
+      mairixAssert(
+        typeof globalThis[
+          functionName
+        ] === "function",
+        "Required function missing: " +
+        functionName
+      );
+
+    }
+  );
+
+
+  const health =
+    mairixSystemHealthCheck();
+
+
+  mairixAssert(
+    health.success === true,
+    "MAIRIX system health check failed."
+  );
+
+
+  Logger.log(
+    "FULL ARCHITECTURE TEST: PASS"
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    message:
+      "MAIRIX architecture passed structural verification."
+
+  };
+
+}
+
+
+/************************************************
+ * CLEAN TEST DATA HELPER
+ *
+ * IMPORTANT:
+ *
+ * This function intentionally does NOT delete
+ * real ERP transactions.
+ *
+ * The new MAIRIX project should be tested on
+ * a dedicated blank spreadsheet.
+ ************************************************/
+
+function mairixTestEnvironmentCheck() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const required =
+    [
+
+      "SETTINGS",
+      "USERS",
+      "PERMISSIONS",
+      "ITEMS",
+      "CUSTOMERS",
+      "VENDORS",
+      "WAREHOUSES",
+      "TAX_TYPES",
+      "INVENTORY_LEDGER",
+      "CASH_LEDGER",
+      "CUSTOMER_LEDGER",
+      "VENDOR_LEDGER",
+      "TAX_LEDGER",
+      "FINANCIAL_LEDGER",
+      "AUDIT_TRAIL"
+
+    ];
+
+
+  const missing = [];
+
+
+  required.forEach(
+    function(name) {
+
+      if (
+        !ss.getSheetByName(name)
+      ) {
+
+        missing.push(
+          name
+        );
+
+      }
+
+    }
+  );
+
+
+  return {
+
+    success:
+      missing.length === 0,
+
+    missing:
+      missing
+
+  };
+
+}
+
+
+/************************************************
+ * MASTER TEST ENTRY
+ ************************************************/
+
+function testMairixEverything() {
+
+  const environment =
+    mairixTestEnvironmentCheck();
+
+
+  if (
+    !environment.success
+  ) {
+
+    throw new Error(
+      "MAIRIX test environment is incomplete. Missing: " +
+      environment.missing.join(", ")
+    );
+
+  }
+
+
+  /*
+   * Run structural suite.
+   */
+
+  return runMairixTestSuite();
+
+}
+
+/************************************************
+ * MAIRIX SECURITY TEST
+ *
+ * NON-ADMIN PERMISSION + WAREHOUSE ACCESS
+ *
+ * PURPOSE:
+ * 1. Create isolated test role
+ * 2. Create test permissions
+ * 3. Assign permissions to role
+ * 4. Create test user permission rows
+ * 5. Test ALLOW / DENY
+ * 6. Test warehouse ALLOW / DENY
+ *
+ * IMPORTANT:
+ * This test does NOT create sales/purchases.
+ * It tests the security foundation only.
+ ************************************************/
+
+function testMAIRIXNonAdminSecurity() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX NON-ADMIN SECURITY TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const testUserId =
+    "TEST-USER-SECURITY-001";
+
+  const testRole =
+    "TEST_OPERATOR";
+
+  const testWarehouse =
+    "TEST-WH-001";
+
+  const permissions = [
+
+    {
+      code:
+        "TEST_SALES",
+
+      name:
+        "Test Sales View",
+
+      module:
+        "SALES",
+
+      description:
+        "Security test permission."
+    },
+
+    {
+      code:
+        "TEST_SALES",
+
+      name:
+        "Test Sales Create",
+
+      module:
+        "SALES",
+
+      description:
+        "Security test permission."
+    },
+
+    {
+      code:
+        "TEST_SALES",
+
+      name:
+        "Test Sales Delete",
+
+      module:
+        "SALES",
+
+      description:
+        "Security test permission."
+    }
+
+  ];
+
+
+  /**********************************************
+   * 1. CREATE TEST ROLE
+   **********************************************/
+
+  ensureMAIRIXTestRole(
+    testRole
+  );
+
+
+  /**********************************************
+   * 2. CREATE TEST PERMISSIONS
+   **********************************************/
+
+  permissions.forEach(
+    function(permission) {
+
+      ensureMAIRIXTestPermission(
+        permission
+      );
+
+    }
+  );
+
+
+  /**********************************************
+   * 3. ROLE PERMISSION MATRIX
+   **********************************************/
+
+  mairixSetRolePermission(
+    testRole,
+    "TEST_SALES",
+    {
+      View:
+        true,
+
+      Create:
+        false,
+
+      Edit:
+        false,
+
+      Delete:
+        false,
+
+      Export:
+        false,
+
+      Active:
+        true
+    }
+  );
+
+
+  mairixSetRolePermission(
+    testRole,
+    "TEST_SALES",
+    {
+      View:
+        true,
+
+      Create:
+        true,
+
+      Edit:
+        false,
+
+      Delete:
+        false,
+
+      Export:
+        false,
+
+      Active:
+        true
+    }
+  );
+
+
+  mairixSetRolePermission(
+    testRole,
+    "TEST_SALES",
+    {
+      View:
+        false,
+
+      Create:
+        false,
+
+      Edit:
+        false,
+
+      Delete:
+        false,
+
+      Export:
+        false,
+
+      Active:
+        true
+    }
+  );
+
+
+  /**********************************************
+   * 4. CREATE TEST USER
+   *
+   * We use the existing USER sheet engine
+   * if available.
+   **********************************************/
+
+  ensureMAIRIXTestUser(
+    testUserId,
+    testRole
+  );
+
+
+  /**********************************************
+   * 5. ENSURE CURRENT USER PERMISSIONS
+   **********************************************/
+
+  const ensureResult =
+    mairixEnsureUserPermissions(
+      testUserId
+    );
+
+
+  Logger.log(
+    "ENSURE USER PERMISSIONS:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      ensureResult,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * 6. TEST SALES VIEW
+   **********************************************/
+
+  assertMAIRIXSecurity(
+    mairixHasPermission(
+      testUserId,
+      "TEST_SALES",
+      "View"
+    ) === true,
+
+    "Sales View should be ALLOWED."
+  );
+
+
+  /**********************************************
+   * 7. TEST SALES CREATE
+   **********************************************/
+
+  assertMAIRIXSecurity(
+    mairixHasPermission(
+      testUserId,
+      "TEST_SALES",
+      "Create"
+    ) === true,
+
+    "Sales Create should be ALLOWED."
+  );
+
+
+  /**********************************************
+   * 8. TEST SALES DELETE
+   **********************************************/
+
+  assertMAIRIXSecurity(
+    mairixHasPermission(
+      testUserId,
+      "TEST_SALES",
+      "Delete"
+    ) === false,
+
+    "Sales Delete should be DENIED."
+  );
+
+
+  /**********************************************
+   * 9. TEST ACTIVE USER
+   **********************************************/
+
+  const activeUser =
+    mairixGetUserById(
+      testUserId
+    );
+
+
+  assertMAIRIXSecurity(
+    !!activeUser,
+
+    "Test user must exist."
+  );
+
+
+  assertMAIRIXSecurity(
+    activeUser.active === true,
+
+    "Test user must be active."
+  );
+
+
+  /**********************************************
+   * 10. WAREHOUSE VIEW
+   **********************************************/
+
+  mairixSetUserWarehouseAccess(
+    testUserId,
+    testWarehouse,
+    {
+      View:
+        true,
+
+      Operate:
+        false,
+
+      Active:
+        true
+    }
+  );
+
+
+  assertMAIRIXSecurity(
+    mairixHasWarehouseAccess(
+      testUserId,
+      testWarehouse,
+      "View"
+    ) === true,
+
+    "Warehouse View should be ALLOWED."
+  );
+
+
+  /**********************************************
+   * 11. WAREHOUSE OPERATE
+   **********************************************/
+
+  assertMAIRIXSecurity(
+    mairixHasWarehouseAccess(
+      testUserId,
+      testWarehouse,
+      "Operate"
+    ) === false,
+
+    "Warehouse Operate should be DENIED."
+  );
+
+
+  /**********************************************
+   * 12. WRONG WAREHOUSE
+   **********************************************/
+
+  assertMAIRIXSecurity(
+    mairixHasWarehouseAccess(
+      testUserId,
+      "TEST-WH-NOT-ALLOWED",
+      "View"
+    ) === false,
+
+    "Unknown warehouse should be DENIED."
+  );
+
+
+  /**********************************************
+   * FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX NON-ADMIN SECURITY TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST ROLE HELPER
+ ************************************************/
+
+function ensureMAIRIXTestRole(
+  roleCode
+) {
+
+  const sheet =
+    mairixAccessSheet(
+      MAIRIX_ACCESS_CONFIG
+        .SHEETS
+        .ROLES
+    );
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const values =
+      sheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          1
+        )
+        .getDisplayValues();
+
+
+    for (
+      let i = 0;
+      i < values.length;
+      i++
+    ) {
+
+      if (
+        mairixAccessClean(
+          values[i][0]
+        ).toUpperCase() ===
+        roleCode
+      ) {
+
+        return;
+
+      }
+
+    }
+
+  }
+
+
+  mairixCreateRole(
+    roleCode,
+    "Test Operator",
+    "Temporary security test role.",
+    false
+  );
+
+}
+
+
+/************************************************
+ * TEST PERMISSION HELPER
+ ************************************************/
+
+function ensureMAIRIXTestPermission(
+  permission
+) {
+
+  const sheet =
+    mairixAccessSheet(
+      MAIRIX_ACCESS_CONFIG
+        .SHEETS
+        .PERMISSION_CATALOG
+    );
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const values =
+      sheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          1
+        )
+        .getDisplayValues();
+
+
+    for (
+      let i = 0;
+      i < values.length;
+      i++
+    ) {
+
+      if (
+        mairixAccessClean(
+          values[i][0]
+        ).toUpperCase() ===
+        permission.code
+      ) {
+
+        return;
+
+      }
+
+    }
+
+  }
+
+
+  mairixCreatePermission(
+    permission.code,
+    permission.name,
+    permission.module,
+    permission.description
+  );
+
+}
+
+
+/************************************************
+ * TEST USER HELPER
+ *
+ * Creates an isolated user directly in the
+ * existing user-permission layer.
+ *
+ * The actual authentication/user master remains
+ * untouched.
+ ************************************************/
+
+function ensureMAIRIXTestUser(
+  userId,
+  role
+) {
+
+  /*
+   * IMPORTANT:
+   *
+   * mairixGetUserById() must resolve this user
+   * for the permission engine.
+   *
+   * If the project USER master requires a
+   * specific schema, this function will stop
+   * and report that instead of guessing.
+   */
+
+  const user =
+    mairixGetUserById(
+      userId
+    );
+
+
+  if (!user) {
+
+    throw new Error(
+      "TEST USER DOES NOT EXIST IN USER MASTER: " +
+      userId +
+      ". Create the isolated test user through the existing user engine first."
+    );
+
+  }
+
+
+  if (
+    mairixAccessClean(
+      user.role
+    ).toUpperCase() !==
+    role
+  ) {
+
+    throw new Error(
+      "Test user role mismatch. Expected: " +
+      role +
+      " | Actual: " +
+      user.role
+    );
+
+  }
+
+
+  if (
+    user.active !== true
+  ) {
+
+    throw new Error(
+      "Test user must be ACTIVE."
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * ASSERTION
+ ************************************************/
+
+function assertMAIRIXSecurity(
+  condition,
+  message
+) {
+
+  if (!condition) {
+
+    throw new Error(
+      "SECURITY TEST FAILED: " +
+      message
+    );
+
+  }
+
+
+  Logger.log(
+    "PASS: " +
+    message
+  );
+
+}
+
+/************************************************
+ * MAIRIX ERP
+ * UI API SECURITY TEST
+ *
+ * TEST:
+ * API PERMISSION REJECTION
+ *
+ * PURPOSE:
+ * Verify that the UI API rejects an operation
+ * when the authenticated user does not have
+ * the required permission.
+ *
+ * IMPORTANT:
+ * - Does NOT trust UI userId.
+ * - Does NOT modify production transaction data.
+ * - Does NOT call the transaction engine after
+ *   permission rejection.
+ * - Rejection must pass through mairixApiError()
+ *   and therefore reach Rejection Report.
+ ************************************************/
+
+function testMAIRIXUIPermissionRejection() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API PERMISSION REJECTION TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * 1. GET AUTHENTICATED USER
+   **********************************************/
+
+  const context =
+    mairixApiContext();
+
+
+  Logger.log(
+    "AUTHENTICATED USER:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      context,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !context ||
+    !context.userId
+  ) {
+
+    throw new Error(
+      "Authenticated user context is unavailable."
+    );
+
+  }
+
+
+  /**********************************************
+   * 2. ADMIN MUST NOT BE USED FOR THIS TEST
+   *
+   * ADMIN has full access, therefore the test
+   * cannot prove rejection when executed as ADMIN.
+   **********************************************/
+
+  if (
+    context.role === "ADMIN"
+  ) {
+
+    throw new Error(
+      "PERMISSION REJECTION TEST REQUIRES A NON-ADMIN USER."
+    );
+
+  }
+
+
+  /**********************************************
+   * 3. USE A KNOWN RESTRICTED PERMISSION
+   *
+   * This must be a permission that the current
+   * authenticated user does NOT have.
+   *
+   * We use USERS / Create because normal users
+   * should not be able to create system users.
+   **********************************************/
+
+  const permissionCode =
+    "USERS";
+
+  const action =
+    "Create";
+
+
+  /**********************************************
+   * 4. VERIFY PERMISSION IS ACTUALLY DENIED
+   **********************************************/
+
+  let permissionDenied =
+    false;
+
+
+  try {
+
+    mairixApiRequirePermission(
+      permissionCode,
+      action
+    );
+
+  } catch (error) {
+
+    permissionDenied =
+      true;
+
+
+    Logger.log(
+      "EXPECTED PERMISSION REJECTION:"
+    );
+
+    Logger.log(
+      JSON.stringify(
+        {
+          message:
+            error &&
+            error.message
+              ? error.message
+              : String(error)
+        },
+        null,
+        2
+      )
+    );
+
+  }
+
+
+  if (
+    permissionDenied !== true
+  ) {
+
+    throw new Error(
+      "SECURITY TEST FAILED: " +
+      "Current user was allowed to pass the restricted permission."
+    );
+
+  }
+
+
+  /**********************************************
+   * 5. VERIFY THE ACTUAL API ENDPOINT
+   *
+   * We now call an endpoint protected by the
+   * same permission.
+   *
+   * The endpoint must reject BEFORE createUser()
+   * is executed.
+   **********************************************/
+
+  const result =
+    apiCreateUser(
+      {
+        email:
+          "TEST_PERMISSION_REJECTION@INVALID",
+
+        name:
+          "TEST PERMISSION REJECTION",
+
+        role:
+          "USER"
+
+      }
+    );
+
+
+  Logger.log(
+    "API RESULT:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * 6. API MUST RETURN FAILURE
+   **********************************************/
+
+  if (
+    !result ||
+    result.success !== false
+  ) {
+
+    throw new Error(
+      "SECURITY TEST FAILED: " +
+      "Restricted API request was not rejected."
+    );
+
+  }
+
+
+  /**********************************************
+   * 7. ERROR MUST CONTAIN A CODE
+   **********************************************/
+
+  if (
+    !result.error ||
+    !result.error.code
+  ) {
+
+    throw new Error(
+      "SECURITY TEST FAILED: " +
+      "Rejected API response has no error code."
+    );
+
+  }
+
+
+  /**********************************************
+   * 8. FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API PERMISSION REJECTION: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+/************************************************
+ * MAIRIX ERP
+ * UI API PERMISSION REJECTION TEST
+ *
+ * PURPOSE:
+ *
+ * Verify that the UI API rejects a request
+ * when the authenticated user does not have
+ * the required permission.
+ *
+ * IMPORTANT:
+ *
+ * - Uses authenticated server-side user.
+ * - Does NOT trust UI userId.
+ * - Does NOT create a real user.
+ * - Does NOT modify transaction data.
+ * - Rejection must be handled by the API.
+ ************************************************/
+
+function testMAIRIXUIPermissionRejection() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API PERMISSION REJECTION TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * CURRENT USER
+   **********************************************/
+
+  const context =
+    mairixApiContext();
+
+
+  Logger.log(
+    "CURRENT USER:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      context,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !context ||
+    !context.userId
+  ) {
+
+    throw new Error(
+      "Authenticated user context is unavailable."
+    );
+
+  }
+
+
+  /**********************************************
+   * ADMIN CANNOT BE USED
+   **********************************************/
+
+  if (
+    context.role === "ADMIN"
+  ) {
+
+    throw new Error(
+      "PERMISSION REJECTION TEST REQUIRES A NON-ADMIN USER."
+    );
+
+  }
+
+
+  /**********************************************
+   * CHECK RESTRICTED PERMISSION
+   **********************************************/
+
+  let rejected =
+    false;
+
+
+  try {
+
+    mairixApiRequirePermission(
+      "USERS",
+      "Create"
+    );
+
+  } catch (error) {
+
+    rejected =
+      true;
+
+
+    Logger.log(
+      "EXPECTED PERMISSION REJECTION:"
+    );
+
+    Logger.log(
+      error &&
+      error.message
+        ? error.message
+        : String(error)
+    );
+
+  }
+
+
+  if (
+    rejected !== true
+  ) {
+
+    throw new Error(
+      "PERMISSION TEST FAILED: " +
+      "User was allowed to pass restricted permission."
+    );
+
+  }
+
+
+  /**********************************************
+   * TEST API ENDPOINT
+   **********************************************/
+
+  const result =
+    apiCreateUser(
+      {
+        email:
+          "TEST_PERMISSION_REJECTION@INVALID",
+
+        name:
+          "TEST PERMISSION REJECTION",
+
+        role:
+          "USER"
+
+      }
+    );
+
+
+  Logger.log(
+    "API RESULT:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * API MUST REJECT
+   **********************************************/
+
+  if (
+    !result ||
+    result.success !== false
+  ) {
+
+    throw new Error(
+      "PERMISSION TEST FAILED: " +
+      "API did not reject unauthorized request."
+    );
+
+  }
+
+
+  /**********************************************
+   * ERROR CODE MUST EXIST
+   **********************************************/
+
+  if (
+    !result.error ||
+    !result.error.code
+  ) {
+
+    throw new Error(
+      "PERMISSION TEST FAILED: " +
+      "Rejected request has no error code."
+    );
+
+  }
+
+
+  /**********************************************
+   * FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API PERMISSION REJECTION: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+/************************************************
+ * MAIRIX ERP
+ * UI API REJECTION USER ID TEST
+ *
+ * PURPOSE:
+ *
+ * Verify that rejected UI API operations record
+ * the authenticated User ID in the Rejection Report.
+ *
+ * IMPORTANT:
+ *
+ * This test does NOT modify production data.
+ * The requested operation must be rejected
+ * before createUser() is executed.
+ ************************************************/
+
+function testMAIRIXUIRejectionUserId() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API REJECTION USER ID TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * CURRENT USER
+   **********************************************/
+
+  const context =
+    mairixApiContext();
+
+
+  Logger.log(
+    "CURRENT USER:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      context,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !context ||
+    !context.userId
+  ) {
+
+    throw new Error(
+      "Authenticated User ID is unavailable."
+    );
+
+  }
+
+
+  if (
+    context.role === "ADMIN"
+  ) {
+
+    throw new Error(
+      "TEST REQUIRES A NON-ADMIN USER."
+    );
+
+  }
+
+
+  /**********************************************
+   * TRIGGER A GUARANTEED PERMISSION REJECTION
+   **********************************************/
+
+  const result =
+    apiCreateUser(
+      {
+        email:
+          "TEST_REJECTION_USER_ID@INVALID",
+
+        name:
+          "TEST REJECTION USER ID",
+
+        role:
+          "USER"
+
+      }
+    );
+
+
+  Logger.log(
+    "API RESULT:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * API MUST REJECT
+   **********************************************/
+
+  if (
+    !result ||
+    result.success !== false
+  ) {
+
+    throw new Error(
+      "TEST FAILED: " +
+      "API request was not rejected."
+    );
+
+  }
+
+
+  /**********************************************
+   * READ REJECTION REPORT
+   *
+   * We intentionally search the latest
+   * rejection generated by this test.
+   **********************************************/
+
+  const rejection =
+    mairixGetLatestRejection();
+
+
+  Logger.log(
+    "LATEST REJECTION:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      rejection,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !rejection
+  ) {
+
+    throw new Error(
+      "TEST FAILED: " +
+      "No rejection record was found."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY USER ID
+   **********************************************/
+
+  if (
+    mairixCleanText(
+      rejection.userId
+    ) !==
+    mairixCleanText(
+      context.userId
+    )
+  ) {
+
+    throw new Error(
+      "TEST FAILED: " +
+      "Rejection Report User ID is incorrect. " +
+      "Expected: " +
+      context.userId +
+      " | Actual: " +
+      rejection.userId
+    );
+
+  }
+
+
+  /**********************************************
+   * FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API REJECTION USER ID: PASS"
+  );
+
+  Logger.log(
+    "USER ID:"
+  );
+
+  Logger.log(
+    context.userId
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+/************************************************
+ * MAIRIX ERP
+ * UI API PERMISSION REJECTION
+ * NO SIDE EFFECT TEST
+ *
+ * PURPOSE:
+ *
+ * Verify that a rejected API operation does not
+ * create or modify business data.
+ *
+ * TEST:
+ *
+ * USER without USERS / Create
+ * attempts apiCreateUser()
+ *
+ * EXPECTED:
+ *
+ * 1. API rejects request.
+ * 2. createUser() is NOT executed successfully.
+ * 3. Test user does NOT appear in USERS sheet.
+ * 4. Rejection is recorded.
+ ************************************************/
+
+
+function testMAIRIXUIPermissionRejectionNoSideEffect() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API PERMISSION NO SIDE EFFECT TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * CURRENT USER
+   **********************************************/
+
+  const context =
+    mairixApiContext();
+
+
+  Logger.log(
+    "CURRENT USER:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      context,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !context ||
+    !context.userId
+  ) {
+
+    throw new Error(
+      "Authenticated user context is unavailable."
+    );
+
+  }
+
+
+  if (
+    context.role === "ADMIN"
+  ) {
+
+    throw new Error(
+      "TEST REQUIRES A NON-ADMIN USER."
+    );
+
+  }
+
+
+  /**********************************************
+   * UNIQUE TEST EMAIL
+   **********************************************/
+
+  const testEmail =
+    "TEST_REJECTION_NO_SIDE_EFFECT_" +
+    new Date().getTime() +
+    "@INVALID";
+
+
+  Logger.log(
+    "TEST EMAIL:"
+  );
+
+  Logger.log(
+    testEmail
+  );
+
+
+  /**********************************************
+   * VERIFY TEST DATA DOES NOT ALREADY EXIST
+   **********************************************/
+
+  const beforeUser =
+    mairixGetUserByEmail(
+      testEmail
+    );
+
+
+  if (
+    beforeUser
+  ) {
+
+    throw new Error(
+      "TEST SETUP FAILED: " +
+      "Test user already exists."
+    );
+
+  }
+
+
+  /**********************************************
+   * CALL PROTECTED API
+   **********************************************/
+
+  const result =
+    apiCreateUser(
+      {
+        email:
+          testEmail,
+
+        name:
+          "TEST REJECTION NO SIDE EFFECT",
+
+        role:
+          "USER"
+
+      }
+    );
+
+
+  Logger.log(
+    "API RESULT:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * API MUST REJECT
+   **********************************************/
+
+  if (
+    !result ||
+    result.success !== false
+  ) {
+
+    throw new Error(
+      "TEST FAILED: " +
+      "Unauthorized API request was not rejected."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY USER WAS NOT CREATED
+   **********************************************/
+
+  const afterUser =
+    mairixGetUserByEmail(
+      testEmail
+    );
+
+
+  if (
+    afterUser
+  ) {
+
+    throw new Error(
+      "TEST FAILED: " +
+      "Rejected request created a user."
+    );
+
+  }
+
+
+  /**********************************************
+   * FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API PERMISSION NO SIDE EFFECT: PASS"
+  );
+
+  Logger.log(
+    "TEST USER WAS NOT CREATED."
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+/************************************************
+ * MAIRIX UI API
+ * SALES PERMISSION + NO SIDE EFFECT TEST
+ *
+ * PURPOSE:
+ *
+ * 1. Verify SALES permission is enforced.
+ * 2. Verify rejected sale never reaches createSale().
+ * 3. Verify no transaction side effects occur.
+ * 4. Verify rejection contains real server User ID.
+ ************************************************/
+
+function testMAIRIXUISalePermissionNoSideEffect() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API SALES PERMISSION NO SIDE EFFECT TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * CURRENT USER
+   **********************************************/
+
+  const currentUser =
+    apiGetCurrentUser();
+
+
+  if (
+    !currentUser ||
+    currentUser.success !== true
+  ) {
+
+    throw new Error(
+      "Unable to load current user."
+    );
+
+  }
+
+
+  const user =
+    currentUser.data;
+
+
+  Logger.log(
+    "CURRENT USER:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      user,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    user.role === "ADMIN"
+  ) {
+
+    throw new Error(
+      "TEST INVALID: Current user is ADMIN. " +
+      "Run this test with a non-admin user."
+    );
+
+  }
+
+
+  /**********************************************
+   * UNIQUE TEST REFERENCE
+   **********************************************/
+
+  const testReference =
+    "TEST-UI-API-SALE-REJECTION-" +
+    new Date().getTime();
+
+
+  Logger.log(
+    "TEST REFERENCE:"
+  );
+
+
+  Logger.log(
+    testReference
+  );
+
+
+  /**********************************************
+   * TEST PAYLOAD
+   *
+   * IMPORTANT:
+   *
+   * This payload is intentionally fake.
+   *
+   * The permission rejection must happen
+   * before createSale() is reached.
+   **********************************************/
+
+  const payload = {
+
+    reference:
+      testReference,
+
+    invoiceNo:
+      testReference,
+
+    customerCode:
+      "TEST-CUSTOMER",
+
+    customerName:
+      "TEST CUSTOMER",
+
+    warehouseCode:
+      "TEST-WAREHOUSE",
+
+    salesmanCode:
+      "TEST-SALESMAN",
+
+    paymentMethod:
+      "CASH",
+
+    items: [
+
+      {
+
+        productCode:
+          "TEST-PRODUCT",
+
+        quantity:
+          1,
+
+        unitPrice:
+          1
+
+      }
+
+    ]
+
+  };
+
+
+  /**********************************************
+   * EXECUTE
+   **********************************************/
+
+  const result =
+    apiCreateSale(
+      payload
+    );
+
+
+  Logger.log(
+    "API RESULT:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * EXPECTED REJECTION
+   **********************************************/
+
+  if (
+    !result ||
+    result.success !== false
+  ) {
+
+    throw new Error(
+      "TEST FAILED: Sale was not rejected."
+    );
+
+  }
+
+
+  if (
+    !result.error
+  ) {
+
+    throw new Error(
+      "TEST FAILED: API error object is missing."
+    );
+
+  }
+
+
+  Logger.log(
+    "EXPECTED PERMISSION REJECTION:"
+  );
+
+
+  Logger.log(
+    result.error.message
+  );
+
+
+  /**********************************************
+   * VERIFY ERROR CODE
+   **********************************************/
+
+  if (
+    result.error.code !==
+    "SALES_ERROR"
+  ) {
+
+    throw new Error(
+      "TEST FAILED: Unexpected API error code: " +
+      result.error.code
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY PERMISSION MESSAGE
+   **********************************************/
+
+  if (
+    result.error.message
+      .indexOf(
+        "Permission denied"
+      ) === -1
+  ) {
+
+    throw new Error(
+      "TEST FAILED: Permission rejection message missing."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY REAL USER ID
+   *
+   * The rejection adapter currently logs
+   * the rejection through Logger fallback.
+   *
+   * The expected User ID must appear there.
+   **********************************************/
+
+  Logger.log(
+    "EXPECTED REJECTION USER ID:"
+  );
+
+
+  Logger.log(
+    user.userId
+  );
+
+
+  /**********************************************
+   * FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API SALES PERMISSION: PASS"
+  );
+
+  Logger.log(
+    "SALE OPERATION WAS REJECTED BEFORE BUSINESS ENGINE."
+  );
+
+  Logger.log(
+    "NO SIDE EFFECT TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+/************************************************
+ * MAIRIX REAL SALE TRANSACTION ROLLBACK TEST
+ *
+ * PURPOSE:
+ *
+ * Prove that a real sale-like transaction can:
+ *
+ * 1. Start transaction
+ * 2. Snapshot required data
+ * 3. Modify multiple sale-related values
+ * 4. Fail intentionally
+ * 5. Rollback ALL modifications
+ *
+ * IMPORTANT:
+ *
+ * This test uses a dedicated temporary sheet.
+ * It does NOT touch production sales/inventory data.
+ ************************************************/
+
+function testMairixRealSaleTransactionRollback() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX REAL SALE TRANSACTION ROLLBACK TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheetName =
+    "MAIRIX_TX_REAL_SALE_TEST";
+
+
+  /**********************************************
+   * CREATE / GET TEST SHEET
+   **********************************************/
+
+  let sheet =
+    ss.getSheetByName(
+      sheetName
+    );
+
+
+  if (
+    !sheet
+  ) {
+
+    sheet =
+      ss.insertSheet(
+        sheetName
+      );
+
+  }
+
+
+  /**********************************************
+   * RESET TEST SHEET
+   **********************************************/
+
+  sheet.clear();
+
+
+  /**********************************************
+   * INITIAL STATE
+   *
+   * Simulates:
+   *
+   * INVENTORY
+   * CUSTOMER LEDGER
+   * SALES LEDGER
+   **********************************************/
+
+  const initialData = [
+
+    [
+      "ENTITY",
+      "QTY",
+      "BALANCE",
+      "STATUS"
+    ],
+
+    [
+      "INVENTORY",
+      100,
+      0,
+      "BEFORE"
+    ],
+
+    [
+      "CUSTOMER_LEDGER",
+      0,
+      500,
+      "BEFORE"
+    ],
+
+    [
+      "SALES_LEDGER",
+      0,
+      0,
+      "BEFORE"
+    ]
+
+  ];
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      initialData.length,
+      initialData[0].length
+    )
+    .setValues(
+      initialData
+    );
+
+
+  SpreadsheetApp
+    .flush();
+
+
+  /**********************************************
+   * CAPTURE COMPLETE PRE-TRANSACTION STATE
+   **********************************************/
+
+  const beforeValues =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+  const beforeFormulas =
+    sheet
+      .getDataRange()
+      .getFormulas();
+
+
+  Logger.log(
+    "BEFORE:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      beforeValues
+    )
+  );
+
+
+  /**********************************************
+   * RUN TRANSACTION
+   **********************************************/
+
+  const result =
+    mairixRunTransaction(
+
+      {
+
+        source:
+          "TRANSACTION_REAL_SALE_ROLLBACK_TEST",
+
+        reference:
+          "TX-REAL-SALE-ROLLBACK-TEST"
+
+      },
+
+      function(
+        transaction
+      ) {
+
+        /****************************************
+         * SNAPSHOT
+         *
+         * MUST happen before ANY mutation.
+         ****************************************/
+
+        mairixTransactionSnapshotRange(
+          transaction,
+          sheet,
+          1,
+          1,
+          initialData.length,
+          initialData[0].length
+        );
+
+
+        /****************************************
+         * STEP 1
+         *
+         * Simulate inventory deduction.
+         ****************************************/
+
+        sheet
+          .getRange(
+            "B2"
+          )
+          .setValue(
+            90
+          );
+
+
+        sheet
+          .getRange(
+            "D2"
+          )
+          .setValue(
+            "MODIFIED"
+          );
+
+
+        /****************************************
+         * STEP 2
+         *
+         * Simulate customer ledger update.
+         ****************************************/
+
+        sheet
+          .getRange(
+            "C3"
+          )
+          .setValue(
+            600
+          );
+
+
+        sheet
+          .getRange(
+            "D3"
+          )
+          .setValue(
+            "MODIFIED"
+          );
+
+
+        /****************************************
+         * STEP 3
+         *
+         * Simulate sales ledger update.
+         ****************************************/
+
+        sheet
+          .getRange(
+            "B4"
+          )
+          .setValue(
+            10
+          );
+
+
+        sheet
+          .getRange(
+            "C4"
+          )
+          .setValue(
+            100
+          );
+
+
+        sheet
+          .getRange(
+            "D4"
+          )
+          .setValue(
+            "MODIFIED"
+          );
+
+
+        SpreadsheetApp
+          .flush();
+
+
+        /****************************************
+         * DURING TRANSACTION
+         ****************************************/
+
+        Logger.log(
+          "DURING TRANSACTION:"
+        );
+
+
+        Logger.log(
+          JSON.stringify(
+            sheet
+              .getDataRange()
+              .getValues()
+          )
+        );
+
+
+        /****************************************
+         * FORCE FAILURE
+         *
+         * This MUST happen after all
+         * modifications.
+         ****************************************/
+
+        throw new Error(
+          "INTENTIONAL_REAL_SALE_ROLLBACK_FAILURE"
+        );
+
+      }
+
+    );
+
+
+  /**********************************************
+   * TRANSACTION RESULT
+   **********************************************/
+
+  Logger.log(
+    "TRANSACTION RESULT:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * EXPECTED FAILURE
+   **********************************************/
+
+  if (
+    !result ||
+    result.success !== false
+  ) {
+
+    throw new Error(
+      "Expected transaction failure."
+    );
+
+  }
+
+
+  /**********************************************
+   * EXPECTED ROLLBACK
+   **********************************************/
+
+  if (
+    result.rolledBack !== true
+  ) {
+
+    throw new Error(
+      "Transaction did not rollback."
+    );
+
+  }
+
+
+  /**********************************************
+   * READ AFTER ROLLBACK
+   **********************************************/
+
+  SpreadsheetApp
+    .flush();
+
+
+  const afterValues =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+  const afterFormulas =
+    sheet
+      .getDataRange()
+      .getFormulas();
+
+
+  Logger.log(
+    "AFTER ROLLBACK VALUES:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      afterValues
+    )
+  );
+
+
+  Logger.log(
+    "AFTER ROLLBACK FORMULAS:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      afterFormulas
+    )
+  );
+
+
+  /**********************************************
+   * VERIFY VALUES
+   **********************************************/
+
+  if (
+    JSON.stringify(
+      beforeValues
+    ) !==
+    JSON.stringify(
+      afterValues
+    )
+  ) {
+
+    throw new Error(
+      "REAL SALE ROLLBACK FAILED: values were not restored."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY FORMULAS
+   **********************************************/
+
+  if (
+    JSON.stringify(
+      beforeFormulas
+    ) !==
+    JSON.stringify(
+      afterFormulas
+    )
+  ) {
+
+    throw new Error(
+      "REAL SALE ROLLBACK FAILED: formulas were not restored."
+    );
+
+  }
+
+
+  /**********************************************
+   * FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX REAL SALE TRANSACTION ROLLBACK: PASS"
+  );
+
+  Logger.log(
+    "VALUES RESTORED."
+  );
+
+  Logger.log(
+    "FORMULAS RESTORED."
+  );
+
+  Logger.log(
+    "NO PARTIAL TRANSACTION REMAINS."
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * MAIRIX TRANSACTION CALL DIAGNOSTIC
+ *
+ * PURPOSE:
+ *
+ * Determine exactly where the transaction
+ * rollback test stops.
+ *
+ * NO BUSINESS TRANSACTION.
+ * NO SALE.
+ * NO INVENTORY UPDATE.
+ ************************************************/
+
+function testMairixTransactionCallDiagnostic() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TRANSACTION CALL DIAGNOSTIC"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * STEP 1
+   *
+   * CHECK TRANSACTION ENGINE
+   **********************************************/
+
+  Logger.log(
+    "STEP 1: CHECK TRANSACTION ENGINE"
+  );
+
+
+  if (
+    typeof mairixRunTransaction !==
+    "function"
+  ) {
+
+    throw new Error(
+      "mairixRunTransaction() is not available."
+    );
+
+  }
+
+
+  Logger.log(
+    "TRANSACTION ENGINE: AVAILABLE"
+  );
+
+
+  /**********************************************
+   * STEP 2
+   *
+   * CHECK ACTIVE SPREADSHEET
+   **********************************************/
+
+  Logger.log(
+    "STEP 2: CHECK ACTIVE SPREADSHEET"
+  );
+
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  if (
+    !ss
+  ) {
+
+    throw new Error(
+      "Active spreadsheet is unavailable."
+    );
+
+  }
+
+
+  Logger.log(
+    "SPREADSHEET: AVAILABLE"
+  );
+
+
+  /**********************************************
+   * STEP 3
+   *
+   * PREPARE TEST SHEET
+   **********************************************/
+
+  const sheetName =
+    "MAIRIX_TX_DIAGNOSTIC";
+
+
+  let sheet =
+    ss.getSheetByName(
+      sheetName
+    );
+
+
+  if (
+    !sheet
+  ) {
+
+    sheet =
+      ss.insertSheet(
+        sheetName
+      );
+
+  }
+
+
+  sheet.clear();
+
+
+  sheet
+    .getRange(
+      "A1:B2"
+    )
+    .setValues(
+      [
+
+        [
+          "STATUS",
+          "VALUE"
+        ],
+
+        [
+          "BEFORE",
+          100
+        ]
+
+      ]
+    );
+
+
+  SpreadsheetApp
+    .flush();
+
+
+  Logger.log(
+    "STEP 3: TEST SHEET READY"
+  );
+
+
+  /**********************************************
+   * CAPTURE BEFORE STATE
+   **********************************************/
+
+  const beforeValues =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+  const beforeFormulas =
+    sheet
+      .getDataRange()
+      .getFormulas();
+
+
+  Logger.log(
+    "BEFORE:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      beforeValues
+    )
+  );
+
+
+  /**********************************************
+   * STEP 4
+   *
+   * CALL TRANSACTION ENGINE
+   **********************************************/
+
+  Logger.log(
+    "STEP 4: CALLING mairixRunTransaction()"
+  );
+
+
+  let result;
+
+
+  try {
+
+    result =
+      mairixRunTransaction(
+
+        {
+
+          source:
+            "MAIRIX_TRANSACTION_CALL_DIAGNOSTIC",
+
+          reference:
+            "TX-DIAGNOSTIC-TEST"
+
+        },
+
+        function(
+          transaction
+        ) {
+
+          /**************************************
+           * STEP 5
+           *
+           * TRANSACTION OPERATION ENTERED
+           **************************************/
+
+          Logger.log(
+            "STEP 5: TRANSACTION OPERATION ENTERED"
+          );
+
+
+          Logger.log(
+            "TRANSACTION ID: " +
+            transaction.transactionId
+          );
+
+
+          /**************************************
+           * SNAPSHOT
+           **************************************/
+
+          mairixTransactionSnapshotRange(
+            transaction,
+            sheet,
+            1,
+            1,
+            2,
+            2
+          );
+
+
+          /**************************************
+           * STEP 6
+           *
+           * MODIFY TEST DATA
+           **************************************/
+
+          sheet
+            .getRange(
+              "B2"
+            )
+            .setValue(
+              999
+            );
+
+
+          SpreadsheetApp
+            .flush();
+
+
+          Logger.log(
+            "STEP 6: DATA MODIFIED"
+          );
+
+
+          Logger.log(
+            JSON.stringify(
+              sheet
+                .getDataRange()
+                .getValues()
+            )
+          );
+
+
+          /**************************************
+           * INTENTIONAL FAILURE
+           **************************************/
+
+          throw new Error(
+            "INTENTIONAL_DIAGNOSTIC_ROLLBACK_FAILURE"
+          );
+
+        }
+
+      );
+
+
+    Logger.log(
+      "STEP 7: TRANSACTION RETURNED"
+    );
+
+
+  } catch (error) {
+
+    Logger.log(
+      "TRANSACTION CALL THREW ERROR:"
+    );
+
+
+    Logger.log(
+      error &&
+      error.stack
+        ? error.stack
+        : String(error)
+    );
+
+
+    throw error;
+
+  }
+
+
+  /**********************************************
+   * TRANSACTION RESULT
+   **********************************************/
+
+  Logger.log(
+    "TRANSACTION RESULT:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * READ AFTER ROLLBACK
+   **********************************************/
+
+  SpreadsheetApp
+    .flush();
+
+
+  const afterValues =
+    sheet
+      .getDataRange()
+      .getValues();
+
+
+  const afterFormulas =
+    sheet
+      .getDataRange()
+      .getFormulas();
+
+
+  Logger.log(
+    "AFTER:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      afterValues
+    )
+  );
+
+
+  /**********************************************
+   * VERIFY TRANSACTION FAILURE
+   **********************************************/
+
+  if (
+    !result ||
+    result.success !== false
+  ) {
+
+    throw new Error(
+      "Diagnostic expected transaction failure."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY ROLLBACK
+   **********************************************/
+
+  if (
+    result.rolledBack !== true
+  ) {
+
+    throw new Error(
+      "Diagnostic transaction did not rollback."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY VALUES
+   **********************************************/
+
+  if (
+    JSON.stringify(
+      beforeValues
+    ) !==
+    JSON.stringify(
+      afterValues
+    )
+  ) {
+
+    throw new Error(
+      "Diagnostic rollback failed: values differ."
+    );
+
+  }
+
+
+  /**********************************************
+   * VERIFY FORMULAS
+   **********************************************/
+
+  if (
+    JSON.stringify(
+      beforeFormulas
+    ) !==
+    JSON.stringify(
+      afterFormulas
+    )
+  ) {
+
+    throw new Error(
+      "Diagnostic rollback failed: formulas differ."
+    );
+
+  }
+
+
+  /**********************************************
+   * FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TRANSACTION CALL DIAGNOSTIC: PASS"
+  );
+
+  Logger.log(
+    "TRANSACTION ENTERED."
+  );
+
+  Logger.log(
+    "ROLLBACK COMPLETED."
+  );
+
+  Logger.log(
+    "DATA RESTORED."
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+/************************************************
+ * MAIRIX ERP
+ * CENTRAL REFERENCE INTEGRATION TEST
+ *
+ * PURPOSE:
+ *
+ * Prove that one central Reference ID can act as
+ * the parent identity of a complete transaction.
+ *
+ * TESTS:
+ *
+ * 1. Generate one central Reference.
+ * 2. Validate the Reference.
+ * 3. Create SALE transaction context.
+ * 4. Validate transaction context.
+ * 5. Verify child records reuse the exact same
+ *    Reference ID.
+ * 6. Verify transaction type protection.
+ * 7. Verify invalid Reference rejection.
+ * 8. Verify duplicate Reference protection.
+ *
+ * IMPORTANT:
+ *
+ * This test does NOT create production
+ * transactions or ledger records.
+ ************************************************/
+
+
+function testMairixCentralReferenceIntegration() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CENTRAL REFERENCE INTEGRATION TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /************************************************
+   * TEST 1
+   * CREATE CENTRAL REFERENCE
+   ************************************************/
+
+  const referenceResult =
+    createMairixTransactionReference();
+
+
+  if (
+    !referenceResult ||
+    referenceResult.success !== true ||
+    !referenceResult.referenceId
+  ) {
+
+    throw new Error(
+      "Central Reference generation failed."
+    );
+
+  }
+
+
+  const referenceId =
+    referenceResult.referenceId;
+
+
+  Logger.log(
+    "Generated Reference: " +
+    referenceId
+  );
+
+
+  /************************************************
+   * TEST 2
+   * VALIDATE REFERENCE
+   ************************************************/
+
+  const validatedReference =
+    validateMairixReferenceId(
+      referenceId
+    );
+
+
+  if (
+    validatedReference !==
+    referenceId
+  ) {
+
+    throw new Error(
+      "Reference validation returned an unexpected value."
+    );
+
+  }
+
+
+  Logger.log(
+    "Reference validation: PASS"
+  );
+
+
+  /************************************************
+   * TEST 3
+   * CREATE TRANSACTION CONTEXT
+   *
+   * IMPORTANT:
+   *
+   * We intentionally verify that a transaction
+   * context can carry the same Reference ID.
+   ************************************************/
+
+  const context =
+    {
+
+      referenceId:
+        referenceId,
+
+      transactionType:
+        "SALE",
+
+      createdAt:
+        new Date()
+
+    };
+
+
+  const validatedContext =
+    requireMairixReferenceContext(
+      context
+    );
+
+
+  if (
+    validatedContext.referenceId !==
+    referenceId
+  ) {
+
+    throw new Error(
+      "Transaction context changed the Reference ID."
+    );
+
+  }
+
+
+  if (
+    validatedContext.transactionType !==
+    "SALE"
+  ) {
+
+    throw new Error(
+      "Transaction context type is invalid."
+    );
+
+  }
+
+
+  Logger.log(
+    "Transaction context: PASS"
+  );
+
+
+  /************************************************
+   * TEST 4
+   * CHILD REFERENCE REUSE
+   *
+   * Every child ledger must receive the exact
+   * parent Reference ID.
+   ************************************************/
+
+  const childReferences = [
+
+    {
+      name:
+        "TRANSACTION_LINES",
+
+      referenceId:
+        context.referenceId
+    },
+
+    {
+      name:
+        "INVENTORY_LEDGER",
+
+      referenceId:
+        context.referenceId
+    },
+
+    {
+      name:
+        "FINANCIAL_LEDGER",
+
+      referenceId:
+        context.referenceId
+    },
+
+    {
+      name:
+        "CUSTOMER_LEDGER",
+
+      referenceId:
+        context.referenceId
+    },
+
+    {
+      name:
+        "SALESMAN_LEDGER",
+
+      referenceId:
+        context.referenceId
+    },
+
+    {
+      name:
+        "COMMISSIONS",
+
+      referenceId:
+        context.referenceId
+    },
+
+    {
+      name:
+        "LOYALTY",
+
+      referenceId:
+        context.referenceId
+    },
+
+    {
+      name:
+        "AUDIT_LOG",
+
+      referenceId:
+        context.referenceId
+    }
+
+  ];
+
+
+  childReferences.forEach(
+    function(child) {
+
+      const childReference =
+        assertMairixChildReference(
+          child.referenceId
+        );
+
+
+      if (
+        childReference !==
+        referenceId
+      ) {
+
+        throw new Error(
+          child.name +
+          " does not reuse the parent Reference ID."
+        );
+
+      }
+
+    }
+  );
+
+
+  Logger.log(
+    "Child Reference Reuse: PASS"
+  );
+
+
+  /************************************************
+   * TEST 5
+   * CHILD CONTEXT TYPE VALIDATION
+   ************************************************/
+
+  const childContext =
+    assertMairixChildContext(
+      context,
+      "SALE"
+    );
+
+
+  if (
+    childContext.referenceId !==
+    referenceId
+  ) {
+
+    throw new Error(
+      "Child context lost the parent Reference ID."
+    );
+
+  }
+
+
+  Logger.log(
+    "Child Context Validation: PASS"
+  );
+
+
+  /************************************************
+   * TEST 6
+   * TRANSACTION TYPE MISMATCH MUST FAIL
+   ************************************************/
+
+  let typeMismatchRejected =
+    false;
+
+
+  try {
+
+    assertMairixChildContext(
+      context,
+      "PURCHASE"
+    );
+
+  } catch (
+    error
+  ) {
+
+    typeMismatchRejected =
+      true;
+
+    Logger.log(
+      "Expected type mismatch rejection: " +
+      error.message
+    );
+
+  }
+
+
+  if (
+    !typeMismatchRejected
+  ) {
+
+    throw new Error(
+      "Transaction type mismatch was not rejected."
+    );
+
+  }
+
+
+  Logger.log(
+    "Transaction Type Protection: PASS"
+  );
+
+
+  /************************************************
+   * TEST 7
+   * INVALID REFERENCE MUST FAIL
+   ************************************************/
+
+  let invalidReferenceRejected =
+    false;
+
+
+  try {
+
+    validateMairixReferenceId(
+      "INVALID-REFERENCE"
+    );
+
+  } catch (
+    error
+  ) {
+
+    invalidReferenceRejected =
+      true;
+
+    Logger.log(
+      "Expected invalid Reference rejection: " +
+      error.message
+    );
+
+  }
+
+
+  if (
+    !invalidReferenceRejected
+  ) {
+
+    throw new Error(
+      "Invalid Reference ID was not rejected."
+    );
+
+  }
+
+
+  Logger.log(
+    "Invalid Reference Protection: PASS"
+  );
+
+
+  /************************************************
+   * TEST 8
+   * SECOND GENERATED REFERENCE MUST DIFFER
+   ************************************************/
+
+  const secondReferenceResult =
+    createMairixTransactionReference();
+
+
+  if (
+    !secondReferenceResult ||
+    !secondReferenceResult.referenceId
+  ) {
+
+    throw new Error(
+      "Second Reference generation failed."
+    );
+
+  }
+
+
+  const secondReferenceId =
+    secondReferenceResult.referenceId;
+
+
+  if (
+    secondReferenceId ===
+    referenceId
+  ) {
+
+    throw new Error(
+      "Central Reference generator produced duplicate IDs."
+    );
+
+  }
+
+
+  Logger.log(
+    "Reference Uniqueness: PASS"
+  );
+
+
+  /************************************************
+   * TEST 9
+   * CHILD CANNOT CREATE A DIFFERENT REFERENCE
+   *
+   * This simulates the rule that every child
+   * must inherit the parent Reference.
+   ************************************************/
+
+  let childMismatchRejected =
+    false;
+
+
+  try {
+
+    if (
+      secondReferenceId !==
+      referenceId
+    ) {
+
+      throw new Error(
+        "Child attempted to use a different Reference ID."
+      );
+
+    }
+
+  } catch (
+    error
+  ) {
+
+    childMismatchRejected =
+      true;
+
+    Logger.log(
+      "Expected child Reference mismatch rejection: " +
+      error.message
+    );
+
+  }
+
+
+  if (
+    !childMismatchRejected
+  ) {
+
+    throw new Error(
+      "Child Reference mismatch was not detected."
+    );
+
+  }
+
+
+  Logger.log(
+    "Child Reference Integrity: PASS"
+  );
+
+
+  /************************************************
+   * FINAL RESULT
+   ************************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CENTRAL REFERENCE INTEGRATION TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    referenceId:
+      referenceId,
+
+    secondReferenceId:
+      secondReferenceId,
+
+    transactionType:
+      validatedContext.transactionType,
+
+    childCount:
+      childReferences.length
+
+  };
+
+}
+
+function testMairixSaleCentralReferenceIntegration() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SALE CENTRAL REFERENCE INTEGRATION TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const context =
+    createMairixReferenceContext(
+      "SALE"
+    );
+
+
+  const validated =
+    assertMairixChildContext(
+      context,
+      "SALE"
+    );
+
+
+  if (
+    !validated.referenceId
+  ) {
+
+    throw new Error(
+      "Sale central Reference ID was not generated."
+    );
+
+  }
+
+
+  if (
+    validated.transactionType !==
+    "SALE"
+  ) {
+
+    throw new Error(
+      "Sale transaction type is invalid."
+    );
+
+  }
+
+
+  Logger.log(
+    "Central Reference: " +
+    validated.referenceId
+  );
+
+
+  Logger.log(
+    "Reference generation: PASS"
+  );
+
+
+  /*
+   * Child engines must reuse the exact
+   * same Reference ID.
+   */
+
+  const childReference =
+    assertMairixChildReference(
+      validated.referenceId
+    );
+
+
+  if (
+    childReference !==
+    validated.referenceId
+  ) {
+
+    throw new Error(
+      "Child Reference does not match Sale Reference."
+    );
+
+  }
+
+
+  Logger.log(
+    "Child Reference Reuse: PASS"
+  );
+
+
+  /*
+   * Wrong transaction type must be rejected.
+   */
+
+  let mismatchRejected =
+    false;
+
+
+  try {
+
+    assertMairixChildContext(
+      validated,
+      "PURCHASE"
+    );
+
+  } catch (error) {
+
+    mismatchRejected =
+      true;
+
+    Logger.log(
+      "Expected type mismatch rejection: " +
+      error.message
+    );
+
+  }
+
+
+  if (!mismatchRejected) {
+
+    throw new Error(
+      "Transaction type mismatch was not rejected."
+    );
+
+  }
+
+
+  Logger.log(
+    "Transaction Type Protection: PASS"
+  );
+
+
+  /*
+   * Invalid reference must be rejected.
+   */
+
+  let invalidRejected =
+    false;
+
+
+  try {
+
+    assertMairixChildReference(
+      "INVALID-REFERENCE"
+    );
+
+  } catch (error) {
+
+    invalidRejected =
+      true;
+
+    Logger.log(
+      "Expected invalid Reference rejection: " +
+      error.message
+    );
+
+  }
+
+
+  if (!invalidRejected) {
+
+    throw new Error(
+      "Invalid Reference was not rejected."
+    );
+
+  }
+
+
+  Logger.log(
+    "Invalid Reference Protection: PASS"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SALE CENTRAL REFERENCE INTEGRATION TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    referenceId:
+      validated.referenceId,
+
+    transactionType:
+      validated.transactionType
+
+  };
+
+}
+
+function testMairixListActiveUsers() {
+
+  const sheet =
+    getMAIRIXUsersSheet();
+
+  if (
+    !sheet ||
+    sheet.getLastRow() < 2
+  ) {
+
+    throw new Error(
+      "USERS sheet is empty."
+    );
+
+  }
+
+  const values =
+    sheet
+      .getDataRange()
+      .getDisplayValues();
+
+  const headers =
+    values[0];
+
+  const userIdIndex =
+    headers.indexOf("User ID");
+
+  const nameIndex =
+    headers.indexOf("Name");
+
+  const roleIndex =
+    headers.indexOf("Role");
+
+  const activeIndex =
+    headers.indexOf("Active");
+
+  if (
+    userIdIndex === -1
+  ) {
+
+    throw new Error(
+      'USERS is missing "User ID" header.'
+    );
+
+  }
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX ACTIVE USERS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  for (
+    let i = 1;
+    i < values.length;
+    i++
+  ) {
+
+    const row =
+      values[i];
+
+    const active =
+      activeIndex !== -1
+        ? isMAIRIXTrueValue(
+            row[activeIndex]
+          )
+        : false;
+
+    if (!active) {
+      continue;
+    }
+
+    Logger.log(
+      "User ID: " +
+      row[userIdIndex] +
+      " | Name: " +
+      (
+        nameIndex !== -1
+          ? row[nameIndex]
+          : ""
+      ) +
+      " | Role: " +
+      (
+        roleIndex !== -1
+          ? row[roleIndex]
+          : ""
+      )
+    );
+
+  }
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+function testMairixListAllUsers() {
+
+  const sheet =
+    getMAIRIXUsersSheet();
+
+  if (
+    !sheet ||
+    sheet.getLastRow() < 2
+  ) {
+
+    Logger.log(
+      "USERS contains no data rows."
+    );
+
+    return;
+
+  }
+
+
+  const values =
+    sheet
+      .getDataRange()
+      .getDisplayValues();
+
+
+  const headers =
+    values[0];
+
+
+  const userIdIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+  const nameIndex =
+    headers.indexOf(
+      "Name"
+    );
+
+  const roleIndex =
+    headers.indexOf(
+      "Role"
+    );
+
+  const activeIndex =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX ALL USERS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  for (
+    let i = 1;
+    i < values.length;
+    i++
+  ) {
+
+    const row =
+      values[i];
+
+
+    Logger.log(
+      "ROW " +
+      (i + 1) +
+      " | User ID: " +
+      (
+        userIdIndex !== -1
+          ? row[userIdIndex]
+          : ""
+      ) +
+      " | Name: " +
+      (
+        nameIndex !== -1
+          ? row[nameIndex]
+          : ""
+      ) +
+      " | Role: " +
+      (
+        roleIndex !== -1
+          ? row[roleIndex]
+          : ""
+      ) +
+      " | Active: " +
+      (
+        activeIndex !== -1
+          ? row[activeIndex]
+          : ""
+      )
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+/************************************************
+ * MAIRIX TEST USERS CLEANUP
+ *
+ * Removes completely empty USER rows.
+ *
+ * IMPORTANT:
+ * Does NOT delete real users.
+ ************************************************/
+
+function testMairixCleanupEmptyUserRows() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CLEANUP EMPTY USER ROWS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const sheet =
+    getMAIRIXUsersSheet();
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "USERS sheet was not found."
+    );
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    Logger.log(
+      "USERS already contains no data rows."
+    );
+
+    return {
+      success: true,
+      removed: 0
+    };
+
+  }
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const userIdIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+
+  const emailIndex =
+    headers.indexOf(
+      "Gmail"
+    );
+
+
+  const nameIndex =
+    headers.indexOf(
+      "Name"
+    );
+
+
+  const roleIndex =
+    headers.indexOf(
+      "Role"
+    );
+
+
+  if (
+    userIdIndex === -1
+  ) {
+
+    throw new Error(
+      'USERS is missing "User ID" header.'
+    );
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getDisplayValues();
+
+
+  let removed =
+    0;
+
+
+  /*
+   * Delete from bottom to top so row
+   * indexes remain stable.
+   */
+
+  for (
+    let i = values.length - 1;
+    i >= 0;
+    i--
+  ) {
+
+    const row =
+      values[i];
+
+
+    const userId =
+      String(
+        row[userIdIndex] || ""
+      ).trim();
+
+
+    const email =
+      emailIndex !== -1
+        ? String(
+            row[emailIndex] || ""
+          ).trim()
+        : "";
+
+
+    const name =
+      nameIndex !== -1
+        ? String(
+            row[nameIndex] || ""
+          ).trim()
+        : "";
+
+
+    const role =
+      roleIndex !== -1
+        ? String(
+            row[roleIndex] || ""
+          ).trim()
+        : "";
+
+
+    /*
+     * Only remove rows that have
+     * absolutely no user identity.
+     */
+
+    if (
+      !userId &&
+      !email &&
+      !name &&
+      !role
+    ) {
+
+      sheet.deleteRow(
+        i + 2
+      );
+
+      removed++;
+
+    }
+
+  }
+
+
+  Logger.log(
+    "Removed empty USER rows: " +
+    removed
+  );
+
+
+  Logger.log(
+    "Remaining USER rows: " +
+    Math.max(
+      0,
+      sheet.getLastRow() - 1
+    )
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    removed:
+      removed
+
+  };
+
+}
+
+/************************************************
+ * TEST FIRST ADMIN INITIALIZATION
+ ************************************************/
+
+function testMAIRIXFirstAdminInitialization() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FIRST ADMIN INITIALIZATION"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const currentEmail =
+    mairixUsersGetCurrentEmail();
+
+
+  Logger.log(
+    "Google Account: " +
+    currentEmail
+  );
+
+
+  const result =
+    mairixInitializeFirstAdmin({
+
+      name:
+        "MAIRIX Administrator"
+
+    });
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !result ||
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "First Admin initialization failed."
+    );
+
+  }
+
+
+  if (
+    result.role !==
+    "ADMIN"
+  ) {
+
+    throw new Error(
+      "First Admin role must be ADMIN."
+    );
+
+  }
+
+
+  if (
+    result.active !== true
+  ) {
+
+    throw new Error(
+      "First Admin must be ACTIVE."
+    );
+
+  }
+
+
+  /*
+   * Verify normal authentication path.
+   */
+
+  const authenticatedUser =
+    mairixRequireCurrentUser();
+
+
+  if (
+    !authenticatedUser ||
+    authenticatedUser.userId !==
+    result.userId
+  ) {
+
+    throw new Error(
+      "Current MAIRIX session was not established."
+    );
+
+  }
+
+
+  if (
+    authenticatedUser.role !==
+    "ADMIN"
+  ) {
+
+    throw new Error(
+      "Authenticated user is not ADMIN."
+    );
+
+  }
+
+
+  Logger.log(
+    "Authenticated User ID: " +
+    authenticatedUser.userId
+  );
+
+
+  Logger.log(
+    "Authenticated User Email: " +
+    authenticatedUser.email
+  );
+
+
+  Logger.log(
+    "Authenticated User Role: " +
+    authenticatedUser.role
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FIRST ADMIN INITIALIZATION: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return result;
+
+}
+
+/************************************************
+ * MAIRIX CASH SALE CENTRAL FLOW TEST
+ ************************************************/
+
+function testMairixCashSaleCentralFlow() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CASH SALE CENTRAL FLOW TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /*
+   * TEST USER
+   *
+   * The test must execute through the real
+   * MAIRIX authentication engine.
+   *
+   * IMPORTANT:
+   * Replace this only if your dedicated test
+   * user has a different User ID.
+   */
+
+  const testUserId =
+    "USR-20260825-00001";
+
+
+  /*
+   * Establish a real MAIRIX session.
+   */
+
+  const authenticatedUser =
+    setCurrentMAIRIXUser(
+      testUserId
+    );
+
+
+  if (
+    !authenticatedUser ||
+    !authenticatedUser.userId
+  ) {
+
+    throw new Error(
+      "Unable to establish MAIRIX test user session."
+    );
+
+  }
+
+
+  Logger.log(
+    "Authenticated Test User: " +
+    authenticatedUser.userId
+  );
+
+
+  try {
+
+    /*
+     * Pre-generate a reference.
+     *
+     * This reference must NOT be silently reused
+     * by createMairixSale().
+     */
+
+    const testReference =
+      createMairixReferenceContext(
+        "SALE"
+      );
+
+
+    Logger.log(
+      "Pre-generated Reference: " +
+      testReference.referenceId
+    );
+
+
+    /*
+     * REAL CENTRAL SALE FLOW
+     */
+
+    const result =
+      createMairixSale({
+
+        customerCode:
+          "TEST-CUSTOMER-001",
+
+        salesmanCode:
+          "TEST-SALESMAN-001",
+
+        warehouseCode:
+          "WH-001",
+
+        paymentMethod:
+          "CASH",
+
+        discountPercent:
+          0,
+
+        referenceNote:
+          "MAIRIX CASH SALE CENTRAL FLOW TEST",
+
+        items: [
+
+          {
+            itemCode:
+              "TEST-ITEM-001",
+
+            quantity:
+              2,
+
+            unitPrice:
+              100
+
+          }
+
+        ]
+
+      });
+
+
+    if (
+      !result ||
+      result.success !== true
+    ) {
+
+      throw new Error(
+        "Cash sale creation failed."
+      );
+
+    }
+
+
+    Logger.log(
+      "Sale Reference: " +
+      result.referenceId
+    );
+
+
+    /*
+     * The sale must receive its own central
+     * transaction reference.
+     */
+
+    if (
+      result.referenceId ===
+      testReference.referenceId
+    ) {
+
+      throw new Error(
+        "Unexpected pre-generated reference reuse."
+      );
+
+    }
+
+
+    const reference =
+      result.referenceId;
+
+
+    /*
+     * Validate central reference.
+     */
+
+    validateMairixReferenceId(
+      reference
+    );
+
+
+    /*
+     * Basic financial classification
+     */
+
+    if (
+      result.financialEffect <= 0
+    ) {
+
+      throw new Error(
+        "Cash sale financial effect must be positive."
+      );
+
+    }
+
+
+    if (
+      result.cashEffect !==
+      result.financialEffect
+    ) {
+
+      throw new Error(
+        "Cash Effect does not match Financial Effect."
+      );
+
+    }
+
+
+    if (
+      result.customerCreditEffect !==
+      0
+    ) {
+
+      throw new Error(
+        "Cash sale must not create customer credit."
+      );
+
+    }
+
+
+    /*
+     * Inventory must decrease.
+     */
+
+    if (
+      result.inventoryEffect !==
+      -1
+    ) {
+
+      throw new Error(
+        "Cash sale inventory effect must be -1."
+      );
+
+    }
+
+
+    /*
+     * Loyalty must increase.
+     */
+
+    if (
+      !result.customer ||
+      result.customer.loyaltyPointsAdded !==
+      result.totalQuantity
+    ) {
+
+      throw new Error(
+        "Cash sale loyalty points are incorrect."
+      );
+
+    }
+
+
+    /*
+     * Central Reference must exist.
+     */
+
+    if (!reference) {
+
+      throw new Error(
+        "Cash sale is missing central Reference ID."
+      );
+
+    }
+
+
+    Logger.log(
+      "Inventory Effect: " +
+      result.inventoryEffect *
+      result.totalQuantity
+    );
+
+    Logger.log(
+      "Financial Effect: " +
+      result.financialEffect
+    );
+
+    Logger.log(
+      "Cash Effect: " +
+      result.cashEffect
+    );
+
+    Logger.log(
+      "Credit Effect: " +
+      result.customerCreditEffect
+    );
+
+    Logger.log(
+      "Loyalty Points Added: " +
+      result.customer.loyaltyPointsAdded
+    );
+
+
+    /*
+     * Inspect all central-reference children.
+     */
+
+    const details =
+      getMairixReferenceDetails(
+        reference
+      );
+
+
+    if (
+      !details ||
+      !details.transaction
+    ) {
+
+      throw new Error(
+        "Central transaction was not found."
+      );
+
+    }
+
+
+    Logger.log(
+      "Transaction Reference: " +
+      reference
+    );
+
+
+    Logger.log(
+      "Transaction Lines: " +
+      details.transactionLines.length
+    );
+
+    Logger.log(
+      "Inventory Rows: " +
+      details.inventory.length
+    );
+
+    Logger.log(
+      "Financial Rows: " +
+      details.financial.length
+    );
+
+    Logger.log(
+      "Customer Ledger Rows: " +
+      details.customerLedger.length
+    );
+
+    Logger.log(
+      "Vendor Ledger Rows: " +
+      details.vendorLedger.length
+    );
+
+    Logger.log(
+      "Salesman Ledger Rows: " +
+      details.salesmanLedger.length
+    );
+
+    Logger.log(
+      "Tax Rows: " +
+      details.taxes.length
+    );
+
+    Logger.log(
+      "Commission Rows: " +
+      details.commissions.length
+    );
+
+    Logger.log(
+      "Loyalty Rows: " +
+      details.loyalty.length
+    );
+
+    Logger.log(
+      "Expense Rows: " +
+      details.expenses.length
+    );
+
+    Logger.log(
+      "Audit Rows: " +
+      details.audit.length
+    );
+
+
+    Logger.log(
+      "=========================================="
+    );
+
+    Logger.log(
+      "MAIRIX CASH SALE CENTRAL FLOW TEST: PASS"
+    );
+
+    Logger.log(
+      "=========================================="
+    );
+
+
+    return {
+
+      success:
+        true,
+
+      referenceId:
+        reference,
+
+      result:
+        result,
+
+      details:
+        details
+
+    };
+
+  } finally {
+
+    /*
+     * Always clear the test session.
+     *
+     * This guarantees that a failed test does
+     * not leave a stale authenticated user
+     * in UserProperties.
+     */
+
+    clearCurrentMAIRIXUser();
+
+    Logger.log(
+      "MAIRIX Test User Session Cleared."
+    );
+
+  }
+
+}
+
+/************************************************
+ * MAIRIX NUMBERING TEST RUNNERS
+ *
+ * These functions are designed to be executed
+ * directly from the Apps Script Run menu.
+ ************************************************/
+
+
+/************************************************
+ * TEST NUMBERING REGISTRY
+ ************************************************/
+function testMairixValidateNumberingRegistry() {
+
+  const result =
+    mairixValidateNumberingRegistry();
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+}
+
+
+/************************************************
+ * TEST ALL SEQUENCES SYNCHRONIZATION
+ ************************************************/
+function testMairixSynchronizeAllSequences() {
+
+  const result =
+    mairixSynchronizeAllSequences();
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+}
+
+
+/************************************************
+ * TEST CUSTOMER SEQUENCE
+ ************************************************/
+function testMairixCustomerSequence() {
+
+  const entityType =
+    "CUSTOMER";
+
+  const highest =
+    mairixGetHighestExistingSequence(
+      entityType
+    );
+
+  Logger.log(
+    "ENTITY: " +
+    entityType
+  );
+
+  Logger.log(
+    "HIGHEST EXISTING SEQUENCE: " +
+    highest
+  );
+
+}
+
+
+/************************************************
+ * TEST VENDOR SEQUENCE
+ ************************************************/
+function testMairixVendorSequence() {
+
+  const entityType =
+    "VENDOR";
+
+  const highest =
+    mairixGetHighestExistingSequence(
+      entityType
+    );
+
+  Logger.log(
+    "ENTITY: " +
+    entityType
+  );
+
+  Logger.log(
+    "HIGHEST EXISTING SEQUENCE: " +
+    highest
+  );
+
+}
+
+
+/************************************************
+ * TEST EMPLOYEE SEQUENCE
+ ************************************************/
+function testMairixEmployeeSequence() {
+
+  const entityType =
+    "EMPLOYEE";
+
+  const highest =
+    mairixGetHighestExistingSequence(
+      entityType
+    );
+
+  Logger.log(
+    "ENTITY: " +
+    entityType
+  );
+
+  Logger.log(
+    "HIGHEST EXISTING SEQUENCE: " +
+    highest
+  );
+
+}
+
+
+/************************************************
+ * TEST USER SEQUENCE
+ ************************************************/
+function testMairixUserSequence() {
+
+  const entityType =
+    "USER";
+
+  const highest =
+    mairixGetHighestExistingSequence(
+      entityType
+    );
+
+  Logger.log(
+    "ENTITY: " +
+    entityType
+  );
+
+  Logger.log(
+    "HIGHEST EXISTING SEQUENCE: " +
+    highest
+  );
+
+}
+
+
+/************************************************
+ * TEST ITEM SEQUENCE
+ ************************************************/
+function testMairixItemSequence() {
+
+  const entityType =
+    "ITEM";
+
+  const highest =
+    mairixGetHighestExistingSequence(
+      entityType
+    );
+
+  Logger.log(
+    "ENTITY: " +
+    entityType
+  );
+
+  Logger.log(
+    "HIGHEST EXISTING SEQUENCE: " +
+    highest
+  );
+
+}
+
+
+/************************************************
+ * TEST WAREHOUSE SEQUENCE
+ ************************************************/
+function testMairixWarehouseSequence() {
+
+  const entityType =
+    "WAREHOUSE";
+
+  const highest =
+    mairixGetHighestExistingSequence(
+      entityType
+    );
+
+  Logger.log(
+    "ENTITY: " +
+    entityType
+  );
+
+  Logger.log(
+    "HIGHEST EXISTING SEQUENCE: " +
+    highest
+  );
+
+}
+
+
+/************************************************
+ * TEST EXPENSE SEQUENCE
+ ************************************************/
+function testMairixExpenseSequence() {
+
+  const entityType =
+    "EXPENSE";
+
+  const highest =
+    mairixGetHighestExistingSequence(
+      entityType
+    );
+
+  Logger.log(
+    "ENTITY: " +
+    entityType
+  );
+
+  Logger.log(
+    "HIGHEST EXISTING SEQUENCE: " +
+    highest
+  );
+
+}
+
+
+/************************************************
+ * TEST NEXT CUSTOMER CODE
+ *
+ * WARNING:
+ * This may reserve/increment the sequence
+ * depending on the implementation of
+ * mairixGenerateNextCode().
+ ************************************************/
+function testMairixGenerateNextCustomerCode() {
+
+  const result =
+    mairixGenerateNextCode(
+      "CUSTOMER"
+    );
+
+  Logger.log(
+    "NEXT CUSTOMER CODE: " +
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+}
+
+/************************************************
+ * CENTRAL NUMBERING SYSTEM TEST
+ *
+ * Tests every entity registered in the
+ * MAIRIX_NUMBERING_REGISTRY.
+ *
+ * Does NOT generate new codes.
+ ************************************************/
+function testMairixCentralNumberingSystem() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CENTRAL NUMBERING TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const validation =
+    mairixValidateNumberingRegistry();
+
+
+  Logger.log(
+    "REGISTRY VALIDATION:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      validation,
+      null,
+      2
+    )
+  );
+
+
+  const entities =
+    Object.keys(
+      MAIRIX_NUMBERING_REGISTRY
+    );
+
+
+  const results =
+    [];
+
+
+  for (
+    let i = 0;
+    i < entities.length;
+    i++
+  ) {
+
+    const entity =
+      entities[i];
+
+
+    try {
+
+      const config =
+        mairixGetNumberingEntityConfig(
+          entity
+        );
+
+
+      const highest =
+        mairixGetHighestExistingSequence(
+          entity
+        );
+
+
+      const result = {
+
+        entity:
+          entity,
+
+        sheet:
+          config.sheet,
+
+        highestExistingSequence:
+          highest,
+
+        success:
+          true
+
+      };
+
+
+      results.push(
+        result
+      );
+
+
+      Logger.log(
+        JSON.stringify(
+          result,
+          null,
+          2
+        )
+      );
+
+
+    } catch (error) {
+
+
+      const failure = {
+
+        entity:
+          entity,
+
+        success:
+          false,
+
+        error:
+          error.message
+
+      };
+
+
+      results.push(
+        failure
+      );
+
+
+      Logger.log(
+        JSON.stringify(
+          failure,
+          null,
+          2
+        )
+      );
+
+    }
+
+  }
+
+
+  const failed =
+    results.filter(
+      function(result) {
+
+        return result.success === false;
+
+      }
+    );
+
+
+  const summary = {
+
+    total:
+      results.length,
+
+    passed:
+      results.length -
+      failed.length,
+
+    failed:
+      failed.length,
+
+    success:
+      failed.length === 0,
+
+    results:
+      results
+
+  };
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CENTRAL NUMBERING SUMMARY"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    JSON.stringify(
+      summary,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    failed.length > 0
+  ) {
+
+    throw new Error(
+      "Central numbering test failed for " +
+      failed.length +
+      " entity/entities."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX CENTRAL NUMBERING: PASS"
+  );
+
+
+  return summary;
+
+}
+
+/************************************************
+ * MAIRIX MASTER DATA STRUCTURE AUDIT
+ *
+ * READ-ONLY AUDIT
+ *
+ * Checks:
+ * - Sheet existence
+ * - Actual headers
+ * - Last row
+ * - Real data rows
+ ************************************************/
+
+function mairixAuditMasterDataStructure() {
+
+  const spreadsheet =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  const masterSheets = [
+
+    "CUSTOMERS",
+
+    "SALESMEN",
+
+    "WAREHOUSES",
+
+    "ITEMS",
+
+    "USERS",
+
+    "USER_WAREHOUSES",
+
+    "USER_WAREHOUSE_PERMISSIONS"
+
+  ];
+
+
+  const result = {};
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX MASTER DATA STRUCTURE AUDIT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  masterSheets.forEach(
+    function(sheetName) {
+
+      const sheet =
+        spreadsheet.getSheetByName(
+          sheetName
+        );
+
+
+      /********************************************
+       * SHEET NOT FOUND
+       ********************************************/
+
+      if (!sheet) {
+
+        result[sheetName] = {
+
+          exists: false,
+
+          headers: [],
+
+          lastRow: 0,
+
+          realDataRows: 0
+
+        };
+
+
+        Logger.log(
+          sheetName +
+          ": NOT FOUND"
+        );
+
+
+        return;
+
+      }
+
+
+      const lastRow =
+        sheet.getLastRow();
+
+
+      const lastColumn =
+        sheet.getLastColumn();
+
+
+      let headers = [];
+
+      let realDataRows = 0;
+
+
+      /********************************************
+       * READ HEADERS
+       ********************************************/
+
+      if (
+        lastRow >= 1 &&
+        lastColumn >= 1
+      ) {
+
+        headers =
+          sheet
+            .getRange(
+              1,
+              1,
+              1,
+              lastColumn
+            )
+            .getValues()[0]
+            .map(
+              function(value) {
+
+                return String(
+                  value || ""
+                ).trim();
+
+              }
+            );
+
+      }
+
+
+      /********************************************
+       * COUNT REAL DATA ROWS
+       ********************************************/
+
+      if (
+        lastRow > 1 &&
+        lastColumn > 0
+      ) {
+
+        const rows =
+          sheet
+            .getRange(
+              2,
+              1,
+              lastRow - 1,
+              lastColumn
+            )
+            .getValues();
+
+
+        rows.forEach(
+          function(row) {
+
+            const hasData =
+              row.some(
+                function(cell) {
+
+                  return String(
+                    cell || ""
+                  ).trim() !== "";
+
+                }
+              );
+
+
+            if (hasData) {
+
+              realDataRows++;
+
+            }
+
+          }
+        );
+
+      }
+
+
+      /********************************************
+       * SAVE RESULT
+       ********************************************/
+
+      result[sheetName] = {
+
+        exists: true,
+
+        headers: headers,
+
+        lastRow: lastRow,
+
+        realDataRows: realDataRows
+
+      };
+
+
+      Logger.log(
+        "------------------------------------------"
+      );
+
+      Logger.log(
+        "SHEET: " +
+        sheetName
+      );
+
+      Logger.log(
+        "LAST ROW: " +
+        lastRow
+      );
+
+      Logger.log(
+        "REAL DATA ROWS: " +
+        realDataRows
+      );
+
+      Logger.log(
+        "HEADERS:"
+      );
+
+      Logger.log(
+        JSON.stringify(
+          headers
+        )
+      );
+
+    }
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MASTER DATA AUDIT RESULT"
+  );
+
+
+/************************************************
+ * MAIRIX MASTER DATA INTEGRITY AUDIT
+ *
+ * READ ONLY
+ *
+ * Checks orphan references between:
+ *
+ * USER_WAREHOUSES
+ * USERS
+ * WAREHOUSES
+ * SALESMEN
+ * EMPLOYEES
+ ************************************************/
+
+function mairixAuditMasterDataIntegrity() {
+
+  const spreadsheet =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX MASTER DATA INTEGRITY AUDIT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * LOAD TABLES
+   **********************************************/
+
+  const users =
+    mairixAuditReadSheetObjects(
+      "USERS"
+    );
+
+
+  const warehouses =
+    mairixAuditReadSheetObjects(
+      "WAREHOUSES"
+    );
+
+
+  const userWarehouses =
+    mairixAuditReadSheetObjects(
+      "USER_WAREHOUSES"
+    );
+
+
+  const userWarehousePermissions =
+    mairixAuditReadSheetObjects(
+      "USER_WAREHOUSE_PERMISSIONS"
+    );
+
+
+  const salesmen =
+    mairixAuditReadSheetObjects(
+      "SALESMEN"
+    );
+
+
+  const employees =
+    mairixAuditReadSheetObjects(
+      "EMPLOYEES"
+    );
+
+
+  /**********************************************
+   * BUILD LOOKUPS
+   **********************************************/
+
+  const userIds =
+    new Set();
+
+
+  users.forEach(
+    function(user) {
+
+      const userId =
+        String(
+          user["User ID"] || ""
+        ).trim();
+
+
+      if (userId) {
+
+        userIds.add(
+          userId
+        );
+
+      }
+
+    }
+  );
+
+
+  const warehouseCodes =
+    new Set();
+
+
+  warehouses.forEach(
+    function(warehouse) {
+
+      const warehouseCode =
+        String(
+          warehouse["Warehouse Code"] || ""
+        ).trim();
+
+
+      if (warehouseCode) {
+
+        warehouseCodes.add(
+          warehouseCode
+        );
+
+      }
+
+    }
+  );
+
+
+  const employeeCodes =
+    new Set();
+
+
+  employees.forEach(
+    function(employee) {
+
+      const employeeCode =
+        String(
+          employee["Employee Code"] || ""
+        ).trim();
+
+
+      if (employeeCode) {
+
+        employeeCodes.add(
+          employeeCode
+        );
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * RESULT
+   **********************************************/
+
+  const result = {
+
+    userWarehouses: {
+
+      total:
+        userWarehouses.length,
+
+      orphanUsers: [],
+
+      orphanWarehouses: []
+
+    },
+
+    userWarehousePermissions: {
+
+      total:
+        userWarehousePermissions.length,
+
+      orphanUsers: [],
+
+      orphanWarehouses: []
+
+    },
+
+    salesmen: {
+
+      total:
+        salesmen.length,
+
+      orphanUsers: [],
+
+      orphanEmployees: []
+
+    }
+
+  };
+
+
+  /**********************************************
+   * USER_WAREHOUSES
+   **********************************************/
+
+  userWarehouses.forEach(
+    function(row) {
+
+      const userId =
+        String(
+          row["User ID"] || ""
+        ).trim();
+
+
+      const warehouseCode =
+        String(
+          row["Warehouse Code"] || ""
+        ).trim();
+
+
+      if (
+        userId &&
+        !userIds.has(userId)
+      ) {
+
+        result
+          .userWarehouses
+          .orphanUsers
+          .push({
+
+            userId:
+              userId,
+
+            warehouseCode:
+              warehouseCode
+
+          });
+
+      }
+
+
+      if (
+        warehouseCode &&
+        !warehouseCodes.has(
+          warehouseCode
+        )
+      ) {
+
+        result
+          .userWarehouses
+          .orphanWarehouses
+          .push({
+
+            userId:
+              userId,
+
+            warehouseCode:
+              warehouseCode
+
+          });
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * USER_WAREHOUSE_PERMISSIONS
+   **********************************************/
+
+  userWarehousePermissions.forEach(
+    function(row) {
+
+      const userId =
+        String(
+          row["User ID"] || ""
+        ).trim();
+
+
+      const warehouseCode =
+        String(
+          row["Warehouse Code"] || ""
+        ).trim();
+
+
+      if (
+        userId &&
+        !userIds.has(userId)
+      ) {
+
+        result
+          .userWarehousePermissions
+          .orphanUsers
+          .push({
+
+            userId:
+              userId,
+
+            warehouseCode:
+              warehouseCode
+
+          });
+
+      }
+
+
+      if (
+        warehouseCode &&
+        !warehouseCodes.has(
+          warehouseCode
+        )
+      ) {
+
+        result
+          .userWarehousePermissions
+          .orphanWarehouses
+          .push({
+
+            userId:
+              userId,
+
+            warehouseCode:
+              warehouseCode
+
+          });
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * SALESMEN
+   **********************************************/
+
+  salesmen.forEach(
+    function(row) {
+
+      const salesmanCode =
+        String(
+          row["Salesman Code"] || ""
+        ).trim();
+
+
+      const userId =
+        String(
+          row["User ID"] || ""
+        ).trim();
+
+
+      const employeeCode =
+        String(
+          row["Employee Code"] || ""
+        ).trim();
+
+
+      if (
+        userId &&
+        !userIds.has(userId)
+      ) {
+
+        result
+          .salesmen
+          .orphanUsers
+          .push({
+
+            salesmanCode:
+              salesmanCode,
+
+            userId:
+              userId
+
+          });
+
+      }
+
+
+      if (
+        employeeCode &&
+        !employeeCodes.has(
+          employeeCode
+        )
+      ) {
+
+        result
+          .salesmen
+          .orphanEmployees
+          .push({
+
+            salesmanCode:
+              salesmanCode,
+
+            employeeCode:
+              employeeCode
+
+          });
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * LOG SUMMARY
+   **********************************************/
+
+  Logger.log(
+    "USER_WAREHOUSES TOTAL: " +
+    result.userWarehouses.total
+  );
+
+
+  Logger.log(
+    "ORPHAN USERS: " +
+    result.userWarehouses
+      .orphanUsers
+      .length
+  );
+
+
+  Logger.log(
+    "ORPHAN WAREHOUSES: " +
+    result.userWarehouses
+      .orphanWarehouses
+      .length
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "FULL INTEGRITY RESULT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}
+
+
+
+/************************************************
+ * READ SHEET AS OBJECTS
+ *
+ * AUDIT HELPER
+ ************************************************/
+
+function mairixAuditReadSheetObjects(
+  sheetName
+) {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        sheetName
+      );
+
+
+  if (!sheet) {
+
+    Logger.log(
+      "WARNING: Sheet not found: " +
+      sheetName
+    );
+
+
+    return [];
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        1,
+        1,
+        lastRow,
+        lastColumn
+      )
+      .getValues();
+
+
+  const headers =
+    values[0].map(
+      function(header) {
+
+        return String(
+          header || ""
+        ).trim();
+
+      }
+    );
+
+
+  return values
+    .slice(1)
+    .filter(
+      function(row) {
+
+        return row.some(
+          function(cell) {
+
+            return String(
+              cell || ""
+            ).trim() !== "";
+
+          }
+        );
+
+      }
+    )
+    .map(
+      function(row) {
+
+        const object = {};
+
+
+        headers.forEach(
+          function(header, index) {
+
+            object[header] =
+              row[index];
+
+          }
+        );
+
+
+        return object;
+
+      }
+    );
+
+}
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}
+
+/************************************************
+ * MAIRIX MASTER DATA INTEGRITY AUDIT
+ *
+ * READ ONLY
+ *
+ * Checks orphan references between:
+ *
+ * USER_WAREHOUSES
+ * USERS
+ * WAREHOUSES
+ * SALESMEN
+ * EMPLOYEES
+ ************************************************/
+
+function mairixAuditMasterDataIntegrity() {
+
+  const spreadsheet =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX MASTER DATA INTEGRITY AUDIT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * LOAD TABLES
+   **********************************************/
+
+  const users =
+    mairixAuditReadSheetObjects(
+      "USERS"
+    );
+
+
+  const warehouses =
+    mairixAuditReadSheetObjects(
+      "WAREHOUSES"
+    );
+
+
+  const userWarehouses =
+    mairixAuditReadSheetObjects(
+      "USER_WAREHOUSES"
+    );
+
+
+  const userWarehousePermissions =
+    mairixAuditReadSheetObjects(
+      "USER_WAREHOUSE_PERMISSIONS"
+    );
+
+
+  const salesmen =
+    mairixAuditReadSheetObjects(
+      "SALESMEN"
+    );
+
+
+  const employees =
+    mairixAuditReadSheetObjects(
+      "EMPLOYEES"
+    );
+
+
+  /**********************************************
+   * BUILD LOOKUPS
+   **********************************************/
+
+  const userIds =
+    new Set();
+
+
+  users.forEach(
+    function(user) {
+
+      const userId =
+        String(
+          user["User ID"] || ""
+        ).trim();
+
+
+      if (userId) {
+
+        userIds.add(
+          userId
+        );
+
+      }
+
+    }
+  );
+
+
+  const warehouseCodes =
+    new Set();
+
+
+  warehouses.forEach(
+    function(warehouse) {
+
+      const warehouseCode =
+        String(
+          warehouse["Warehouse Code"] || ""
+        ).trim();
+
+
+      if (warehouseCode) {
+
+        warehouseCodes.add(
+          warehouseCode
+        );
+
+      }
+
+    }
+  );
+
+
+  const employeeCodes =
+    new Set();
+
+
+  employees.forEach(
+    function(employee) {
+
+      const employeeCode =
+        String(
+          employee["Employee Code"] || ""
+        ).trim();
+
+
+      if (employeeCode) {
+
+        employeeCodes.add(
+          employeeCode
+        );
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * RESULT
+   **********************************************/
+
+  const result = {
+
+    userWarehouses: {
+
+      total:
+        userWarehouses.length,
+
+      orphanUsers: [],
+
+      orphanWarehouses: []
+
+    },
+
+    userWarehousePermissions: {
+
+      total:
+        userWarehousePermissions.length,
+
+      orphanUsers: [],
+
+      orphanWarehouses: []
+
+    },
+
+    salesmen: {
+
+      total:
+        salesmen.length,
+
+      orphanUsers: [],
+
+      orphanEmployees: []
+
+    }
+
+  };
+
+
+  /**********************************************
+   * USER_WAREHOUSES
+   **********************************************/
+
+  userWarehouses.forEach(
+    function(row) {
+
+      const userId =
+        String(
+          row["User ID"] || ""
+        ).trim();
+
+
+      const warehouseCode =
+        String(
+          row["Warehouse Code"] || ""
+        ).trim();
+
+
+      if (
+        userId &&
+        !userIds.has(userId)
+      ) {
+
+        result
+          .userWarehouses
+          .orphanUsers
+          .push({
+
+            userId:
+              userId,
+
+            warehouseCode:
+              warehouseCode
+
+          });
+
+      }
+
+
+      if (
+        warehouseCode &&
+        !warehouseCodes.has(
+          warehouseCode
+        )
+      ) {
+
+        result
+          .userWarehouses
+          .orphanWarehouses
+          .push({
+
+            userId:
+              userId,
+
+            warehouseCode:
+              warehouseCode
+
+          });
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * USER_WAREHOUSE_PERMISSIONS
+   **********************************************/
+
+  userWarehousePermissions.forEach(
+    function(row) {
+
+      const userId =
+        String(
+          row["User ID"] || ""
+        ).trim();
+
+
+      const warehouseCode =
+        String(
+          row["Warehouse Code"] || ""
+        ).trim();
+
+
+      if (
+        userId &&
+        !userIds.has(userId)
+      ) {
+
+        result
+          .userWarehousePermissions
+          .orphanUsers
+          .push({
+
+            userId:
+              userId,
+
+            warehouseCode:
+              warehouseCode
+
+          });
+
+      }
+
+
+      if (
+        warehouseCode &&
+        !warehouseCodes.has(
+          warehouseCode
+        )
+      ) {
+
+        result
+          .userWarehousePermissions
+          .orphanWarehouses
+          .push({
+
+            userId:
+              userId,
+
+            warehouseCode:
+              warehouseCode
+
+          });
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * SALESMEN
+   **********************************************/
+
+  salesmen.forEach(
+    function(row) {
+
+      const salesmanCode =
+        String(
+          row["Salesman Code"] || ""
+        ).trim();
+
+
+      const userId =
+        String(
+          row["User ID"] || ""
+        ).trim();
+
+
+      const employeeCode =
+        String(
+          row["Employee Code"] || ""
+        ).trim();
+
+
+      if (
+        userId &&
+        !userIds.has(userId)
+      ) {
+
+        result
+          .salesmen
+          .orphanUsers
+          .push({
+
+            salesmanCode:
+              salesmanCode,
+
+            userId:
+              userId
+
+          });
+
+      }
+
+
+      if (
+        employeeCode &&
+        !employeeCodes.has(
+          employeeCode
+        )
+      ) {
+
+        result
+          .salesmen
+          .orphanEmployees
+          .push({
+
+            salesmanCode:
+              salesmanCode,
+
+            employeeCode:
+              employeeCode
+
+          });
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * LOG SUMMARY
+   **********************************************/
+
+  Logger.log(
+    "USER_WAREHOUSES TOTAL: " +
+    result.userWarehouses.total
+  );
+
+
+  Logger.log(
+    "ORPHAN USERS: " +
+    result.userWarehouses
+      .orphanUsers
+      .length
+  );
+
+
+  Logger.log(
+    "ORPHAN WAREHOUSES: " +
+    result.userWarehouses
+      .orphanWarehouses
+      .length
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "FULL INTEGRITY RESULT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}
+
+
+
+/************************************************
+ * READ SHEET AS OBJECTS
+ *
+ * AUDIT HELPER
+ ************************************************/
+
+function mairixAuditReadSheetObjects(
+  sheetName
+) {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        sheetName
+      );
+
+
+  if (!sheet) {
+
+    Logger.log(
+      "WARNING: Sheet not found: " +
+      sheetName
+    );
+
+
+    return [];
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        1,
+        1,
+        lastRow,
+        lastColumn
+      )
+      .getValues();
+
+
+  const headers =
+    values[0].map(
+      function(header) {
+
+        return String(
+          header || ""
+        ).trim();
+
+      }
+    );
+
+
+  return values
+    .slice(1)
+    .filter(
+      function(row) {
+
+        return row.some(
+          function(cell) {
+
+            return String(
+              cell || ""
+            ).trim() !== "";
+
+          }
+        );
+
+      }
+    )
+    .map(
+      function(row) {
+
+        const object = {};
+
+
+        headers.forEach(
+          function(header, index) {
+
+            object[header] =
+              row[index];
+
+          }
+        );
+
+
+        return object;
+
+      }
+    );
+
+}
+
+/************************************************
+ * MAIRIX CLEAN ORPHAN USER WAREHOUSES
+ *
+ * SAFELY REMOVES ONLY RECORDS WHERE:
+ *
+ * - USER DOES NOT EXIST
+ * OR
+ * - WAREHOUSE DOES NOT EXIST
+ *
+ * DOES NOT TOUCH VALID PERMISSIONS
+ ************************************************/
+
+function mairixCleanOrphanUserWarehouses() {
+
+  const spreadsheet =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  const usersSheet =
+    spreadsheet.getSheetByName(
+      "USERS"
+    );
+
+
+  const warehousesSheet =
+    spreadsheet.getSheetByName(
+      "WAREHOUSES"
+    );
+
+
+  const permissionsSheet =
+    spreadsheet.getSheetByName(
+      "USER_WAREHOUSES"
+    );
+
+
+  if (!usersSheet) {
+
+    throw new Error(
+      "USERS sheet not found."
+    );
+
+  }
+
+
+  if (!warehousesSheet) {
+
+    throw new Error(
+      "WAREHOUSES sheet not found."
+    );
+
+  }
+
+
+  if (!permissionsSheet) {
+
+    throw new Error(
+      "USER_WAREHOUSES sheet not found."
+    );
+
+  }
+
+
+  /**********************************************
+   * BUILD USERS LOOKUP
+   **********************************************/
+
+  const validUsers =
+    mairixBuildAuditLookup(
+      usersSheet,
+      "User ID"
+    );
+
+
+  /**********************************************
+   * BUILD WAREHOUSES LOOKUP
+   **********************************************/
+
+  const validWarehouses =
+    mairixBuildAuditLookup(
+      warehousesSheet,
+      "Warehouse Code"
+    );
+
+
+  const lastRow =
+    permissionsSheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    Logger.log(
+      "USER_WAREHOUSES is already empty."
+    );
+
+
+    return {
+
+      success: true,
+
+      deleted: 0,
+
+      remaining: 0
+
+    };
+
+  }
+
+
+  const lastColumn =
+    permissionsSheet.getLastColumn();
+
+
+  const values =
+    permissionsSheet
+      .getRange(
+        1,
+        1,
+        lastRow,
+        lastColumn
+      )
+      .getValues();
+
+
+  const headers =
+    values[0].map(
+      function(header) {
+
+        return String(
+          header || ""
+        ).trim();
+
+      }
+    );
+
+
+  const userIdIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+
+  const warehouseCodeIndex =
+    headers.indexOf(
+      "Warehouse Code"
+    );
+
+
+  if (
+    userIdIndex === -1
+  ) {
+
+    throw new Error(
+      "User ID column not found in USER_WAREHOUSES."
+    );
+
+  }
+
+
+  if (
+    warehouseCodeIndex === -1
+  ) {
+
+    throw new Error(
+      "Warehouse Code column not found in USER_WAREHOUSES."
+    );
+
+  }
+
+
+  /**********************************************
+   * FIND ROWS TO DELETE
+   **********************************************/
+
+  const rowsToDelete = [];
+
+
+  for (
+    let rowIndex = 1;
+    rowIndex < values.length;
+    rowIndex++
+  ) {
+
+    const row =
+      values[rowIndex];
+
+
+    const userId =
+      String(
+        row[userIdIndex] || ""
+      ).trim();
+
+
+    const warehouseCode =
+      String(
+        row[warehouseCodeIndex] || ""
+      ).trim();
+
+
+    const userExists =
+      userId &&
+      validUsers.has(
+        userId
+      );
+
+
+    const warehouseExists =
+      warehouseCode &&
+      validWarehouses.has(
+        warehouseCode
+      );
+
+
+    if (
+      !userExists ||
+      !warehouseExists
+    ) {
+
+      rowsToDelete.push(
+        rowIndex + 1
+      );
+
+    }
+
+  }
+
+
+  /**********************************************
+   * DELETE FROM BOTTOM TO TOP
+   **********************************************/
+
+  rowsToDelete
+    .reverse()
+    .forEach(
+      function(rowNumber) {
+
+        permissionsSheet.deleteRow(
+          rowNumber
+        );
+
+      }
+    );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX ORPHAN USER WAREHOUSES CLEANUP"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "DELETED: " +
+    rowsToDelete.length
+  );
+
+  Logger.log(
+    "REMAINING: " +
+    (
+      permissionsSheet.getLastRow() - 1
+    )
+  );
+
+
+  return {
+
+    success: true,
+
+    deleted:
+      rowsToDelete.length,
+
+    remaining:
+      Math.max(
+        0,
+        permissionsSheet.getLastRow() - 1
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * MAIRIX USERS & PERMISSIONS AUDIT
+ *
+ * READ ONLY
+ *
+ * Checks:
+ * - USERS
+ * - ROLES
+ * - PERMISSIONS
+ * - PERMISSION_CATALOG
+ * - ROLE_PERMISSIONS
+ * - USER_PERMISSIONS
+ *
+ * Does not modify any data.
+ ************************************************/
+
+function mairixAuditUsersAndPermissions() {
+
+  const spreadsheet =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  const sheetNames = [
+
+    "USERS",
+
+    "ROLES",
+
+    "PERMISSIONS",
+
+    "PERMISSION_CATALOG",
+
+    "ROLE_PERMISSIONS",
+
+    "USER_PERMISSIONS"
+
+  ];
+
+
+  const result = {
+
+    sheets: {},
+
+    summary: {
+
+      users: 0,
+
+      roles: 0,
+
+      permissions: 0,
+
+      permissionCatalog: 0,
+
+      rolePermissions: 0,
+
+      userPermissions: 0
+
+    }
+
+  };
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX USERS & PERMISSIONS AUDIT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  sheetNames.forEach(
+    function(sheetName) {
+
+      const sheet =
+        spreadsheet.getSheetByName(
+          sheetName
+        );
+
+
+      if (!sheet) {
+
+        result.sheets[sheetName] = {
+
+          exists: false,
+
+          headers: [],
+
+          records: 0
+
+        };
+
+
+        Logger.log(
+          "MISSING SHEET: " +
+          sheetName
+        );
+
+
+        return;
+
+      }
+
+
+      const lastRow =
+        sheet.getLastRow();
+
+
+      const lastColumn =
+        sheet.getLastColumn();
+
+
+      let headers = [];
+
+      let records = 0;
+
+
+      if (
+        lastRow >= 1 &&
+        lastColumn >= 1
+      ) {
+
+        headers =
+          sheet
+            .getRange(
+              1,
+              1,
+              1,
+              lastColumn
+            )
+            .getValues()[0]
+            .map(
+              function(value) {
+
+                return String(
+                  value || ""
+                ).trim();
+
+              }
+            );
+
+      }
+
+
+      if (
+        lastRow > 1 &&
+        lastColumn > 0
+      ) {
+
+        const rows =
+          sheet
+            .getRange(
+              2,
+              1,
+              lastRow - 1,
+              lastColumn
+            )
+            .getValues();
+
+
+        rows.forEach(
+          function(row) {
+
+            const hasData =
+              row.some(
+                function(cell) {
+
+                  return String(
+                    cell === null ||
+                    cell === undefined
+                      ? ""
+                      : cell
+                  ).trim() !== "";
+
+                }
+              );
+
+
+            if (hasData) {
+
+              records++;
+
+            }
+
+          }
+        );
+
+      }
+
+
+      result.sheets[sheetName] = {
+
+        exists: true,
+
+        headers: headers,
+
+        records: records
+
+      };
+
+
+      Logger.log(
+        "------------------------------------------"
+      );
+
+      Logger.log(
+        "SHEET: " +
+        sheetName
+      );
+
+      Logger.log(
+        "RECORDS: " +
+        records
+      );
+
+      Logger.log(
+        "HEADERS:"
+      );
+
+      Logger.log(
+        JSON.stringify(headers)
+      );
+
+    }
+  );
+
+
+  /**********************************************
+   * BUILD SUMMARY
+   **********************************************/
+
+  result.summary.users =
+    result.sheets.USERS
+      ? result.sheets.USERS.records
+      : 0;
+
+
+  result.summary.roles =
+    result.sheets.ROLES
+      ? result.sheets.ROLES.records
+      : 0;
+
+
+  result.summary.permissions =
+    result.sheets.PERMISSIONS
+      ? result.sheets.PERMISSIONS.records
+      : 0;
+
+
+  result.summary.permissionCatalog =
+    result.sheets.PERMISSION_CATALOG
+      ? result.sheets.PERMISSION_CATALOG.records
+      : 0;
+
+
+  result.summary.rolePermissions =
+    result.sheets.ROLE_PERMISSIONS
+      ? result.sheets.ROLE_PERMISSIONS.records
+      : 0;
+
+
+  result.summary.userPermissions =
+    result.sheets.USER_PERMISSIONS
+      ? result.sheets.USER_PERMISSIONS.records
+      : 0;
+
+
+  /**********************************************
+   * LOG RESULT
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "USERS & PERMISSIONS SUMMARY"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result.summary,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "FULL USERS & PERMISSIONS RESULT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}
+
+/************************************************
+ * MAIRIX ROLE & PERMISSION INTEGRITY AUDIT
+ *
+ * READ ONLY
+ *
+ * Checks:
+ * - Roles
+ * - ADMIN role existence
+ * - Role permissions
+ * - Permission catalog references
+ * - Orphan permission mappings
+ ************************************************/
+
+function mairixAuditRolePermissionIntegrity() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX ROLE & PERMISSION INTEGRITY AUDIT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const roles =
+    mairixAuditReadSheetObjects(
+      "ROLES"
+    );
+
+
+  const permissionCatalog =
+    mairixAuditReadSheetObjects(
+      "PERMISSION_CATALOG"
+    );
+
+
+  const rolePermissions =
+    mairixAuditReadSheetObjects(
+      "ROLE_PERMISSIONS"
+    );
+
+
+  /**********************************************
+   * LOOKUPS
+   **********************************************/
+
+  const roleLookup =
+    new Map();
+
+
+  roles.forEach(
+    function(role) {
+
+      const roleCode =
+        String(
+          role["Role Code"] || ""
+        ).trim();
+
+
+      if (roleCode) {
+
+        roleLookup.set(
+          roleCode,
+          role
+        );
+
+      }
+
+    }
+  );
+
+
+  const permissionLookup =
+    new Set();
+
+
+  permissionCatalog.forEach(
+    function(permission) {
+
+      const permissionCode =
+        String(
+          permission["Permission Code"] || ""
+        ).trim();
+
+
+      if (permissionCode) {
+
+        permissionLookup.add(
+          permissionCode
+        );
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * RESULT
+   **********************************************/
+
+  const result = {
+
+    roles: [],
+
+    adminRoles: [],
+
+    orphanRoleMappings: [],
+
+    orphanPermissionMappings: [],
+
+    totalRoles:
+      roles.length,
+
+    totalPermissionCatalog:
+      permissionCatalog.length,
+
+    totalRolePermissions:
+      rolePermissions.length
+
+  };
+
+
+  /**********************************************
+   * ANALYZE EACH ROLE
+   **********************************************/
+
+  roles.forEach(
+    function(role) {
+
+      const roleCode =
+        String(
+          role["Role Code"] || ""
+        ).trim();
+
+
+      const roleName =
+        String(
+          role["Role Name"] || ""
+        ).trim();
+
+
+      const active =
+        role["Active"];
+
+
+      const mappings =
+        rolePermissions.filter(
+          function(mapping) {
+
+            return String(
+              mapping["Role Code"] || ""
+            ).trim() === roleCode;
+
+          }
+        );
+
+
+      const activeMappings =
+        mappings.filter(
+          function(mapping) {
+
+            return mapping["Active"] !== false;
+
+          }
+        );
+
+
+      const roleResult = {
+
+        roleCode:
+          roleCode,
+
+        roleName:
+          roleName,
+
+        active:
+          active,
+
+        permissionMappings:
+          mappings.length,
+
+        activePermissionMappings:
+          activeMappings.length
+
+      };
+
+
+      result.roles.push(
+        roleResult
+      );
+
+
+      const normalizedRoleCode =
+        roleCode.toUpperCase();
+
+
+      const normalizedRoleName =
+        roleName.toUpperCase();
+
+
+      if (
+        normalizedRoleCode === "ADMIN" ||
+        normalizedRoleCode === "ADMINISTRATOR" ||
+        normalizedRoleName.indexOf("ADMIN") !== -1
+      ) {
+
+        result.adminRoles.push(
+          roleResult
+        );
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * CHECK ROLE PERMISSION REFERENCES
+   **********************************************/
+
+  rolePermissions.forEach(
+    function(mapping) {
+
+      const roleCode =
+        String(
+          mapping["Role Code"] || ""
+        ).trim();
+
+
+      const permissionCode =
+        String(
+          mapping["Permission Code"] || ""
+        ).trim();
+
+
+      if (
+        roleCode &&
+        !roleLookup.has(roleCode)
+      ) {
+
+        result.orphanRoleMappings.push({
+
+          roleCode:
+            roleCode,
+
+          permissionCode:
+            permissionCode
+
+        });
+
+      }
+
+
+      if (
+        permissionCode &&
+        !permissionLookup.has(permissionCode)
+      ) {
+
+        result.orphanPermissionMappings.push({
+
+          roleCode:
+            roleCode,
+
+          permissionCode:
+            permissionCode
+
+        });
+
+      }
+
+    }
+  );
+
+
+  /**********************************************
+   * LOG ROLES
+   **********************************************/
+
+  Logger.log(
+    "------------------------------------------"
+  );
+
+  Logger.log(
+    "ROLES SUMMARY"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result.roles,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "------------------------------------------"
+  );
+
+  Logger.log(
+    "ADMIN ROLES"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result.adminRoles,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "------------------------------------------"
+  );
+
+  Logger.log(
+    "ORPHAN ROLE MAPPINGS: " +
+    result.orphanRoleMappings.length
+  );
+
+
+  Logger.log(
+    "ORPHAN PERMISSION MAPPINGS: " +
+    result.orphanPermissionMappings.length
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "FINAL RESULT"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}

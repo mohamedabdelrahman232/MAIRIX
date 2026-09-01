@@ -1,0 +1,1191 @@
+/************************************************
+ * MAIRIX ERP
+ * CENTRAL REFERENCE / SEQUENCE ENGINE
+ *
+ * FILE:
+ * 3-MAIRIX_Sequences.gs
+ *
+ * PURPOSE:
+ * 1. Generate one central Reference ID per transaction safely.
+ * 2. Guarantee uniqueness under concurrent operations.
+ * 3. Integrate safely with System Settings when available.
+ * 4. Never fail because an optional Settings helper is missing.
+ ************************************************/
+
+
+/************************************************
+ * SEQUENCE SETTINGS & FALLBACK CONFIGURATION
+ ************************************************/
+
+const MAIRIX_SEQUENCE = Object.freeze({
+
+  DEFAULT_PREFIX: "MX",
+
+  DATE_FORMAT: "yyyyMMdd",
+
+  DEFAULT_COUNTER_WIDTH: 5,
+
+  PROPERTY_PREFIX: "MAIRIX_SEQUENCE_"
+
+});
+
+
+/************************************************
+ * SAFE TEXT HELPER
+ ************************************************/
+
+function _seqCleanText(text) {
+
+  if (
+    text === null ||
+    text === undefined
+  ) {
+
+    return "";
+
+  }
+
+  return String(text).trim();
+
+}
+
+
+/************************************************
+ * SAFE NUMBER HELPER
+ ************************************************/
+
+function _seqPositiveInteger(
+  value,
+  fallback
+) {
+
+  const number =
+    parseInt(value, 10);
+
+  if (
+    isNaN(number) ||
+    number < 1
+  ) {
+
+    return fallback;
+
+  }
+
+  return number;
+
+}
+
+
+/************************************************
+ * SAFE SYSTEM SETTING READER
+ *
+ * IMPORTANT:
+ * This engine must NOT depend on one specific
+ * Settings implementation.
+ *
+ * It tries available MAIRIX settings functions.
+ * If none exist, it returns the fallback safely.
+ ************************************************/
+
+function mairixGetSequenceSetting(
+  key,
+  fallback
+) {
+
+  const settingKey =
+    _seqCleanText(key);
+
+  if (!settingKey) {
+
+    return fallback;
+
+  }
+
+
+  /**********************************************
+   * 1. LEGACY getSystemSetting
+   **********************************************/
+
+  if (
+    typeof getSystemSetting === "function"
+  ) {
+
+    try {
+
+      const value =
+        getSystemSetting(
+          settingKey,
+          fallback
+        );
+
+      if (
+        value !== null &&
+        value !== undefined &&
+        _seqCleanText(value) !== ""
+      ) {
+
+        return value;
+
+      }
+
+    } catch (error) {
+
+      // Continue safely.
+
+    }
+
+  }
+
+
+  /**********************************************
+   * 2. COMMON MAIRIX SETTINGS FUNCTIONS
+   **********************************************/
+
+  const candidateFunctions = [
+
+    "mairixGetSystemSetting",
+
+    "mairixGetSetting",
+
+    "mairixGetRuntimeSetting",
+
+    "getMairixSetting"
+
+  ];
+
+
+  for (
+    let i = 0;
+    i < candidateFunctions.length;
+    i++
+  ) {
+
+    const functionName =
+      candidateFunctions[i];
+
+
+    if (
+      typeof globalThis[functionName] ===
+      "function"
+    ) {
+
+      try {
+
+        const value =
+          globalThis[functionName](
+            settingKey,
+            fallback
+          );
+
+
+        if (
+          value !== null &&
+          value !== undefined &&
+          _seqCleanText(value) !== ""
+        ) {
+
+          return value;
+
+        }
+
+      } catch (error) {
+
+        // Try next available implementation.
+
+      }
+
+    }
+
+  }
+
+
+  /**********************************************
+   * 3. DIRECT SETTINGS SHEET FALLBACK
+   *
+   * Supports common structures:
+   *
+   * Setting / Value
+   * Key / Value
+   * Name / Value
+   **********************************************/
+
+  try {
+
+    const ss =
+      SpreadsheetApp.getActiveSpreadsheet();
+
+
+    const sheet =
+      ss.getSheetByName(
+        "SETTINGS"
+      );
+
+
+    if (
+      sheet &&
+      sheet.getLastRow() >= 2
+    ) {
+
+      const lastColumn =
+        sheet.getLastColumn();
+
+
+      const headers =
+        sheet
+          .getRange(
+            1,
+            1,
+            1,
+            lastColumn
+          )
+          .getDisplayValues()[0]
+          .map(
+            function(header) {
+
+              return _seqCleanText(
+                header
+              )
+              .toUpperCase();
+
+            }
+          );
+
+
+      const keyColumnCandidates = [
+
+        "SETTING",
+
+        "SETTING KEY",
+
+        "KEY",
+
+        "NAME",
+
+        "CODE"
+
+      ];
+
+
+      const valueColumnCandidates = [
+
+        "VALUE",
+
+        "SETTING VALUE",
+
+        "CURRENT VALUE"
+
+      ];
+
+
+      let keyColumnIndex =
+        -1;
+
+
+      let valueColumnIndex =
+        -1;
+
+
+      for (
+        let i = 0;
+        i < headers.length;
+        i++
+      ) {
+
+        if (
+          keyColumnCandidates.indexOf(
+            headers[i]
+          ) !== -1
+        ) {
+
+          keyColumnIndex = i;
+
+        }
+
+
+        if (
+          valueColumnCandidates.indexOf(
+            headers[i]
+          ) !== -1
+        ) {
+
+          valueColumnIndex = i;
+
+        }
+
+      }
+
+
+      if (
+        keyColumnIndex !== -1 &&
+        valueColumnIndex !== -1
+      ) {
+
+        const values =
+          sheet
+            .getRange(
+              2,
+              1,
+              sheet.getLastRow() - 1,
+              lastColumn
+            )
+            .getDisplayValues();
+
+
+        const requestedKey =
+          settingKey.toUpperCase();
+
+
+        for (
+          let rowIndex = 0;
+          rowIndex < values.length;
+          rowIndex++
+        ) {
+
+          const rowKey =
+            _seqCleanText(
+              values[rowIndex][
+                keyColumnIndex
+              ]
+            )
+            .toUpperCase();
+
+
+          if (
+            rowKey === requestedKey
+          ) {
+
+            const value =
+              values[rowIndex][
+                valueColumnIndex
+              ];
+
+
+            if (
+              value !== null &&
+              value !== undefined &&
+              _seqCleanText(value) !== ""
+            ) {
+
+              return value;
+
+            }
+
+          }
+
+        }
+
+      }
+
+    }
+
+  } catch (error) {
+
+    // Settings sheet is optional for reference generation.
+
+  }
+
+
+  /**********************************************
+   * 4. FINAL FALLBACK
+   **********************************************/
+
+  return fallback;
+
+}
+
+
+/************************************************
+ * GENERATE CENTRAL REFERENCE ID
+ *
+ * Thread-Safe
+ *
+ * Example:
+ * MX-20260831-00001
+ * SL-20260831-00001
+ ************************************************/
+
+function generateMairixReferenceId(
+  customPrefix
+) {
+
+  const lock =
+    LockService.getScriptLock();
+
+
+  const acquired =
+    lock.tryLock(
+      30000
+    );
+
+
+  if (!acquired) {
+
+    throw new Error(
+      "Concurrency Timeout: Could not acquire lock to generate Reference ID."
+    );
+
+  }
+
+
+  try {
+
+    /**********************************************
+     * PREFIX
+     **********************************************/
+
+    const configuredPrefix =
+      mairixGetSequenceSetting(
+        "REF_PREFIX",
+        MAIRIX_SEQUENCE.DEFAULT_PREFIX
+      );
+
+
+    const requestedPrefix =
+      _seqCleanText(
+        customPrefix
+      );
+
+
+    const sysPrefix =
+      (
+        requestedPrefix ||
+        _seqCleanText(
+          configuredPrefix
+        ) ||
+        MAIRIX_SEQUENCE.DEFAULT_PREFIX
+      )
+      .toUpperCase()
+      .replace(
+        /[^A-Z0-9]/g,
+        ""
+      );
+
+
+    if (!sysPrefix) {
+
+      throw new Error(
+        "Reference prefix could not be resolved."
+      );
+
+    }
+
+
+    /**********************************************
+     * COUNTER WIDTH
+     **********************************************/
+
+    const configuredCounterWidth =
+      mairixGetSequenceSetting(
+        "REF_COUNTER_WIDTH",
+        MAIRIX_SEQUENCE.DEFAULT_COUNTER_WIDTH
+      );
+
+
+    const counterWidth =
+      _seqPositiveInteger(
+        configuredCounterWidth,
+        MAIRIX_SEQUENCE.DEFAULT_COUNTER_WIDTH
+      );
+
+
+    /**********************************************
+     * DATE KEY
+     **********************************************/
+
+    const timezone =
+      Session.getScriptTimeZone() ||
+      "GMT+3";
+
+
+    const dateKey =
+      Utilities.formatDate(
+
+        new Date(),
+
+        timezone,
+
+        MAIRIX_SEQUENCE.DATE_FORMAT
+
+      );
+
+
+    /**********************************************
+     * PROPERTY KEY
+     **********************************************/
+
+    const propertyKey =
+      MAIRIX_SEQUENCE.PROPERTY_PREFIX +
+      sysPrefix +
+      "_" +
+      dateKey;
+
+
+    const properties =
+      PropertiesService
+        .getScriptProperties();
+
+
+    const currentValue =
+      properties.getProperty(
+        propertyKey
+      );
+
+
+    let counter =
+      currentValue
+        ? parseInt(
+            currentValue,
+            10
+          ) + 1
+        : 1;
+
+
+    if (
+      isNaN(counter) ||
+      counter < 1
+    ) {
+
+      counter = 1;
+
+    }
+
+
+    /**********************************************
+     * ATOMIC SAVE
+     **********************************************/
+
+    properties.setProperty(
+
+      propertyKey,
+
+      String(counter)
+
+    );
+
+
+    /**********************************************
+     * FINAL REFERENCE
+     **********************************************/
+
+    const referenceId =
+      sysPrefix +
+      "-" +
+      dateKey +
+      "-" +
+      String(counter)
+        .padStart(
+          counterWidth,
+          "0"
+        );
+
+
+    return referenceId;
+
+  } finally {
+
+    lock.releaseLock();
+
+  }
+
+}
+
+
+/************************************************
+ * VALIDATE CENTRAL REFERENCE FORMAT
+ ************************************************/
+
+function validateMairixReferenceId(
+  referenceId
+) {
+
+  const value =
+    _seqCleanText(
+      referenceId
+    )
+    .toUpperCase();
+
+
+  if (!value) {
+
+    throw new Error(
+      "Reference ID validation failed: Value is required."
+    );
+
+  }
+
+
+  const pattern =
+    new RegExp(
+      "^[A-Z0-9]+-[0-9]{8}-[0-9]{3,}$"
+    );
+
+
+  if (
+    !pattern.test(value)
+  ) {
+
+    throw new Error(
+      "Invalid MAIRIX Reference ID format: " +
+      value
+    );
+
+  }
+
+
+  return value;
+
+}
+
+
+/************************************************
+ * REQUIRE REFERENCE
+ ************************************************/
+
+function requireMairixReference(
+  referenceId
+) {
+
+  return validateMairixReferenceId(
+    referenceId
+  );
+
+}
+
+
+/************************************************
+ * CHECK WHETHER REFERENCE EXISTS
+ ************************************************/
+
+function mairixReferenceExists(
+  referenceId,
+  targetSheetName
+) {
+
+  const normalized =
+    validateMairixReferenceId(
+      referenceId
+    );
+
+
+  const sheetName =
+    targetSheetName ||
+    (
+      typeof CONFIG !== "undefined" &&
+      CONFIG.SHEETS &&
+      CONFIG.SHEETS.SALES
+        ? CONFIG.SHEETS.SALES
+        : "SALES"
+    );
+
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  const sheet =
+    ss.getSheetByName(
+      sheetName
+    );
+
+
+  if (!sheet) {
+
+    return false;
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (lastRow < 2) {
+
+    return false;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const referenceColumnIndex =
+    headers.findIndex(
+      function(header) {
+
+        const normalizedHeader =
+          _seqCleanText(
+            header
+          )
+          .toUpperCase();
+
+
+        return (
+
+          normalizedHeader ===
+          "REFERENCE ID"
+
+          ||
+
+          normalizedHeader ===
+          "SALE ID"
+
+          ||
+
+          normalizedHeader ===
+          "TRANSACTION ID"
+
+          ||
+
+          normalizedHeader.indexOf(
+            "REFERENCE"
+          ) !== -1
+
+        );
+
+      }
+    );
+
+
+  if (
+    referenceColumnIndex === -1
+  ) {
+
+    return false;
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        referenceColumnIndex + 1,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      _seqCleanText(
+        values[i][0]
+      )
+      .toUpperCase() ===
+      normalized
+    ) {
+
+      return true;
+
+    }
+
+  }
+
+
+  return false;
+
+}
+
+
+/************************************************
+ * REQUIRE UNIQUE REFERENCE
+ ************************************************/
+
+function requireUniqueMairixReference(
+  referenceId,
+  targetSheetName
+) {
+
+  const normalized =
+    validateMairixReferenceId(
+      referenceId
+    );
+
+
+  if (
+    mairixReferenceExists(
+      normalized,
+      targetSheetName
+    )
+  ) {
+
+    throw new Error(
+      "Reference ID already exists in system: " +
+      normalized
+    );
+
+  }
+
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * CREATE TRANSACTION REFERENCE
+ ************************************************/
+
+function createMairixTransactionReference(
+  prefix
+) {
+
+  const referenceId =
+    generateMairixReferenceId(
+      prefix
+    );
+
+
+  return {
+
+    success: true,
+
+    referenceId: referenceId
+
+  };
+
+}
+
+
+/************************************************
+ * CENTRAL REFERENCE CONTEXT
+ ************************************************/
+
+function createMairixReferenceContext(
+  transactionType,
+  customPrefix
+) {
+
+  const type =
+    _seqCleanText(
+      transactionType
+    )
+    .toUpperCase();
+
+
+  if (!type) {
+
+    throw new Error(
+      "Transaction Type is required to create context."
+    );
+
+  }
+
+
+  const referenceId =
+    generateMairixReferenceId(
+      customPrefix
+    );
+
+
+  return {
+
+    referenceId: referenceId,
+
+    transactionType: type,
+
+    createdAt:
+      new Date()
+        .toISOString()
+
+  };
+
+}
+
+
+/************************************************
+ * VALIDATE REFERENCE CONTEXT
+ ************************************************/
+
+function validateMairixReferenceContext(
+  context
+) {
+
+  if (
+    !context ||
+    typeof context !== "object"
+  ) {
+
+    throw new Error(
+      "MAIRIX transaction context is required and must be an object."
+    );
+
+  }
+
+
+  const referenceId =
+    validateMairixReferenceId(
+      context.referenceId
+    );
+
+
+  const transactionType =
+    _seqCleanText(
+      context.transactionType
+    )
+    .toUpperCase();
+
+
+  if (!transactionType) {
+
+    throw new Error(
+      "Transaction Type is missing in reference context."
+    );
+
+  }
+
+
+  return {
+
+    referenceId: referenceId,
+
+    transactionType: transactionType,
+
+    createdAt:
+      context.createdAt ||
+      new Date().toISOString()
+
+  };
+
+}
+
+
+/************************************************
+ * REQUIRE VALID REFERENCE CONTEXT
+ ************************************************/
+
+function requireMairixReferenceContext(
+  context
+) {
+
+  return validateMairixReferenceContext(
+    context
+  );
+
+}
+
+
+/************************************************
+ * ASSERT CHILD REFERENCE
+ ************************************************/
+
+function assertMairixChildReference(
+  referenceId
+) {
+
+  return validateMairixReferenceId(
+    referenceId
+  );
+
+}
+
+
+/************************************************
+ * ASSERT CHILD CONTEXT
+ ************************************************/
+
+function assertMairixChildContext(
+  context,
+  expectedTransactionType
+) {
+
+  const normalized =
+    validateMairixReferenceContext(
+      context
+    );
+
+
+  if (expectedTransactionType) {
+
+    const expected =
+      _seqCleanText(
+        expectedTransactionType
+      )
+      .toUpperCase();
+
+
+    if (
+      normalized.transactionType !==
+      expected
+    ) {
+
+      throw new Error(
+
+        "Transaction type mismatch. Expected: " +
+        expected +
+        " | Received: " +
+        normalized.transactionType
+
+      );
+
+    }
+
+  }
+
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * CENTRAL REFERENCE ENGINE TEST SUITE
+ ************************************************/
+
+function testMairixReferenceEngine() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CENTRAL REFERENCE TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const first =
+    createMairixTransactionReference(
+      "SL"
+    );
+
+
+  const second =
+    createMairixTransactionReference(
+      "SR"
+    );
+
+
+  Logger.log(
+    "Reference 1 (Sale): " +
+    first.referenceId
+  );
+
+
+  Logger.log(
+    "Reference 2 (Return): " +
+    second.referenceId
+  );
+
+
+  if (
+    !first.referenceId ||
+    !second.referenceId
+  ) {
+
+    throw new Error(
+      "Reference generation failed."
+    );
+
+  }
+
+
+  if (
+    first.referenceId ===
+    second.referenceId
+  ) {
+
+    throw new Error(
+      "Reference IDs generated are not unique!"
+    );
+
+  }
+
+
+  validateMairixReferenceId(
+    first.referenceId
+  );
+
+
+  validateMairixReferenceId(
+    second.referenceId
+  );
+
+
+  const context =
+    createMairixReferenceContext(
+      "SALE",
+      "SL"
+    );
+
+
+  const validatedContext =
+    requireMairixReferenceContext(
+      context
+    );
+
+
+  if (
+    validatedContext.transactionType !==
+    "SALE"
+  ) {
+
+    throw new Error(
+      "Reference context transaction type is invalid."
+    );
+
+  }
+
+
+  assertMairixChildReference(
+    validatedContext.referenceId
+  );
+
+
+  assertMairixChildContext(
+    validatedContext,
+    "SALE"
+  );
+
+
+  Logger.log(
+    "Context Reference Verified: " +
+    validatedContext.referenceId
+  );
+
+
+  Logger.log(
+    "CENTRAL REFERENCE TEST: PASSED SUCCESSFULLY"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success: true,
+
+    references: [
+
+      first.referenceId,
+
+      second.referenceId
+
+    ],
+
+    context:
+      validatedContext
+
+  };
+
+}

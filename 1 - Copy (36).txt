@@ -1,0 +1,553 @@
+<!--
+============================================================
+MAIRIX ERP
+CUSTOMER COLLECTION SCREEN
+
+FILE:
+42-MAIRIX_UI_Collections.html
+
+FLOW:
+
+Customer
+  ↓
+Outstanding Invoice
+  ↓
+Select Invoice
+  ↓
+Amount
+  ↓
+Payment Method
+  ↓
+Confirm
+
+The authoritative customer balance is calculated
+server-side.
+============================================================
+-->
+
+<div
+  id="mairixCollectionsScreen"
+>
+
+  <div
+    class="mairix-data-card"
+  >
+
+    <div
+      id="mairixCollectionCustomerHost"
+    ></div>
+
+    <div
+      class="mairix-field"
+    >
+
+      <label
+        class="mairix-field-label"
+      >
+        الفاتورة
+      </label>
+
+      <select
+        id="mairixCollectionInvoice"
+        class="mairix-select"
+      >
+
+        <option value="">
+          اختر الفاتورة
+        </option>
+
+      </select>
+
+    </div>
+
+
+    <div
+      class="mairix-field"
+    >
+
+      <label
+        class="mairix-field-label"
+      >
+        المبلغ
+      </label>
+
+      <input
+        id="mairixCollectionAmount"
+        class="mairix-input"
+        type="number"
+        min="0.001"
+        step="0.001"
+      >
+
+    </div>
+
+
+    <div
+      class="mairix-field"
+    >
+
+      <label
+        class="mairix-field-label"
+      >
+        طريقة الدفع
+      </label>
+
+      <select
+        id="mairixCollectionPaymentMethod"
+        class="mairix-select"
+      >
+
+        <option value="">
+          اختر طريقة الدفع
+        </option>
+
+        <option value="CASH">
+          نقدي
+        </option>
+
+      </select>
+
+    </div>
+
+
+    <button
+      id="mairixCollectionSubmit"
+      type="button"
+      class="mairix-button"
+    >
+      تسجيل التحصيل
+    </button>
+
+  </div>
+
+</div>
+
+
+<script>
+
+/************************************************************
+ * COLLECTION STATE
+ ************************************************************/
+
+var MAIRIX_UI_COLLECTION_STATE = {
+
+  customer:
+    null,
+
+  invoices:
+    [],
+
+  submitting:
+    false
+
+};
+
+
+/************************************************************
+ * CUSTOMER SELECTED
+ ************************************************************/
+
+function mairixUICollectionSetCustomer(
+  customer
+) {
+
+  MAIRIX_UI_COLLECTION_STATE.customer =
+    customer;
+
+
+  mairixUICollectionLoadInvoices(
+    mairixUIDropdownGetCustomerCode(
+      customer
+    )
+  );
+
+}
+
+
+/************************************************************
+ * LOAD OUTSTANDING INVOICES
+ ************************************************************/
+
+function mairixUICollectionLoadInvoices(
+  customerCode
+) {
+
+  var select =
+    document.getElementById(
+      "mairixCollectionInvoice"
+    );
+
+
+  if (!select) {
+
+    return;
+
+  }
+
+
+  select.innerHTML = "";
+
+
+  var placeholder =
+    document.createElement(
+      "option"
+    );
+
+  placeholder.value =
+    "";
+
+  placeholder.textContent =
+    "جاري تحميل الفواتير...";
+
+
+  select.appendChild(
+    placeholder
+  );
+
+
+  if (
+    typeof mairixUIApiGetCustomerOutstandingInvoices !==
+    "function"
+  ) {
+
+    select.innerHTML = "";
+
+
+    placeholder.textContent =
+      "خدمة الفواتير غير متاحة.";
+
+    select.appendChild(
+      placeholder
+    );
+
+    return;
+
+  }
+
+
+  mairixUIApiGetCustomerOutstandingInvoices(
+    customerCode,
+    function(result) {
+
+      select.innerHTML = "";
+
+
+      if (
+        !result ||
+        result.success !== true
+      ) {
+
+        var errorOption =
+          document.createElement(
+            "option"
+          );
+
+        errorOption.value =
+          "";
+
+        errorOption.textContent =
+          "تعذر تحميل الفواتير.";
+
+        select.appendChild(
+          errorOption
+        );
+
+        return;
+
+      }
+
+
+      var invoices =
+        Array.isArray(
+          result.data
+        )
+          ? result.data
+          : [];
+
+
+      MAIRIX_UI_COLLECTION_STATE.invoices =
+        invoices;
+
+
+      var first =
+        document.createElement(
+          "option"
+        );
+
+      first.value =
+        "";
+
+      first.textContent =
+        "اختر الفاتورة";
+
+
+      select.appendChild(
+        first
+      );
+
+
+      invoices.forEach(
+        function(invoice) {
+
+          var option =
+            document.createElement(
+              "option"
+            );
+
+
+          option.value =
+            invoice.invoiceId ||
+            invoice.saleId ||
+            "";
+
+
+          option.textContent =
+            (
+              invoice.invoiceId ||
+              invoice.saleId ||
+              ""
+            ) +
+            " — مستحق: " +
+            Number(
+              invoice.outstanding ||
+              0
+            ).toFixed(
+              3
+            );
+
+
+          select.appendChild(
+            option
+          );
+
+        }
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * SUBMIT
+ ************************************************************/
+
+function mairixUICollectionSubmit() {
+
+  if (
+    MAIRIX_UI_COLLECTION_STATE.submitting
+  ) {
+
+    return;
+
+  }
+
+
+  var customer =
+    MAIRIX_UI_COLLECTION_STATE.customer;
+
+
+  if (!customer) {
+
+    throw new Error(
+      "يجب اختيار العميل."
+    );
+
+  }
+
+
+  var invoiceId =
+    document.getElementById(
+      "mairixCollectionInvoice"
+    ).value;
+
+
+  var amount =
+    Number(
+      document.getElementById(
+        "mairixCollectionAmount"
+      ).value
+    );
+
+
+  var paymentMethod =
+    document.getElementById(
+      "mairixCollectionPaymentMethod"
+    ).value;
+
+
+  if (!invoiceId) {
+
+    throw new Error(
+      "يجب اختيار الفاتورة."
+    );
+
+  }
+
+
+  if (
+    isNaN(amount) ||
+    amount <= 0
+  ) {
+
+    throw new Error(
+      "المبلغ غير صحيح."
+    );
+
+  }
+
+
+  if (!paymentMethod) {
+
+    throw new Error(
+      "يجب اختيار طريقة الدفع."
+    );
+
+  }
+
+
+  if (
+    typeof mairixUIApiCreateCustomerCollection !==
+    "function"
+  ) {
+
+    throw new Error(
+      "خدمة التحصيل غير متاحة."
+    );
+
+  }
+
+
+  MAIRIX_UI_COLLECTION_STATE.submitting =
+    true;
+
+
+  mairixUIApiCreateCustomerCollection(
+    {
+
+      customerCode:
+        mairixUIDropdownGetCustomerCode(
+          customer
+        ),
+
+      invoiceId:
+        invoiceId,
+
+      amount:
+        amount,
+
+      paymentMethod:
+        paymentMethod
+
+    },
+
+    function(result) {
+
+      MAIRIX_UI_COLLECTION_STATE.submitting =
+        false;
+
+
+      if (
+        !result ||
+        result.success !== true
+      ) {
+
+        throw new Error(
+          (
+            result &&
+            result.error &&
+            result.error.message
+          ) ||
+          "تعذر تسجيل التحصيل."
+        );
+
+      }
+
+
+      document.getElementById(
+        "mairixCollectionAmount"
+      ).value =
+        "";
+
+      mairixUICollectionLoadInvoices(
+        mairixUIDropdownGetCustomerCode(
+          customer
+        )
+      );
+
+    }
+
+  );
+
+}
+
+
+/************************************************************
+ * MOUNT
+ ************************************************************/
+
+function mairixUICollectionMount() {
+
+  var host =
+    document.getElementById(
+      "mairixCollectionCustomerHost"
+    );
+
+
+  if (
+    host &&
+    typeof mairixUICreateCustomerDropdown ===
+    "function"
+  ) {
+
+    host.innerHTML =
+      "";
+
+
+    var dropdown =
+      mairixUICreateCustomerDropdown(
+        {
+
+          onSelect:
+            mairixUICollectionSetCustomer
+
+        }
+      );
+
+
+    host.appendChild(
+      dropdown
+    );
+
+  }
+
+
+  document
+    .getElementById(
+      "mairixCollectionSubmit"
+    )
+    .addEventListener(
+      "click",
+      function() {
+
+        try {
+
+          mairixUICollectionSubmit();
+
+        } catch (
+          error
+        ) {
+
+          mairixUIShowError(
+            error.message
+          );
+
+        }
+
+      }
+    );
+
+}
+
+</script>

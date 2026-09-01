@@ -1,0 +1,3150 @@
+/************************************************
+ * MAIRIX ERP
+ * 4-MAIRIX_Users.gs
+ *
+ * USER & ACCESS FOUNDATION
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * 1) Create users
+ * 2) Update users
+ * 3) Activate / deactivate users
+ * 4) Identify current Google user
+ * 5) Connect user -> role
+ * 6) Connect user -> warehouses
+ * 7) Maintain audit trail
+ * 8) Provide secure server-side user context
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * - No old MAIF data dependency
+ * - No hard-coded old User IDs
+ * - UI supplied userId is NEVER trusted
+ * - Current user is identified from Google account
+ * - New users are ALWAYS inactive
+ * - Permissions are NOT stored here
+ * - Warehouse access is NOT hard-coded here
+ * - Settings are centralized
+ *
+ * DEPENDENCIES
+ * ------------------------------------------------
+ * This file expects the foundation/settings layer
+ * to provide:
+ *
+ *   MAIRIX
+ *   mairixGetSetting()
+ *   mairixGetSheet()
+ *   mairixCleanText()
+ *   mairixGetColumnNumber()
+ *
+ * If the helper layer uses different names,
+ * only the adapter section needs adjustment.
+ ************************************************/
+
+
+/************************************************
+ * CONFIGURATION
+ ************************************************/
+
+const MAIRIX_USERS_CONFIG = {
+
+  SHEET_KEY:
+    "USERS",
+
+  LOG_SHEET_KEY:
+    "AUDIT_LOG",
+
+  DEFAULT_ACTIVE:
+    false,
+
+  USER_ID_PREFIX:
+    "USR",
+
+  USER_ID_PAD:
+    5
+
+};
+
+
+/************************************************
+ * INTERNAL SHEET ADAPTER
+ ************************************************/
+
+function mairixUsersGetSheet(
+  key
+) {
+
+  /*
+   * Preferred:
+   * centralized MAIRIX settings/constants.
+   */
+
+  if (
+    typeof MAIRIX !== "undefined" &&
+    MAIRIX.SHEETS &&
+    MAIRIX.SHEETS[key]
+  ) {
+
+    return SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        MAIRIX.SHEETS[key]
+      );
+
+  }
+
+
+  /*
+   * Fallback for the new blank workbook.
+   *
+   * This fallback is NOT connected to
+   * any old MAIF data.
+   */
+
+  return SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(
+      key
+    );
+
+}
+
+
+/************************************************
+ * TEXT NORMALIZER
+ ************************************************/
+
+function mairixUsersClean(
+  value
+) {
+
+  if (
+    typeof mairixCleanText ===
+    "function"
+  ) {
+
+    return mairixCleanText(
+      value
+    );
+
+  }
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+  return String(
+    value
+  ).trim();
+
+}
+
+
+/************************************************
+ * REQUIRED VALUE
+ ************************************************/
+
+function mairixUsersRequireValue(
+  value,
+  fieldName
+) {
+
+  const normalized =
+    mairixUsersClean(
+      value
+    );
+
+  if (!normalized) {
+
+    throw new Error(
+      fieldName +
+      " is required."
+    );
+
+  }
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * REQUIRED USERS SHEET
+ ************************************************/
+
+function mairixUsersSheet() {
+
+  const sheet =
+    mairixUsersGetSheet(
+      MAIRIX_USERS_CONFIG.SHEET_KEY
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "USERS sheet not found. " +
+      "Run setupMAIRIXUsersSheet() first."
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * USERS SHEET SETUP
+ *
+ * Safe to run on a blank workbook.
+ ************************************************/
+
+function setupMAIRIXUsersSheet() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  let sheet =
+    mairixUsersGetSheet(
+      MAIRIX_USERS_CONFIG.SHEET_KEY
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_USERS_CONFIG.SHEET_KEY
+      );
+
+  }
+
+
+  const headers = [
+
+    "User ID",
+    "Gmail",
+    "Name",
+    "Role",
+    "Active",
+    "Created At",
+    "Created By",
+    "Updated At",
+    "Updated By"
+
+  ];
+
+
+  sheet.clear();
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([
+      headers
+    ]);
+
+
+  sheet
+    .setFrozenRows(
+      1
+    );
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+
+  /*
+   * Active checkbox column
+   */
+
+  sheet
+    .getRange(
+      2,
+      5,
+      Math.max(
+        sheet.getMaxRows() - 1,
+        1
+      ),
+      1
+    )
+    .insertCheckboxes();
+
+
+  /*
+   * Email as text
+   */
+
+  sheet
+    .getRange(
+      2,
+      2,
+      Math.max(
+        sheet.getMaxRows() - 1,
+        1
+      ),
+      1
+    )
+    .setNumberFormat(
+      "@"
+    );
+
+
+  sheet.autoResizeColumns(
+    1,
+    headers.length
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    sheet:
+      MAIRIX_USERS_CONFIG.SHEET_KEY,
+
+    columns:
+      headers.length
+
+  };
+
+}
+
+
+/************************************************
+ * GET CURRENT GOOGLE EMAIL
+ ************************************************/
+
+function mairixUsersGetCurrentEmail() {
+
+  const email =
+    Session
+      .getActiveUser()
+      .getEmail();
+
+
+  const normalized =
+    mairixUsersClean(
+      email
+    ).toLowerCase();
+
+
+  if (!normalized) {
+
+    throw new Error(
+      "Unable to identify the current Google account."
+    );
+
+  }
+
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * MAIRIX ERP
+ * GET USER BY EMAIL
+ *
+ * Compatible with current USERS structure:
+ *
+ * User ID
+ * Employee Code
+ * Email
+ * Name
+ * Role Code
+ * Role Name
+ * Current Password
+ * Password Last Changed At
+ * Password Change Required
+ * Active
+ * Created At
+ * Created By
+ * Updated At
+ * Updated By
+ ************************************************/
+
+function mairixGetUserByEmail(email) {
+
+  var normalizedEmail =
+    String(email || "")
+      .trim()
+      .toLowerCase();
+
+  if (!normalizedEmail) {
+    return null;
+  }
+
+
+  var ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  var sheet =
+    ss.getSheetByName("USERS");
+
+
+  if (!sheet) {
+    throw new Error(
+      "USERS sheet not found."
+    );
+  }
+
+
+  var lastRow =
+    sheet.getLastRow();
+
+
+  if (lastRow < 2) {
+    return null;
+  }
+
+
+  var lastColumn =
+    sheet.getLastColumn();
+
+
+  var headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0]
+      .map(function(header) {
+
+        return String(header || "").trim();
+
+      });
+
+
+  /************************************************
+   * REQUIRED COLUMNS
+   ************************************************/
+
+  var userIdIndex =
+    headers.indexOf("User ID");
+
+  var emailIndex =
+    headers.indexOf("Gmail");
+
+  var nameIndex =
+    headers.indexOf("Name");
+
+  var roleCodeIndex =
+    headers.indexOf("Role Code");
+
+  var roleNameIndex =
+    headers.indexOf("Role Name");
+
+  var activeIndex =
+    headers.indexOf("Active");
+
+
+  if (userIdIndex === -1) {
+
+    throw new Error(
+      'USERS sheet structure is incomplete: missing "User ID".'
+    );
+
+  }
+
+
+  if (emailIndex === -1) {
+
+    throw new Error(
+      'USERS sheet structure is incomplete: missing "Gmail".'
+    );
+
+  }
+
+
+  if (activeIndex === -1) {
+
+    throw new Error(
+      'USERS sheet structure is incomplete: missing "Active".'
+    );
+
+  }
+
+
+  /************************************************
+   * READ DATA
+   ************************************************/
+
+  var values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  for (
+    var i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    var row =
+      values[i];
+
+
+    var rowEmail =
+      String(
+        row[emailIndex] || ""
+      )
+        .trim()
+        .toLowerCase();
+
+
+    if (
+      rowEmail !== normalizedEmail
+    ) {
+
+      continue;
+
+    }
+
+
+    var active =
+      mairixUsersIsTrue(
+        row[activeIndex]
+      );
+
+
+    return {
+
+      userId:
+        String(
+          row[userIdIndex] || ""
+        ).trim(),
+
+      employeeCode:
+        headers.indexOf("Employee Code") !== -1
+          ? String(
+              row[
+                headers.indexOf(
+                  "Employee Code"
+                )
+              ] || ""
+            ).trim()
+          : "",
+
+      email:
+        String(
+          row[emailIndex] || ""
+        ).trim(),
+
+      name:
+        nameIndex !== -1
+          ? String(
+              row[nameIndex] || ""
+            ).trim()
+          : "",
+
+      userName:
+        nameIndex !== -1
+          ? String(
+              row[nameIndex] || ""
+            ).trim()
+          : "",
+
+      roleCode:
+        roleCodeIndex !== -1
+          ? String(
+              row[roleCodeIndex] || ""
+            ).trim()
+          : "",
+
+      roleName:
+        roleNameIndex !== -1
+          ? String(
+              row[roleNameIndex] || ""
+            ).trim()
+          : "",
+
+      role:
+        roleCodeIndex !== -1
+          ? String(
+              row[roleCodeIndex] || ""
+            ).trim()
+          : "",
+
+      active:
+        active
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * BOOLEAN HELPER
+ ************************************************/
+
+function mairixUsersIsTrue(value) {
+
+  if (value === true) {
+    return true;
+  }
+
+  if (value === 1) {
+    return true;
+  }
+
+  var normalized =
+    String(
+      value === null ||
+      value === undefined
+        ? ""
+        : value
+    )
+      .trim()
+      .toUpperCase();
+
+
+  return (
+    normalized === "TRUE" ||
+    normalized === "1" ||
+    normalized === "YES" ||
+    normalized === "Y"
+  );
+
+}
+
+
+/************************************************
+ * GET USER BY ID
+ ************************************************/
+
+function mairixGetUserById(
+  userId
+) {
+
+  const normalizedId =
+    mairixUsersClean(
+      userId
+    );
+
+
+  if (!normalizedId) {
+
+    return null;
+
+  }
+
+
+  const sheet =
+    mairixUsersSheet();
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const idIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+
+  const emailIndex =
+    headers.indexOf(
+      "Gmail"
+    );
+
+
+  const nameIndex =
+    headers.indexOf(
+      "Name"
+    );
+
+
+  const roleIndex =
+    headers.indexOf(
+      "Role"
+    );
+
+
+  const activeIndex =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  if (
+    idIndex === -1 ||
+    emailIndex === -1 ||
+    nameIndex === -1 ||
+    roleIndex === -1 ||
+    activeIndex === -1
+  ) {
+
+    throw new Error(
+      "USERS sheet structure is incomplete."
+    );
+
+  }
+
+
+  const rows =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  for (
+    let i = 0;
+    i < rows.length;
+    i++
+  ) {
+
+    const row =
+      rows[i];
+
+
+    if (
+      mairixUsersClean(
+        row[idIndex]
+      ) !==
+      normalizedId
+    ) {
+
+      continue;
+
+    }
+
+
+    return {
+
+      userId:
+        normalizedId,
+
+      email:
+        mairixUsersClean(
+          row[emailIndex]
+        ).toLowerCase(),
+
+      name:
+        mairixUsersClean(
+          row[nameIndex]
+        ),
+
+      role:
+        mairixUsersClean(
+          row[roleIndex]
+        ).toUpperCase(),
+
+      active:
+        mairixUsersIsTrue(
+          row[activeIndex]
+        )
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * CURRENT USER
+ *
+ * SECURITY:
+ * The UI does NOT provide the identity.
+ ************************************************/
+
+function mairixGetCurrentUser() {
+
+  const email =
+    mairixUsersGetCurrentEmail();
+
+
+  return mairixGetUserByEmail(
+    email
+  );
+
+}
+
+
+/************************************************
+ * REQUIRE CURRENT USER
+ ************************************************/
+
+function mairixRequireCurrentUser() {
+
+  const user =
+    mairixGetCurrentUser();
+
+
+  if (!user) {
+
+    throw new Error(
+      "Current Google account is not registered in MAIRIX."
+    );
+
+  }
+
+
+  if (
+    user.active !== true
+  ) {
+
+    throw new Error(
+      "Your MAIRIX account is inactive."
+    );
+
+  }
+
+
+  return user;
+
+}
+
+
+/************************************************
+ * GENERATE USER ID
+ *
+ * Format:
+ *
+ * USR-YYYYMMDD-00001
+ ************************************************/
+
+function mairixGenerateUserId() {
+
+  const sheet =
+    mairixUsersSheet();
+
+
+  const dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  const prefix =
+    MAIRIX_USERS_CONFIG.USER_ID_PREFIX +
+    "-" +
+    dateKey +
+    "-";
+
+
+  let nextNumber =
+    1;
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const idColumn =
+      sheet
+        .getRange(
+          1,
+          1
+        )
+        .getColumn();
+
+
+    const values =
+      sheet
+        .getRange(
+          2,
+          idColumn,
+          lastRow - 1,
+          1
+        )
+        .getDisplayValues();
+
+
+    values.forEach(
+      function(row) {
+
+        const id =
+          mairixUsersClean(
+            row[0]
+          );
+
+
+        if (
+          id.indexOf(
+            prefix
+          ) !== 0
+        ) {
+
+          return;
+
+        }
+
+
+        const number =
+          parseInt(
+            id.substring(
+              prefix.length
+            ),
+            10
+          );
+
+
+        if (
+          !isNaN(number) &&
+          number >= nextNumber
+        ) {
+
+          nextNumber =
+            number + 1;
+
+        }
+
+      }
+    );
+
+  }
+
+
+  return (
+    prefix +
+    String(nextNumber)
+      .padStart(
+        MAIRIX_USERS_CONFIG.USER_ID_PAD,
+        "0"
+      )
+  );
+
+}
+
+
+/************************************************
+ * CHECK DUPLICATE EMAIL
+ ************************************************/
+
+function mairixUsersEmailExists(
+  email,
+  ignoreUserId
+) {
+
+  const normalizedEmail =
+    mairixUsersClean(
+      email
+    ).toLowerCase();
+
+
+  const normalizedIgnore =
+    mairixUsersClean(
+      ignoreUserId
+    );
+
+
+  const sheet =
+    mairixUsersSheet();
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return false;
+
+  }
+
+
+  const emailColumn =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0]
+      .indexOf(
+        "Gmail"
+      ) + 1;
+
+
+  const idColumn =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0]
+      .indexOf(
+        "User ID"
+      ) + 1;
+
+
+  const emails =
+    sheet
+      .getRange(
+        2,
+        emailColumn,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  const ids =
+    sheet
+      .getRange(
+        2,
+        idColumn,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  for (
+    let i = 0;
+    i < emails.length;
+    i++
+  ) {
+
+    const rowEmail =
+      mairixUsersClean(
+        emails[i][0]
+      ).toLowerCase();
+
+
+    const rowId =
+      mairixUsersClean(
+        ids[i][0]
+      );
+
+
+    if (
+      rowEmail ===
+      normalizedEmail &&
+      rowId !==
+      normalizedIgnore
+    ) {
+
+      return true;
+
+    }
+
+  }
+
+
+  return false;
+
+}
+
+
+/************************************************
+ * CREATE USER
+ *
+ * New users ALWAYS inactive.
+ *
+ * No permissions are created here.
+ * No warehouse access is created here.
+ ************************************************/
+
+function mairixCreateUser(
+  data
+) {
+
+  const currentUser =
+    mairixRequireCurrentUser();
+
+
+  if (!data) {
+
+    throw new Error(
+      "User data is required."
+    );
+
+  }
+
+
+  const email =
+    mairixUsersRequireValue(
+      data.email,
+      "Gmail"
+    )
+      .toLowerCase();
+
+
+  const name =
+    mairixUsersRequireValue(
+      data.name,
+      "Name"
+    );
+
+
+  const role =
+    mairixUsersRequireValue(
+      data.role,
+      "Role"
+    )
+      .toUpperCase();
+
+
+  if (
+    mairixUsersEmailExists(
+      email
+    )
+  ) {
+
+    throw new Error(
+      "A user with this email already exists."
+    );
+
+  }
+
+
+  const sheet =
+    mairixUsersSheet();
+
+
+  const userId =
+    mairixGenerateUserId();
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const row =
+    new Array(
+      headers.length
+    )
+      .fill("");
+
+
+  const set =
+    function(
+      header,
+      value
+    ) {
+
+      const index =
+        headers.indexOf(
+          header
+        );
+
+
+      if (
+        index !== -1
+      ) {
+
+        row[index] =
+          value;
+
+      }
+
+    };
+
+
+  set(
+    "User ID",
+    userId
+  );
+
+
+  set(
+    "Gmail",
+    email
+  );
+
+
+  set(
+    "Name",
+    name
+  );
+
+
+  set(
+    "Role",
+    role
+  );
+
+
+  set(
+    "Active",
+    false
+  );
+
+
+  set(
+    "Created At",
+    new Date()
+  );
+
+
+  set(
+    "Created By",
+    currentUser.email
+  );
+
+
+  sheet
+    .getRange(
+      sheet.getLastRow() + 1,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  const newRow =
+    sheet.getLastRow();
+
+
+  const activeColumn =
+    headers.indexOf(
+      "Active"
+    ) + 1;
+
+
+  if (
+    activeColumn > 0
+  ) {
+
+    sheet
+      .getRange(
+        newRow,
+        activeColumn
+      )
+      .insertCheckboxes()
+      .setValue(false);
+
+  }
+
+
+  const emailColumn =
+    headers.indexOf(
+      "Gmail"
+    ) + 1;
+
+
+  if (
+    emailColumn > 0
+  ) {
+
+    sheet
+      .getRange(
+        newRow,
+        emailColumn
+      )
+      .setNumberFormat("@");
+
+  }
+
+
+  mairixUsersAudit(
+    "CREATE_USER",
+    userId,
+    "Created inactive user | " +
+    email +
+    " | Role: " +
+    role
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    userId:
+      userId,
+
+    email:
+      email,
+
+    name:
+      name,
+
+    role:
+      role,
+
+    active:
+      false
+
+  };
+
+}
+
+
+/************************************************
+ * UPDATE USER
+ *
+ * Active cannot be changed here.
+ * Activation is a separate operation.
+ ************************************************/
+
+function mairixUpdateUser(
+  userId,
+  data
+) {
+
+  const currentUser =
+    mairixRequireCurrentUser();
+
+
+  const normalizedId =
+    mairixUsersRequireValue(
+      userId,
+      "User ID"
+    );
+
+
+  if (!data) {
+
+    throw new Error(
+      "User data is required."
+    );
+
+  }
+
+
+  const sheet =
+    mairixUsersSheet();
+
+
+  const user =
+    mairixGetUserById(
+      normalizedId
+    );
+
+
+  if (!user) {
+
+    throw new Error(
+      "User not found: " +
+      normalizedId
+    );
+
+  }
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const rowNumber =
+    mairixUsersFindRow(
+      normalizedId
+    );
+
+
+  const row =
+    sheet
+      .getRange(
+        rowNumber,
+        1,
+        1,
+        lastColumn
+      )
+      .getValues()[0];
+
+
+  const set =
+    function(
+      header,
+      value
+    ) {
+
+      const index =
+        headers.indexOf(
+          header
+        );
+
+
+      if (
+        index !== -1
+      ) {
+
+        row[index] =
+          value;
+
+      }
+
+    };
+
+
+  if (
+    data.email !== undefined
+  ) {
+
+    const email =
+      mairixUsersRequireValue(
+        data.email,
+        "Gmail"
+      )
+        .toLowerCase();
+
+
+    if (
+      mairixUsersEmailExists(
+        email,
+        normalizedId
+      )
+    ) {
+
+      throw new Error(
+        "Another user already uses this email."
+      );
+
+    }
+
+
+    set(
+      "Gmail",
+      email
+    );
+
+  }
+
+
+  if (
+    data.name !== undefined
+  ) {
+
+    set(
+      "Name",
+      mairixUsersRequireValue(
+        data.name,
+        "Name"
+      )
+    );
+
+  }
+
+
+  if (
+    data.role !== undefined
+  ) {
+
+    set(
+      "Role",
+      mairixUsersRequireValue(
+        data.role,
+        "Role"
+      ).toUpperCase()
+    );
+
+  }
+
+
+  if (
+    data.active !== undefined
+  ) {
+
+    throw new Error(
+      "Use mairixSetUserActive() to change user activation."
+    );
+
+  }
+
+
+  set(
+    "Updated At",
+    new Date()
+  );
+
+
+  set(
+    "Updated By",
+    currentUser.email
+  );
+
+
+  sheet
+    .getRange(
+      rowNumber,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  mairixUsersAudit(
+    "UPDATE_USER",
+    normalizedId,
+    "User information updated."
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    userId:
+      normalizedId
+
+  };
+
+}
+
+
+/************************************************
+ * ACTIVATE / DEACTIVATE
+ *
+ * IMPORTANT:
+ *
+ * This function changes only USER STATUS.
+ *
+ * Permissions and warehouse assignments
+ * belong to their own centralized engines.
+ ************************************************/
+
+function mairixSetUserActive(
+  userId,
+  active
+) {
+
+  const currentUser =
+    mairixRequireCurrentUser();
+
+
+  const normalizedId =
+    mairixUsersRequireValue(
+      userId,
+      "User ID"
+    );
+
+
+  const sheet =
+    mairixUsersSheet();
+
+
+  const user =
+    mairixGetUserById(
+      normalizedId
+    );
+
+
+  if (!user) {
+
+    throw new Error(
+      "User not found: " +
+      normalizedId
+    );
+
+  }
+
+
+  const rowNumber =
+    mairixUsersFindRow(
+      normalizedId
+    );
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const activeIndex =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  const updatedAtIndex =
+    headers.indexOf(
+      "Updated At"
+    );
+
+
+  const updatedByIndex =
+    headers.indexOf(
+      "Updated By"
+    );
+
+
+  if (
+    activeIndex === -1
+  ) {
+
+    throw new Error(
+      "USERS sheet is missing Active column."
+    );
+
+  }
+
+
+  const newValue =
+    Boolean(
+      active
+    );
+
+
+  sheet
+    .getRange(
+      rowNumber,
+      activeIndex + 1
+    )
+    .insertCheckboxes()
+    .setValue(
+      newValue
+    );
+
+
+  if (
+    updatedAtIndex !== -1
+  ) {
+
+    sheet
+      .getRange(
+        rowNumber,
+        updatedAtIndex + 1
+      )
+      .setValue(
+        new Date()
+      );
+
+  }
+
+
+  if (
+    updatedByIndex !== -1
+  ) {
+
+    sheet
+      .getRange(
+        rowNumber,
+        updatedByIndex + 1
+      )
+      .setValue(
+        currentUser.email
+      );
+
+  }
+
+
+  mairixUsersAudit(
+    newValue
+      ? "ACTIVATE_USER"
+      : "DEACTIVATE_USER",
+    normalizedId,
+    "Status changed to " +
+    (newValue ? "ACTIVE" : "INACTIVE")
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    userId:
+      normalizedId,
+
+    active:
+      newValue
+
+  };
+
+}
+
+
+/************************************************
+ * FIND USER ROW
+ ************************************************/
+
+function mairixUsersFindRow(
+  userId
+) {
+
+  const sheet =
+    mairixUsersSheet();
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return -1;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const idIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+
+  if (
+    idIndex === -1
+  ) {
+
+    throw new Error(
+      "USERS sheet is missing User ID column."
+    );
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        idIndex + 1,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  const normalized =
+    mairixUsersClean(
+      userId
+    );
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      mairixUsersClean(
+        values[i][0]
+      ) ===
+      normalized
+    ) {
+
+      return i + 2;
+
+    }
+
+  }
+
+
+  return -1;
+
+}
+
+
+/************************************************
+ * TRUE VALUE
+ ************************************************/
+
+function mairixUsersIsTrue(
+  value
+) {
+
+  if (
+    value === true
+  ) {
+
+    return true;
+
+  }
+
+
+  const normalized =
+    mairixUsersClean(
+      value
+    ).toUpperCase();
+
+
+  return (
+    normalized === "TRUE" ||
+    normalized === "YES" ||
+    normalized === "1"
+  );
+
+}
+
+
+/************************************************
+ * AUDIT
+ *
+ * Audit is deliberately centralized later.
+ *
+ * This adapter allows the Users module
+ * to work now without duplicating business
+ * logic elsewhere.
+ ************************************************/
+
+function mairixUsersAudit(
+  action,
+  reference,
+  details
+) {
+
+  try {
+
+    const email =
+      mairixUsersGetCurrentEmail();
+
+
+    /*
+     * If the centralized audit engine
+     * exists, use it.
+     */
+
+    if (
+      typeof mairixWriteAudit ===
+      "function"
+    ) {
+
+      mairixWriteAudit({
+
+        action:
+          action,
+
+        reference:
+          reference,
+
+        details:
+          details,
+
+        userEmail:
+          email
+
+      });
+
+
+      return;
+
+    }
+
+
+    /*
+     * Temporary foundation fallback.
+     *
+     * This does NOT affect ERP transactions.
+     */
+
+    const sheet =
+      mairixUsersGetSheet(
+        MAIRIX_USERS_CONFIG.LOG_SHEET_KEY
+      );
+
+
+    if (!sheet) {
+
+      Logger.log(
+        "[MAIRIX AUDIT] " +
+        action +
+        " | " +
+        reference +
+        " | " +
+        details
+      );
+
+      return;
+
+    }
+
+
+    sheet.appendRow([
+
+      new Date(),
+
+      email,
+
+      action,
+
+      reference,
+
+      details
+
+    ]);
+
+  } catch (error) {
+
+    Logger.log(
+      "MAIRIX Users Audit failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * TEST SETUP
+ ************************************************/
+
+function testMAIRIXUsersSetup() {
+
+  const result =
+    setupMAIRIXUsersSheet();
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "MAIRIX Users setup failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX USERS SETUP: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST CURRENT USER
+ ************************************************/
+
+function testMAIRIXCurrentUser() {
+
+  const user =
+    mairixGetCurrentUser();
+
+
+  Logger.log(
+    JSON.stringify(
+      user,
+      null,
+      2
+    )
+  );
+
+
+  if (!user) {
+
+    Logger.log(
+      "CURRENT USER: NOT REGISTERED"
+    );
+
+    return;
+
+  }
+
+
+  Logger.log(
+    "Current MAIRIX user: " +
+    user.email
+  );
+
+}
+
+
+/************************************************
+ * TEST CREATE USER
+ *
+ * This test requires the current Google
+ * account to already be registered and active.
+ ************************************************/
+
+function testMAIRIXCreateUser() {
+
+  const uniqueEmail =
+    "test-" +
+    new Date().getTime() +
+    "@mairix.local";
+
+
+  const result =
+    mairixCreateUser({
+
+      email:
+        uniqueEmail,
+
+      name:
+        "MAIRIX Test User",
+
+      role:
+        "TEST"
+
+    });
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.active !== false
+  ) {
+
+    throw new Error(
+      "New MAIRIX users must start inactive."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX CREATE USER: PASS"
+  );
+
+}
+
+
+/************************************************
+ * TEST ACTIVATION
+ ************************************************/
+
+function testMAIRIXUserActivation(
+  userId
+) {
+
+  const id =
+    mairixUsersRequireValue(
+      userId,
+      "User ID"
+    );
+
+
+  const result =
+    mairixSetUserActive(
+      id,
+      true
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.active !== true
+  ) {
+
+    throw new Error(
+      "User activation failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX USER ACTIVATION: PASS"
+  );
+
+}
+
+
+/************************************************
+ * TEST DEACTIVATION
+ ************************************************/
+
+function testMAIRIXUserDeactivation(
+  userId
+) {
+
+  const id =
+    mairixUsersRequireValue(
+      userId,
+      "User ID"
+    );
+
+
+  const result =
+    mairixSetUserActive(
+      id,
+      false
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.active !== false
+  ) {
+
+    throw new Error(
+      "User deactivation failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX USER DEACTIVATION: PASS"
+  );
+
+}
+
+/************************************************
+ * GET CURRENT USER PERMISSIONS
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Return the final effective permissions of a user.
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * - USER_PERMISSIONS is the final authority.
+ * - ADMIN is evaluated independently.
+ * - Role permissions are templates only.
+ * - This function is QUERY ONLY.
+ * - It does NOT throw Permission denied.
+ * - It does NOT replace server-side enforcement.
+ ************************************************/
+
+function mairixGetCurrentUserPermissions(
+  userId
+) {
+
+  const normalizedUserId =
+    mairixUsersClean(
+      userId
+    );
+
+
+  if (!normalizedUserId) {
+
+    throw new Error(
+      "User ID is required."
+    );
+
+  }
+
+
+  const user =
+    mairixGetUserById(
+      normalizedUserId
+    );
+
+
+  if (!user) {
+
+    throw new Error(
+      "User not found: " +
+      normalizedUserId
+    );
+
+  }
+
+
+  /*
+   * ADMIN is still returned as a special
+   * UI/security context.
+   *
+   * Runtime transaction authorization must
+   * continue to use the final permission engine.
+   */
+
+  const adminRole =
+    (
+      typeof MAIRIX_ACCESS_CONFIG !==
+      "undefined" &&
+      MAIRIX_ACCESS_CONFIG.ADMIN_ROLE
+    )
+      ? MAIRIX_ACCESS_CONFIG.ADMIN_ROLE
+      : "ADMIN";
+
+
+  if (
+    mairixUsersClean(
+      user.role
+    ).toUpperCase() ===
+    String(
+      adminRole
+    ).toUpperCase()
+  ) {
+
+    return {
+
+      admin:
+        true,
+
+      fullAccess:
+        true,
+
+      permissions:
+        []
+
+    };
+
+  }
+
+
+  /*
+   * Make sure role defaults exist for the user.
+   *
+   * This function belongs to the Access engine,
+   * but it is intentionally called here only to
+   * initialize missing USER_PERMISSIONS rows.
+   */
+
+  if (
+    typeof mairixEnsureUserPermissions ===
+    "function"
+  ) {
+
+    mairixEnsureUserPermissions(
+      normalizedUserId
+    );
+
+  }
+
+
+  /*
+   * USER_PERMISSIONS is the final authority.
+   */
+
+  if (
+    typeof mairixAccessSheet !==
+    "function"
+  ) {
+
+    throw new Error(
+      "MAIRIX Access engine is not available."
+    );
+
+  }
+
+
+  const userPermissionsSheet =
+    mairixAccessSheet(
+      MAIRIX_ACCESS_CONFIG
+        .SHEETS
+        .USER_PERMISSIONS
+    );
+
+
+  if (
+    !userPermissionsSheet
+  ) {
+
+    return {
+
+      admin:
+        false,
+
+      fullAccess:
+        false,
+
+      permissions:
+        []
+
+    };
+
+  }
+
+
+  const lastRow =
+    userPermissionsSheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return {
+
+      admin:
+        false,
+
+      fullAccess:
+        false,
+
+      permissions:
+        []
+
+    };
+
+  }
+
+
+  const headers =
+    typeof mairixAccessHeaders ===
+    "function"
+      ? mairixAccessHeaders(
+          userPermissionsSheet
+        )
+      : userPermissionsSheet
+          .getRange(
+            1,
+            1,
+            1,
+            userPermissionsSheet.getLastColumn()
+          )
+          .getDisplayValues()[0];
+
+
+  const requiredHeaders = [
+
+    "User ID",
+    "Permission Code",
+    "View",
+    "Create",
+    "Edit",
+    "Delete",
+    "Export",
+    "Active"
+
+  ];
+
+
+  requiredHeaders.forEach(
+    function(header) {
+
+      if (
+        headers.indexOf(
+          header
+        ) === -1
+      ) {
+
+        throw new Error(
+          'USER_PERMISSIONS is missing "' +
+          header +
+          '".'
+        );
+
+      }
+
+    }
+  );
+
+
+  const rows =
+    userPermissionsSheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+
+  const userIdIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+
+  const permissionCodeIndex =
+    headers.indexOf(
+      "Permission Code"
+    );
+
+
+  const permissionNameIndex =
+    headers.indexOf(
+      "Permission Name"
+    );
+
+
+  const viewIndex =
+    headers.indexOf(
+      "View"
+    );
+
+
+  const createIndex =
+    headers.indexOf(
+      "Create"
+    );
+
+
+  const editIndex =
+    headers.indexOf(
+      "Edit"
+    );
+
+
+  const deleteIndex =
+    headers.indexOf(
+      "Delete"
+    );
+
+
+  const exportIndex =
+    headers.indexOf(
+      "Export"
+    );
+
+
+  const activeIndex =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  const permissions = [];
+
+
+  rows.forEach(
+    function(row) {
+
+      if (
+        mairixUsersClean(
+          row[userIdIndex]
+        ) !==
+        normalizedUserId
+      ) {
+
+        return;
+
+      }
+
+
+      permissions.push({
+
+        permissionCode:
+          mairixUsersClean(
+            row[permissionCodeIndex]
+          ).toUpperCase(),
+
+        permissionName:
+          permissionNameIndex === -1
+            ? ""
+            : mairixUsersClean(
+                row[permissionNameIndex]
+              ),
+
+        View:
+          mairixUsersIsTrue(
+            row[viewIndex]
+          ),
+
+        Create:
+          mairixUsersIsTrue(
+            row[createIndex]
+          ),
+
+        Edit:
+          mairixUsersIsTrue(
+            row[editIndex]
+          ),
+
+        Delete:
+          mairixUsersIsTrue(
+            row[deleteIndex]
+          ),
+
+        Export:
+          mairixUsersIsTrue(
+            row[exportIndex]
+          ),
+
+        Active:
+          mairixUsersIsTrue(
+            row[activeIndex]
+          )
+
+      });
+
+    }
+  );
+
+
+  return {
+
+    admin:
+      false,
+
+    fullAccess:
+      false,
+
+    permissions:
+      permissions
+
+  };
+
+}
+
+/************************************************
+ * MAIRIX ERP
+ * ROLE PERMISSIONS REPAIR TOOL
+ *
+ * PURPOSE:
+ * Rebuild ROLE_PERMISSIONS using the real roles
+ * and PERMISSION_CATALOG.
+ *
+ * This does NOT bypass security.
+ * It repairs the permission mappings.
+ ************************************************/
+
+function mairixRepairRolePermissions() {
+
+  Logger.log("==========================================");
+  Logger.log("MAIRIX ROLE PERMISSIONS REPAIR");
+  Logger.log("==========================================");
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var rolesSheet = ss.getSheetByName("ROLES");
+  var catalogSheet = ss.getSheetByName("PERMISSION_CATALOG");
+  var mappingSheet = ss.getSheetByName("ROLE_PERMISSIONS");
+
+  if (!rolesSheet) {
+    throw new Error("ROLES sheet not found.");
+  }
+
+  if (!catalogSheet) {
+    throw new Error("PERMISSION_CATALOG sheet not found.");
+  }
+
+  if (!mappingSheet) {
+    throw new Error("ROLE_PERMISSIONS sheet not found.");
+  }
+
+  /************************************************
+   * LOAD ACTIVE ROLES
+   ************************************************/
+
+  var rolesLastRow = rolesSheet.getLastRow();
+
+  if (rolesLastRow < 2) {
+    throw new Error("No roles found in ROLES sheet.");
+  }
+
+  var rolesLastColumn = rolesSheet.getLastColumn();
+
+  var roleHeaders =
+    rolesSheet
+      .getRange(
+        1,
+        1,
+        1,
+        rolesLastColumn
+      )
+      .getDisplayValues()[0];
+
+  var roleCodeIndex =
+    roleHeaders.indexOf("Role Code");
+
+  var roleActiveIndex =
+    roleHeaders.indexOf("Active");
+
+  if (roleCodeIndex === -1) {
+    throw new Error('ROLES is missing "Role Code" header.');
+  }
+
+  if (roleActiveIndex === -1) {
+    throw new Error('ROLES is missing "Active" header.');
+  }
+
+  var roleValues =
+    rolesSheet
+      .getRange(
+        2,
+        1,
+        rolesLastRow - 1,
+        rolesLastColumn
+      )
+      .getDisplayValues();
+
+  var activeRoles = [];
+
+  for (
+    var i = 0;
+    i < roleValues.length;
+    i++
+  ) {
+
+    var roleCode =
+      String(
+        roleValues[i][roleCodeIndex] || ""
+      )
+        .trim()
+        .toUpperCase();
+
+    var active =
+      isMAIRIXTrueValue(
+        roleValues[i][roleActiveIndex]
+      );
+
+    if (
+      roleCode &&
+      active
+    ) {
+
+      activeRoles.push(roleCode);
+
+    }
+
+  }
+
+  if (activeRoles.length === 0) {
+    throw new Error("No active roles found.");
+  }
+
+  Logger.log(
+    "ACTIVE ROLES: " +
+    JSON.stringify(activeRoles)
+  );
+
+
+  /************************************************
+   * LOAD ACTIVE PERMISSIONS
+   ************************************************/
+
+  var catalogLastRow =
+    catalogSheet.getLastRow();
+
+  if (catalogLastRow < 2) {
+    throw new Error(
+      "No permissions found in PERMISSION_CATALOG."
+    );
+  }
+
+  var catalogLastColumn =
+    catalogSheet.getLastColumn();
+
+  var catalogHeaders =
+    catalogSheet
+      .getRange(
+        1,
+        1,
+        1,
+        catalogLastColumn
+      )
+      .getDisplayValues()[0];
+
+  var permissionCodeIndex =
+    catalogHeaders.indexOf(
+      "Permission Code"
+    );
+
+  var permissionActiveIndex =
+    catalogHeaders.indexOf(
+      "Active"
+    );
+
+  if (permissionCodeIndex === -1) {
+    throw new Error(
+      'PERMISSION_CATALOG is missing "Permission Code".'
+    );
+  }
+
+  if (permissionActiveIndex === -1) {
+    throw new Error(
+      'PERMISSION_CATALOG is missing "Active".'
+    );
+  }
+
+  var permissionValues =
+    catalogSheet
+      .getRange(
+        2,
+        1,
+        catalogLastRow - 1,
+        catalogLastColumn
+      )
+      .getDisplayValues();
+
+  var activePermissions = [];
+
+  for (
+    var p = 0;
+    p < permissionValues.length;
+    p++
+  ) {
+
+    var permissionCode =
+      String(
+        permissionValues[p][permissionCodeIndex] || ""
+      )
+        .trim()
+        .toUpperCase();
+
+    var permissionActive =
+      isMAIRIXTrueValue(
+        permissionValues[p][permissionActiveIndex]
+      );
+
+    if (
+      permissionCode &&
+      permissionActive
+    ) {
+
+      activePermissions.push(permissionCode);
+
+    }
+
+  }
+
+  if (activePermissions.length === 0) {
+    throw new Error(
+      "No active permissions found."
+    );
+  }
+
+  Logger.log(
+    "ACTIVE PERMISSIONS COUNT: " +
+    activePermissions.length
+  );
+
+
+  /************************************************
+   * BUILD NEW ROLE PERMISSIONS
+   *
+   * ADMIN:
+   * Full access to everything.
+   *
+   * Other roles:
+   * Start with VIEW access only.
+   *
+   * This keeps the system secure while restoring
+   * valid mappings.
+   ************************************************/
+
+  var newMappings = [];
+
+  for (
+    var r = 0;
+    r < activeRoles.length;
+    r++
+  ) {
+
+    var role =
+      activeRoles[r];
+
+    for (
+      var q = 0;
+      q < activePermissions.length;
+      q++
+    ) {
+
+      var permission =
+        activePermissions[q];
+
+      var isAdmin =
+        role === "ADMIN";
+
+      var view =
+        isAdmin || permission.indexOf("_VIEW") !== -1;
+
+      var create =
+        isAdmin;
+
+      var edit =
+        isAdmin;
+
+      var remove =
+        isAdmin;
+
+      var exportPermission =
+        isAdmin;
+
+      /*
+       * SALESMAN
+       * Explicit sales permissions.
+       */
+
+      if (
+        role === "SALESMAN"
+      ) {
+
+        if (
+          permission === "SALES"
+        ) {
+          view = true;
+        }
+
+        if (
+          permission === "SALES"
+        ) {
+          create = true;
+        }
+
+        if (
+          permission === "SALES"
+        ) {
+          edit = true;
+        }
+
+      }
+
+
+      /*
+       * STOREKEEPER
+       */
+
+      if (
+        role === "STOREKEEPER"
+      ) {
+
+        if (
+          permission.indexOf("INVENTORY_") === 0 ||
+          permission.indexOf("WAREHOUSES_") === 0
+        ) {
+
+          view = true;
+
+        }
+
+      }
+
+
+      /*
+       * ACCOUNTANT
+       */
+
+      if (
+        role === "ACCOUNTANT"
+      ) {
+
+        if (
+          permission.indexOf("FINANCIAL_") === 0 ||
+          permission.indexOf("EXPENSES_") === 0 ||
+          permission.indexOf("COLLECTIONS_") === 0 ||
+          permission.indexOf("TAX_") === 0
+        ) {
+
+          view = true;
+
+        }
+
+      }
+
+
+      /*
+       * MANAGER
+       * Operational visibility.
+       */
+
+      if (
+        role === "MANAGER"
+      ) {
+
+        view = true;
+
+      }
+
+
+      newMappings.push([
+        role,
+        permission,
+        view,
+        create,
+        edit,
+        remove,
+        exportPermission,
+        true
+      ]);
+
+    }
+
+  }
+
+
+  /************************************************
+   * CLEAR OLD INVALID MAPPINGS
+   ************************************************/
+
+  var mappingLastRow =
+    mappingSheet.getLastRow();
+
+  if (mappingLastRow > 1) {
+
+    mappingSheet
+      .getRange(
+        2,
+        1,
+        mappingLastRow - 1,
+        mappingSheet.getLastColumn()
+      )
+      .clearContent();
+
+  }
+
+
+  /************************************************
+   * WRITE NEW MAPPINGS
+   ************************************************/
+
+  if (
+    newMappings.length > 0
+  ) {
+
+    mappingSheet
+      .getRange(
+        2,
+        1,
+        newMappings.length,
+        8
+      )
+      .setValues(
+        newMappings
+      );
+
+  }
+
+
+  SpreadsheetApp.flush();
+
+
+  Logger.log(
+    "ROLE PERMISSIONS CREATED: " +
+    newMappings.length
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX ROLE PERMISSIONS REPAIR: COMPLETE"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success: true,
+
+    activeRoles:
+      activeRoles,
+
+    activePermissions:
+      activePermissions.length,
+
+    mappingsCreated:
+      newMappings.length
+
+  };
+
+}
+
+function mairixAuditCurrentUsers() {
+
+  var sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName("USERS");
+
+  if (!sheet) {
+    throw new Error("USERS sheet not found.");
+  }
+
+  Logger.log("================================");
+  Logger.log("MAIRIX USERS CURRENT AUDIT");
+  Logger.log("================================");
+
+  Logger.log(
+    "LAST ROW: " +
+    sheet.getLastRow()
+  );
+
+  Logger.log(
+    "HEADERS:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      sheet
+        .getRange(
+          1,
+          1,
+          1,
+          sheet.getLastColumn()
+        )
+        .getDisplayValues()[0]
+    )
+  );
+
+
+  if (sheet.getLastRow() < 2) {
+
+    Logger.log(
+      "NO USER RECORDS FOUND."
+    );
+
+    return {
+      success: false,
+      users: 0
+    };
+
+  }
+
+
+  var values =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues();
+
+
+  Logger.log(
+    "USER RECORDS:"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      values,
+      null,
+      2
+    )
+  );
+
+
+  return {
+    success: true,
+    users: values.length
+  };
+
+}

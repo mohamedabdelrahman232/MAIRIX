@@ -1,0 +1,290 @@
+/************************************************
+ * MAIRIX ERP
+ * UI SESSION / USER CONTEXT
+ *
+ * FILE:
+ * 38-MAIRIX_UI_Session.gs
+ *
+ * PURPOSE:
+ *
+ * 1. Resolve authenticated MAIRIX user.
+ * 2. Expose safe UI session context.
+ * 3. Load permissions for UI rendering.
+ * 4. Never trust client-supplied userId.
+ * 5. Never authorize transactions here.
+ *
+ * IMPORTANT:
+ *
+ * Server-side Access Control remains authoritative.
+ ************************************************/
+
+
+/************************************************
+ * GET UI SESSION
+ ************************************************/
+
+function apiGetUISession() {
+
+  try {
+
+    var context =
+      mairixApiCurrentUser();
+
+
+    if (
+      !context ||
+      !context.userId
+    ) {
+
+      throw new Error(
+        "Authenticated MAIRIX user is unavailable."
+      );
+
+    }
+
+
+    var permissions =
+      apiGetMyPermissions();
+
+
+    return mairixApiSuccess(
+      {
+
+        user: {
+
+          userId:
+            context.userId,
+
+          email:
+            context.email ||
+            "",
+
+          name:
+            context.name ||
+            "",
+
+          role:
+            context.role ||
+            "",
+
+          employeeId:
+            context.employeeId ||
+            "",
+
+          salesmanId:
+            context.salesmanId ||
+            ""
+
+        },
+
+        permissions:
+          permissions &&
+          permissions.data !== undefined
+            ? permissions.data
+            : permissions,
+
+        serverTime:
+          new Date()
+
+      },
+
+      "UI session loaded successfully."
+
+    );
+
+  } catch (
+    error
+  ) {
+
+    return mairixApiError(
+      error,
+      "UI_SESSION_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * GET UI PERMISSIONS
+ *
+ * Presentation helper only.
+ *
+ * Does NOT replace permission enforcement.
+ ************************************************/
+
+function apiGetMyPermissions() {
+
+  try {
+
+    var context =
+      mairixApiCurrentUser();
+
+
+    if (
+      !context ||
+      !context.userId
+    ) {
+
+      throw new Error(
+        "Authenticated user context is unavailable."
+      );
+
+    }
+
+
+    if (
+      typeof mairixGetCurrentUserPermissions !==
+      "function"
+    ) {
+
+      throw new Error(
+        "User permissions service is unavailable."
+      );
+
+    }
+
+
+    var result =
+      mairixGetCurrentUserPermissions(
+        context.userId
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Permissions loaded successfully."
+    );
+
+  } catch (
+    error
+  ) {
+
+    return mairixApiError(
+      error,
+      "UI_PERMISSIONS_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * UI SESSION HEALTH
+ ************************************************/
+
+function apiUISessionHealth() {
+
+  try {
+
+    var context =
+      mairixApiCurrentUser();
+
+
+    return mairixApiSuccess(
+      {
+
+        authenticated:
+          true,
+
+        userId:
+          context.userId,
+
+        role:
+          context.role ||
+          ""
+
+      },
+
+      "Authenticated session is valid."
+
+    );
+
+  } catch (
+    error
+  ) {
+
+    return mairixApiError(
+      error,
+      "UI_SESSION_HEALTH_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * UI SESSION SECURITY TEST
+ *
+ * Confirms that supplied user identity is not
+ * accepted as authoritative.
+ ************************************************/
+
+function testMAIRIXUISessionSecurity() {
+
+  var context =
+    mairixApiCurrentUser();
+
+
+  if (
+    !context ||
+    !context.userId
+  ) {
+
+    throw new Error(
+      "Authenticated context is unavailable."
+    );
+
+  }
+
+
+  var session =
+    apiGetUISession();
+
+
+  if (
+    !session ||
+    session.success !== true
+  ) {
+
+    throw new Error(
+      "UI session failed."
+    );
+
+  }
+
+
+  if (
+    !session.data ||
+    !session.data.user
+  ) {
+
+    throw new Error(
+      "UI session user context is missing."
+    );
+
+  }
+
+
+  if (
+    session.data.user.userId !==
+    context.userId
+  ) {
+
+    throw new Error(
+      "UI session user does not match authenticated server context."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX UI SESSION SECURITY: PASS"
+  );
+
+  return true;
+
+}

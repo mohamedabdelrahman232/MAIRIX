@@ -1,0 +1,342 @@
+/************************************************
+ * MAIRIX ERP
+ * 87-MAIRIX_PROMOTION_ENGINE
+ * Central promotion definition and resolution.
+ ************************************************/
+
+var MAIRIX_PROMOTION = MAIRIX_PROMOTION || {};
+
+MAIRIX_PROMOTION.SHEET = 'PROMOTIONS';
+MAIRIX_PROMOTION.LINES_SHEET = 'PROMOTION_LINES';
+
+MAIRIX_PROMOTION.HEADERS = [
+  'PROMOTION_ID','PROMOTION_NAME','DESCRIPTION','START_DATE','END_DATE',
+  'STATUS','PRIORITY','SCOPE_TYPE','WAREHOUSE_CODE','CREATED_AT',
+  'CREATED_BY','UPDATED_AT','UPDATED_BY'
+];
+
+MAIRIX_PROMOTION.LINE_HEADERS = [
+  'PROMOTION_ID','ITEM_CODE','BARCODE','PRICE_MODE','ORIGINAL_PRICE',
+  'PROMOTION_VALUE','PROMOTION_PRICE','ACTIVE','CREATED_AT'
+];
+
+function mairixEnsurePromotionSheets() {
+  mairixEnsureSheetWithHeaders(MAIRIX_PROMOTION.SHEET, MAIRIX_PROMOTION.HEADERS);
+  mairixEnsureSheetWithHeaders(MAIRIX_PROMOTION.LINES_SHEET, MAIRIX_PROMOTION.LINE_HEADERS);
+}
+
+function mairixCreatePromotion(data, actor) {
+  mairixEnsurePromotionSheets();
+  data = data || {};
+  var now = new Date();
+  var id = data.promotionId || mairixGeneratePromotionId();
+  var row = [
+    id,
+    String(data.name || '').trim(),
+    String(data.description || '').trim(),
+    mairixToDate(data.startDate),
+    mairixToDate(data.endDate),
+    'ACTIVE',
+    Number(data.priority || 0),
+    data.scopeType || 'GLOBAL',
+    data.warehouseCode || '',
+    now, actor || '', now, actor || ''
+  ];
+  if (!row[1]) throw new Error('Promotion name is required.');
+  if (!row[3] || !row[4]) throw new Error('Promotion start and end dates are required.');
+  if (row[4].getTime() < row[3].getTime()) throw new Error('Promotion end date cannot be before start date.');
+  mairixAppendRow(MAIRIX_PROMOTION.SHEET, row);
+  (data.lines || []).forEach(function(line) {
+    mairixAddPromotionLine(id, line);
+  });
+  return {success:true, promotionId:id};
+}
+
+function mairixAddPromotionLine(promotionId, line) {
+  line = line || {};
+  var original = Number(line.originalPrice || 0);
+  var mode = String(line.priceMode || '').toUpperCase();
+  var value = Number(line.promotionValue || 0);
+  var finalPrice;
+  if (mode === 'FIXED_PRICE') finalPrice = value;
+  else if (mode === 'PERCENTAGE') finalPrice = original * (1 - value / 100);
+  else throw new Error('Promotion price mode must be FIXED_PRICE or PERCENTAGE.');
+  if (original < 0 || finalPrice < 0) throw new Error('Promotion price cannot be negative.');
+  mairixAppendRow(MAIRIX_PROMOTION.LINES_SHEET, [
+    promotionId,
+    line.itemCode || '',
+    line.barcode || '',
+    mode,
+    original,
+    value,
+    finalPrice,
+    line.active === false ? 'NO' : 'YES',
+    new Date()
+  ]);
+}
+
+function mairixGetPromotionStatus(promotion, now) {
+  now = now || new Date();
+  if (String(promotion.STATUS).toUpperCase() === 'PAUSED') return 'PAUSED';
+  if (String(promotion.STATUS).toUpperCase() === 'CANCELLED') return 'CANCELLED';
+  var start = mairixToDate(promotion.START_DATE);
+  var end = mairixToDate(promotion.END_DATE);
+  if (now < start) return 'SCHEDULED';
+  var endOfDay = new Date(end); endOfDay.setHours(23,59,59,999);
+  if (now > endOfDay) return 'EXPIRED';
+  return 'ACTIVE';
+}
+
+function mairixResolvePromotion(barcode, warehouseCode, atDate) {
+  mairixEnsurePromotionSheets();
+  var heads = mairixReadObjects(MAIRIX_PROMOTION.SHEET);
+  var lines = mairixReadObjects(MAIRIX_PROMOTION.LINES_SHEET);
+  var candidates = [];
+  heads.forEach(function(p) {
+    var status = mairixGetPromotionStatus(p, atDate || new Date());
+    if (status !== 'ACTIVE') return;
+    if (String(p.SCOPE_TYPE).toUpperCase() === 'WAREHOUSE' &&
+        String(p.WAREHOUSE_CODE) !== String(warehouseCode || '')) return;
+    lines.forEach(function(l) {
+      if (String(l.PROMOTION_ID) !== String(p.PROMOTION_ID)) return;
+      if (String(l.BARCODE) !== String(barcode)) return;
+      if (String(l.ACTIVE).toUpperCase() !== 'YES') return;
+      candidates.push({
+        promotionId:p.PROMOTION_ID,
+        promotionName:p.PROMOTION_NAME,
+        priority:Number(p.PRIORITY || 0),
+        originalPrice:Number(l.ORIGINAL_PRICE || 0),
+        priceMode:l.PRICE_MODE,
+        promotionValue:Number(l.PROMOTION_VALUE || 0),
+        promotionPrice:Number(l.PROMOTION_PRICE || 0)
+      });
+    });
+  });
+  candidates.sort(function(a,b) {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return a.promotionPrice - b.promotionPrice;
+  });
+  return candidates.length ? candidates[0] : null;
+}
+
+function mairixGeneratePromotionId() {
+  return 'PRM-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMddHHmmss') +
+    '-' + Math.floor(Math.random() * 900 + 100);
+}
+/************************************************
+ * MAIRIX ERP
+ * 88-MAIRIX_PROMOTION_UI_API
+ * Server-side APIs for promotion administration.
+ ************************************************/
+
+function mairixApiCreatePromotion(payload, actor) {
+  mairixRequirePermissionSafe('PROMOTIONS_CREATE', actor);
+  return mairixCreatePromotion(payload, actor);
+}
+
+function mairixApiAddPromotionLine(promotionId, line, actor) {
+  mairixRequirePermissionSafe('PROMOTIONS_EDIT', actor);
+  mairixAddPromotionLine(promotionId, line);
+  return {success:true};
+}
+
+function mairixApiSetPromotionStatus(promotionId, status, actor) {
+  mairixRequirePermissionSafe('PROMOTIONS_PAUSE', actor);
+  status = String(status || '').toUpperCase();
+  if (['ACTIVE','PAUSED','CANCELLED'].indexOf(status) < 0) throw new Error('Invalid promotion status.');
+  var result = mairixUpdateObjectByKey(MAIRIX_PROMOTION.SHEET, 'PROMOTION_ID', promotionId, {
+    STATUS:status, UPDATED_AT:new Date(), UPDATED_BY:actor || ''
+  });
+  if (!result) throw new Error('Promotion not found.');
+  return {success:true};
+}
+
+function mairixApiGetPromotionCatalog(filters, actor) {
+  mairixRequirePermissionSafe('PROMOTIONS_VIEW', actor);
+  filters = filters || {};
+  var now = filters.atDate ? mairixToDate(filters.atDate) : new Date();
+  var promotions = mairixReadObjects(MAIRIX_PROMOTION.SHEET);
+  var lines = mairixReadObjects(MAIRIX_PROMOTION.LINES_SHEET);
+  var output = [];
+  promotions.forEach(function(p) {
+    if (mairixGetPromotionStatus(p, now) !== 'ACTIVE') return;
+    if (filters.warehouseCode &&
+        String(p.SCOPE_TYPE).toUpperCase() === 'WAREHOUSE' &&
+        String(p.WAREHOUSE_CODE) !== String(filters.warehouseCode)) return;
+    lines.forEach(function(l) {
+      if (String(l.PROMOTION_ID) !== String(p.PROMOTION_ID) || String(l.ACTIVE).toUpperCase() !== 'YES') return;
+      output.push({
+        promotionId:p.PROMOTION_ID,
+        promotionName:p.PROMOTION_NAME,
+        barcode:l.BARCODE,
+        itemCode:l.ITEM_CODE,
+        originalPrice:Number(l.ORIGINAL_PRICE || 0),
+        promotionPrice:Number(l.PROMOTION_PRICE || 0),
+        savings:Number(l.ORIGINAL_PRICE || 0) - Number(l.PROMOTION_PRICE || 0),
+        startDate:p.START_DATE,
+        endDate:p.END_DATE
+      });
+    });
+  });
+  return {success:true, rows:output};
+}
+/************************************************
+ * MAIRIX ERP
+ * 89-MAIRIX_PROMOTION_REPORTS
+ * Promotion analytics based on posted sales data.
+ ************************************************/
+
+function mairixGetPromotionPerformanceReport(fromDate, toDate, promotionId) {
+  var sales = mairixReadObjectsSafe('SALES');
+  var lines = mairixReadObjectsSafe('SALES_LINES');
+  var from = fromDate ? mairixToDate(fromDate) : new Date(0);
+  var to = toDate ? mairixToDate(toDate) : new Date(8640000000000000);
+  var result = {};
+
+  lines.forEach(function(line) {
+    var pid = line.PROMOTION_ID || line.Promotion_ID || '';
+    if (!pid || (promotionId && String(pid) !== String(promotionId))) return;
+    var sale = mairixFindByPossibleKeys(sales, ['SALE_ID','TRANSACTION_ID','REFERENCE_ID'], line.SALE_ID || line.TRANSACTION_ID || line.REFERENCE_ID);
+    var date = sale ? mairixToDate(sale.DATE || sale.CREATED_AT) : null;
+    if (date && (date < from || date > to)) return;
+    if (!result[pid]) result[pid] = {
+      promotionId:pid, quantity:0, sales:0, savings:0, transactions:{}
+    };
+    var q = Number(line.QTY || line.QUANTITY || 0);
+    var finalAmount = Number(line.FINAL_TOTAL || line.LINE_TOTAL || 0);
+    var original = Number(line.ORIGINAL_PRICE || line.UNIT_PRICE || 0) * q;
+    result[pid].quantity += q;
+    result[pid].sales += finalAmount;
+    result[pid].savings += Math.max(0, original - finalAmount);
+    if (sale) result[pid].transactions[String(sale.SALE_ID || sale.TRANSACTION_ID || sale.REFERENCE_ID)] = true;
+  });
+
+  return Object.keys(result).map(function(k) {
+    var r = result[k];
+    r.transactionCount = Object.keys(r.transactions).length;
+    delete r.transactions;
+    return r;
+  });
+}
+
+function mairixApiPromotionPerformance(fromDate, toDate, promotionId, actor) {
+  mairixRequirePermissionSafe('PROMOTION_REPORTS_VIEW', actor);
+  return {success:true, rows:mairixGetPromotionPerformanceReport(fromDate,toDate,promotionId)};
+}
+/************************************************
+ * MAIRIX ERP
+ * 90-MAIRIX_PRICING_ENGINE
+ * Single source of truth for final sale line pricing.
+ ************************************************/
+
+function mairixResolveFinalPrice(request) {
+  request = request || {};
+  var barcode = String(request.barcode || '');
+  if (!barcode) throw new Error('Barcode is required for pricing.');
+  var basePrice = Number(request.basePrice || 0);
+  var qty = Number(request.quantity || 1);
+  var promotion = mairixResolvePromotion(barcode, request.warehouseCode, request.atDate);
+
+  var itemDiscountPercent = Number(request.itemDiscountPercent || 0);
+  var invoiceDiscountPercent = Number(request.invoiceDiscountPercent || 0);
+
+  var unitPrice = basePrice;
+  var pricingSource = 'BASE_PRICE';
+  var appliedPromotionId = '';
+  var appliedDiscountPercent = 0;
+
+  if (promotion) {
+    unitPrice = promotion.promotionPrice;
+    pricingSource = 'PROMOTION';
+    appliedPromotionId = promotion.promotionId;
+    itemDiscountPercent = 0;
+    invoiceDiscountPercent = 0;
+  } else if (itemDiscountPercent > 0) {
+    unitPrice = basePrice * (1 - itemDiscountPercent / 100);
+    pricingSource = 'ITEM_DISCOUNT';
+    appliedDiscountPercent = itemDiscountPercent;
+    invoiceDiscountPercent = 0;
+  } else if (invoiceDiscountPercent > 0) {
+    unitPrice = basePrice * (1 - invoiceDiscountPercent / 100);
+    pricingSource = 'INVOICE_DISCOUNT';
+    appliedDiscountPercent = invoiceDiscountPercent;
+  }
+
+  var originalTotal = basePrice * qty;
+  var finalTotal = unitPrice * qty;
+  return {
+    barcode:barcode,
+    quantity:qty,
+    originalUnitPrice:basePrice,
+    finalUnitPrice:unitPrice,
+    originalTotal:originalTotal,
+    finalTotal:finalTotal,
+    savings:Math.max(0, originalTotal - finalTotal),
+    pricingSource:pricingSource,
+    promotionId:appliedPromotionId,
+    promotion:promotion,
+    appliedDiscountPercent:appliedDiscountPercent,
+    discountBlockedByPromotion:!!promotion
+  };
+}
+
+function mairixApiResolvePrice(request, actor) {
+  mairixRequirePermissionSafe('SALES', actor);
+  return {success:true, pricing:mairixResolveFinalPrice(request)};
+}
+
+function mairixCalculateInvoiceSavings(lines) {
+  return (lines || []).reduce(function(sum,line) {
+    return sum + Number(line.savings || 0);
+  }, 0);
+}
+/************************************************
+ * MAIRIX ERP
+ * 91-MAIRIX_PROMOTION_TESTS
+ ************************************************/
+
+function mairixRunPromotionTests() {
+  var results = [];
+  function test(name, fn) {
+    try { fn(); results.push({name:name,success:true}); }
+    catch(e) { results.push({name:name,success:false,error:String(e)}); }
+  }
+
+  test('PROMOTION BLOCKS OTHER DISCOUNTS', function() {
+    var old = mairixResolvePromotion;
+    mairixResolvePromotion = function() {
+      return {promotionId:'PRM-T',promotionPrice:80,originalPrice:100};
+    };
+    var r = mairixResolveFinalPrice({
+      barcode:'TEST',basePrice:100,quantity:2,
+      itemDiscountPercent:10,invoiceDiscountPercent:5
+    });
+    mairixResolvePromotion = old;
+    if (r.finalUnitPrice !== 80 || r.pricingSource !== 'PROMOTION') throw new Error('Promotion priority failed.');
+  });
+
+  test('ITEM DISCOUNT BLOCKS INVOICE DISCOUNT', function() {
+    var old = mairixResolvePromotion;
+    mairixResolvePromotion = function(){ return null; };
+    var r = mairixResolveFinalPrice({
+      barcode:'TEST',basePrice:100,itemDiscountPercent:10,invoiceDiscountPercent:5
+    });
+    mairixResolvePromotion = old;
+    if (r.finalUnitPrice !== 90 || r.pricingSource !== 'ITEM_DISCOUNT') throw new Error('Item discount priority failed.');
+  });
+
+  test('INVOICE DISCOUNT APPLIES WHEN NO HIGHER RULE EXISTS', function() {
+    var old = mairixResolvePromotion;
+    mairixResolvePromotion = function(){ return null; };
+    var r = mairixResolveFinalPrice({
+      barcode:'TEST',basePrice:100,invoiceDiscountPercent:5
+    });
+    mairixResolvePromotion = old;
+    if (r.finalUnitPrice !== 95) throw new Error('Invoice discount failed.');
+  });
+
+  var failed = results.filter(function(x){return !x.success;});
+  Logger.log(JSON.stringify({total:results.length,passed:results.length-failed.length,failed:failed.length,results:results},null,2));
+  if (failed.length) throw new Error('Promotion tests failed.');
+  return {success:true,results:results};
+}

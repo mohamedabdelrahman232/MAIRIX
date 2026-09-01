@@ -1,0 +1,64 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 65-MAIRIX_ExpenseIntegration.gs
+ *
+ * Expense integration.
+ *
+ * Allocation method remains a business rule in
+ * the Expense Core; this facade never decides it.
+ ************************************************/
+
+function mairixE2EExpenseCreate(data) {
+
+  if (typeof apiCreateExpense !== "function") {
+    throw new Error("apiCreateExpense() is not available.");
+  }
+
+  if (!data) {
+    throw new Error("Expense data is required.");
+  }
+
+  var request = Object.assign({}, data);
+
+  delete request.userId;
+  delete request.serverUserId;
+  delete request.createdBy;
+  delete request.updatedBy;
+
+  var result = apiCreateExpense(request);
+
+  if (!result || result.success !== true) {
+    throw new Error(
+      "Expense integration failed: " +
+      JSON.stringify(result && result.error ? result.error : result)
+    );
+  }
+
+  return result;
+}
+
+function testMairixExpenseIntegrationContract() {
+
+  [
+    "apiCreateExpense",
+    "createExpense",
+    "mairixApiRequirePermission"
+  ].forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Missing Expense function: " + name);
+    }
+  });
+
+  Logger.log("65 EXPENSE INTEGRATION: PASS");
+
+  return {
+    success: true,
+    module: "EXPENSE",
+    classifications: ["SHP", "TRN", "SAL", "COM", "OTHER"],
+    allocationMethods: [
+      "PURCHASE_INVOICE",
+      "ITEM",
+      "GENERAL"
+    ]
+  };
+}

@@ -1,0 +1,1658 @@
+<!--
+============================================================
+MAIRIX ERP
+SALES SCREEN
+
+FILE:
+40-MAIRIX_UI_Sales.html
+
+PURPOSE:
+
+Salesman-facing sales screen.
+
+VISIBLE:
+
+- Customer
+- Loyalty Points
+- Products
+- Quantity
+- Sale Price
+- Discount
+- Payment Method
+- Warehouse
+
+NOT VISIBLE:
+
+- Cost
+- WAC
+- Profit
+- Commission
+- Sensitive balances
+- Reports
+
+IMPORTANT:
+
+The UI prepares a request only.
+
+The server remains authoritative for:
+
+- User identity
+- Permission
+- Warehouse authorization
+- Product validation
+- Stock validation
+- WAC validation
+- Discount validation
+- Totals
+- Transaction
+- Rollback
+============================================================
+-->
+
+<style>
+
+  .mairix-sales {
+
+    width:
+      100%;
+
+  }
+
+
+  .mairix-sales-card {
+
+    background:
+      #ffffff;
+
+    border:
+      1px solid #e0e0e0;
+
+    border-radius:
+      10px;
+
+    padding:
+      16px;
+
+    margin-bottom:
+      14px;
+
+  }
+
+
+  .mairix-sales-grid {
+
+    display:
+      grid;
+
+    grid-template-columns:
+      repeat(
+        auto-fit,
+        minmax(
+          180px,
+          1fr
+        )
+      );
+
+    gap:
+      12px;
+
+  }
+
+
+  .mairix-sales-items {
+
+    width:
+      100%;
+
+    overflow-x:
+      auto;
+
+  }
+
+
+  .mairix-sales-table {
+
+    width:
+      100%;
+
+    border-collapse:
+      collapse;
+
+    min-width:
+      760px;
+
+  }
+
+
+  .mairix-sales-table th,
+  .mairix-sales-table td {
+
+    border-bottom:
+      1px solid #eeeeee;
+
+    padding:
+      8px;
+
+    text-align:
+      right;
+
+    vertical-align:
+      middle;
+
+  }
+
+
+  .mairix-sales-table th {
+
+    font-size:
+      12px;
+
+    color:
+      #666;
+
+  }
+
+
+  .mairix-sales-total {
+
+    display:
+      flex;
+
+    justify-content:
+      space-between;
+
+    padding:
+      10px 0;
+
+    border-top:
+      1px solid #ddd;
+
+    font-weight:
+      700;
+
+  }
+
+
+  .mairix-sales-actions {
+
+    display:
+      flex;
+
+    gap:
+      8px;
+
+    flex-wrap:
+      wrap;
+
+  }
+
+
+  .mairix-sales-primary {
+
+    min-height:
+      44px;
+
+    padding:
+      9px 18px;
+
+    border:
+      0;
+
+    border-radius:
+      7px;
+
+    background:
+      #222;
+
+    color:
+      #fff;
+
+    cursor:
+      pointer;
+
+  }
+
+
+  .mairix-sales-primary:disabled {
+
+    opacity:
+      0.5;
+
+    cursor:
+      not-allowed;
+
+  }
+
+
+  .mairix-sales-secondary {
+
+    min-height:
+      44px;
+
+    padding:
+      9px 18px;
+
+    border:
+      1px solid #ccc;
+
+    border-radius:
+      7px;
+
+    background:
+      #fff;
+
+    cursor:
+      pointer;
+
+  }
+
+
+  .mairix-sales-status {
+
+    padding:
+      10px;
+
+    border-radius:
+      7px;
+
+    margin-bottom:
+      12px;
+
+    display:
+      none;
+
+  }
+
+
+  .mairix-sales-status.is-visible {
+
+    display:
+      block;
+
+  }
+
+
+  .mairix-sales-points {
+
+    font-weight:
+      800;
+
+  }
+
+</style>
+
+
+<div
+  id="mairixSalesScreen"
+  class="mairix-sales"
+>
+
+  <div
+    id="mairixSalesStatus"
+    class="mairix-sales-status"
+  ></div>
+
+
+  <div
+    class="mairix-sales-card"
+  >
+
+    <div
+      class="mairix-sales-grid"
+    >
+
+      <div
+        id="mairixSalesCustomerHost"
+      ></div>
+
+
+      <div
+        class="mairix-field"
+      >
+
+        <label
+          class="mairix-field-label"
+        >
+          نقاط العميل
+        </label>
+
+        <input
+          id="mairixSalesCustomerPoints"
+          class="mairix-input mairix-readonly"
+          type="text"
+          readonly
+          value="0"
+        >
+
+      </div>
+
+
+      <div
+        id="mairixSalesWarehouseHost"
+      ></div>
+
+
+      <div
+        class="mairix-field"
+      >
+
+        <label
+          class="mairix-field-label"
+        >
+          طريقة الدفع
+        </label>
+
+
+        <select
+          id="mairixSalesPaymentMethod"
+          class="mairix-select"
+        >
+
+          <option value="">
+            اختر طريقة الدفع
+          </option>
+
+          <option value="CASH">
+            نقدي
+          </option>
+
+          <option value="CREDIT">
+            آجل
+          </option>
+
+        </select>
+
+      </div>
+
+
+      <div
+        class="mairix-field"
+      >
+
+        <label
+          class="mairix-field-label"
+        >
+          الخصم
+        </label>
+
+
+        <select
+          id="mairixSalesDiscount"
+          class="mairix-select"
+        >
+
+          <option value="0">
+            0%
+          </option>
+
+          <option value="5">
+            5%
+          </option>
+
+          <option value="7">
+            7%
+          </option>
+
+          <option value="10">
+            10%
+          </option>
+
+        </select>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <div
+    class="mairix-sales-card"
+  >
+
+    <div
+      class="mairix-sales-items"
+    >
+
+      <table
+        class="mairix-sales-table"
+      >
+
+        <thead>
+
+          <tr>
+
+            <th>
+              الصنف
+            </th>
+
+            <th>
+              الكمية
+            </th>
+
+            <th>
+              السعر
+            </th>
+
+            <th>
+              الإجمالي
+            </th>
+
+            <th>
+              إجراء
+            </th>
+
+          </tr>
+
+        </thead>
+
+
+        <tbody
+          id="mairixSalesItemsBody"
+        ></tbody>
+
+      </table>
+
+    </div>
+
+
+    <div
+      class="mairix-sales-total"
+    >
+
+      <span>
+        الإجمالي
+      </span>
+
+      <span
+        id="mairixSalesGrandTotal"
+      >
+        0.000
+      </span>
+
+    </div>
+
+  </div>
+
+
+  <div
+    class="mairix-sales-card"
+  >
+
+    <div
+      class="mairix-sales-actions"
+    >
+
+      <button
+        id="mairixSalesAddItem"
+        type="button"
+        class="mairix-sales-secondary"
+      >
+        إضافة صنف
+      </button>
+
+
+      <button
+        id="mairixSalesClear"
+        type="button"
+        class="mairix-sales-secondary"
+      >
+        تفريغ
+      </button>
+
+
+      <button
+        id="mairixSalesSubmit"
+        type="button"
+        class="mairix-sales-primary"
+      >
+        تسجيل البيع
+      </button>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+<script>
+
+/************************************************************
+ * SALES SCREEN STATE
+ ************************************************************/
+
+var MAIRIX_UI_SALES_STATE = {
+
+  customer:
+    null,
+
+  warehouse:
+    null,
+
+  items:
+    [],
+
+  submitting:
+    false
+
+};
+
+
+/************************************************************
+ * NUMBER
+ ************************************************************/
+
+function mairixUISalesNumber(
+  value
+) {
+
+  var number =
+    Number(
+      value
+    );
+
+
+  if (
+    isNaN(number)
+  ) {
+
+    return 0;
+
+  }
+
+
+  return Number(
+    number.toFixed(
+      3
+    )
+  );
+
+}
+
+
+/************************************************************
+ * RENDER
+ ************************************************************/
+
+function mairixUISalesRender() {
+
+  var body =
+    document.getElementById(
+      "mairixSalesItemsBody"
+    );
+
+
+  if (!body) {
+
+    return;
+
+  }
+
+
+  body.innerHTML = "";
+
+
+  MAIRIX_UI_SALES_STATE.items.forEach(
+    function(item, index) {
+
+      var row =
+        document.createElement(
+          "tr"
+        );
+
+
+      var productCell =
+        document.createElement(
+          "td"
+        );
+
+
+      var productHost =
+        document.createElement(
+          "div"
+        );
+
+
+      productCell.appendChild(
+        productHost
+      );
+
+
+      var quantityCell =
+        document.createElement(
+          "td"
+        );
+
+
+      var quantity =
+        document.createElement(
+          "input"
+        );
+
+      quantity.type =
+        "number";
+
+      quantity.min =
+        "0.001";
+
+      quantity.step =
+        "0.001";
+
+      quantity.className =
+        "mairix-input";
+
+      quantity.value =
+        item.quantity ||
+        "";
+
+
+      quantity.addEventListener(
+        "input",
+        function() {
+
+          item.quantity =
+            mairixUISalesNumber(
+              quantity.value
+            );
+
+          mairixUISalesRenderTotals();
+
+        }
+      );
+
+
+      quantityCell.appendChild(
+        quantity
+      );
+
+
+      var priceCell =
+        document.createElement(
+          "td"
+        );
+
+
+      var price =
+        document.createElement(
+          "input"
+        );
+
+      price.type =
+        "number";
+
+      price.min =
+        "0";
+
+      price.step =
+        "0.001";
+
+      price.className =
+        "mairix-input";
+
+      price.value =
+        item.unitPrice ||
+        "";
+
+
+      price.addEventListener(
+        "input",
+        function() {
+
+          item.unitPrice =
+            mairixUISalesNumber(
+              price.value
+            );
+
+          mairixUISalesRenderTotals();
+
+        }
+      );
+
+
+      priceCell.appendChild(
+        price
+      );
+
+
+      var totalCell =
+        document.createElement(
+          "td"
+        );
+
+
+      var total =
+        mairixUISalesNumber(
+          item.quantity *
+          item.unitPrice *
+          (
+            1 -
+            Number(
+              document.getElementById(
+                "mairixSalesDiscount"
+              ).value ||
+              0
+            ) / 100
+          )
+        );
+
+
+      totalCell.textContent =
+        total.toFixed(
+          3
+        );
+
+
+      var actionCell =
+        document.createElement(
+          "td"
+        );
+
+
+      var remove =
+        document.createElement(
+          "button"
+        );
+
+      remove.type =
+        "button";
+
+      remove.className =
+        "mairix-button mairix-button-small";
+
+      remove.textContent =
+        "حذف";
+
+
+      remove.addEventListener(
+        "click",
+        function() {
+
+          MAIRIX_UI_SALES_STATE.items.splice(
+            index,
+            1
+          );
+
+          mairixUISalesRender();
+
+        }
+      );
+
+
+      actionCell.appendChild(
+        remove
+      );
+
+
+      row.appendChild(
+        productCell
+      );
+
+      row.appendChild(
+        quantityCell
+      );
+
+      row.appendChild(
+        priceCell
+      );
+
+      row.appendChild(
+        totalCell
+      );
+
+      row.appendChild(
+        actionCell
+      );
+
+
+      body.appendChild(
+        row
+      );
+
+
+      var dropdown =
+        mairixUICreateProductDropdown(
+          {
+
+            onSelect:
+              function(product) {
+
+                item.product =
+                  product;
+
+                item.productCode =
+                  mairixUIDropdownGetProductCode(
+                    product
+                  );
+
+                item.barcode =
+                  product.barcode ||
+                  "";
+
+                item.productName =
+                  product.productName ||
+                  product.name ||
+                  "";
+
+                if (
+                  item.unitPrice ===
+                  undefined ||
+                  item.unitPrice ===
+                  null ||
+                  item.unitPrice ===
+                  0
+                ) {
+
+                  item.unitPrice =
+                    mairixUISalesNumber(
+                      product.salePrice ||
+                      0
+                    );
+
+                }
+
+
+                mairixUISalesRender();
+
+              }
+
+          }
+        );
+
+
+      productHost.appendChild(
+        dropdown
+      );
+
+
+      if (
+        item.productName
+      ) {
+
+        var input =
+          dropdown.getInput();
+
+
+        if (input) {
+
+          input.value =
+            item.productName;
+
+        }
+
+      }
+
+    }
+  );
+
+
+  mairixUISalesRenderTotals();
+
+}
+
+
+/************************************************************
+ * TOTALS
+ *
+ * Display only.
+ *
+ * Server recalculates authoritative totals.
+ ************************************************************/
+
+function mairixUISalesRenderTotals() {
+
+  var discount =
+    Number(
+      document.getElementById(
+        "mairixSalesDiscount"
+      ).value ||
+      0
+    );
+
+
+  var total =
+    0;
+
+
+  MAIRIX_UI_SALES_STATE.items.forEach(
+    function(item) {
+
+      total +=
+        Number(
+          item.quantity ||
+          0
+        ) *
+        Number(
+          item.unitPrice ||
+          0
+        );
+
+    }
+  );
+
+
+  total *=
+    (
+      1 -
+      discount / 100
+    );
+
+
+  total =
+    mairixUISalesNumber(
+      total
+    );
+
+
+  var totalElement =
+    document.getElementById(
+      "mairixSalesGrandTotal"
+    );
+
+
+  if (totalElement) {
+
+    totalElement.textContent =
+      total.toFixed(
+        3
+      );
+
+  }
+
+}
+
+
+/************************************************************
+ * CUSTOMER SELECTED
+ ************************************************************/
+
+function mairixUISalesSetCustomer(
+  customer
+) {
+
+  MAIRIX_UI_SALES_STATE.customer =
+    customer;
+
+
+  if (
+    typeof mairixUIApiGetCustomerLoyaltyPoints !==
+    "function"
+  ) {
+
+    return;
+
+  }
+
+
+  mairixUIApiGetCustomerLoyaltyPoints(
+    mairixUIDropdownGetCustomerCode(
+      customer
+    ),
+    function(result) {
+
+      var points =
+        0;
+
+
+      if (
+        result &&
+        result.success === true
+      ) {
+
+        if (
+          result.data &&
+          result.data.loyaltyPoints !==
+          undefined
+        ) {
+
+          points =
+            result.data.loyaltyPoints;
+
+        }
+
+      }
+
+
+      var element =
+        document.getElementById(
+          "mairixSalesCustomerPoints"
+        );
+
+
+      if (element) {
+
+        element.value =
+          Number(
+            points ||
+            0
+          );
+
+      }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * ADD ITEM
+ ************************************************************/
+
+function mairixUISalesAddItem() {
+
+  MAIRIX_UI_SALES_STATE.items.push(
+
+    {
+
+      product:
+        null,
+
+      productCode:
+        "",
+
+      barcode:
+        "",
+
+      productName:
+        "",
+
+      quantity:
+        1,
+
+      unitPrice:
+        0
+
+    }
+
+  );
+
+
+  mairixUISalesRender();
+
+}
+
+
+/************************************************************
+ * CLEAR
+ ************************************************************/
+
+function mairixUISalesClear() {
+
+  MAIRIX_UI_SALES_STATE = {
+
+    customer:
+      null,
+
+    warehouse:
+      null,
+
+    items:
+      [],
+
+    submitting:
+      false
+
+  };
+
+
+  var points =
+    document.getElementById(
+      "mairixSalesCustomerPoints"
+    );
+
+
+  if (points) {
+
+    points.value =
+      "0";
+
+  }
+
+
+  mairixUISalesRender();
+
+}
+
+
+/************************************************************
+ * VALIDATE UI INPUT
+ *
+ * This is UX validation only.
+ * Server validation remains mandatory.
+ ************************************************************/
+
+function mairixUISalesValidate() {
+
+  if (
+    !MAIRIX_UI_SALES_STATE.customer
+  ) {
+
+    throw new Error(
+      "يجب اختيار العميل."
+    );
+
+  }
+
+
+  if (
+    !MAIRIX_UI_SALES_STATE.warehouse
+  ) {
+
+    throw new Error(
+      "يجب اختيار المخزن."
+    );
+
+  }
+
+
+  if (
+    MAIRIX_UI_SALES_STATE.items.length ===
+    0
+  ) {
+
+    throw new Error(
+      "يجب إضافة صنف واحد على الأقل."
+    );
+
+  }
+
+
+  var paymentMethod =
+    document.getElementById(
+      "mairixSalesPaymentMethod"
+    ).value;
+
+
+  if (!paymentMethod) {
+
+    throw new Error(
+      "يجب اختيار طريقة الدفع."
+    );
+
+  }
+
+
+  MAIRIX_UI_SALES_STATE.items.forEach(
+    function(item, index) {
+
+      if (
+        !item.productCode
+      ) {
+
+        throw new Error(
+          "يجب اختيار الصنف في السطر " +
+          (
+            index + 1
+          ) +
+          "."
+        );
+
+      }
+
+
+      if (
+        Number(
+          item.quantity
+        ) <= 0
+      ) {
+
+        throw new Error(
+          "الكمية غير صحيحة في السطر " +
+          (
+            index + 1
+          ) +
+          "."
+        );
+
+      }
+
+
+      if (
+        Number(
+          item.unitPrice
+        ) < 0
+      ) {
+
+        throw new Error(
+          "السعر غير صحيح في السطر " +
+          (
+            index + 1
+          ) +
+          "."
+        );
+
+      }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * BUILD SERVER PAYLOAD
+ *
+ * No client userId.
+ *
+ * Server identifies authenticated user.
+ ************************************************************/
+
+function mairixUISalesBuildPayload() {
+
+  var customerCode =
+    mairixUIDropdownGetCustomerCode(
+      MAIRIX_UI_SALES_STATE.customer
+    );
+
+
+  var warehouseCode =
+    mairixUIDropdownGetWarehouseCode(
+      MAIRIX_UI_SALES_STATE.warehouse
+    );
+
+
+  var paymentMethod =
+    document.getElementById(
+      "mairixSalesPaymentMethod"
+    ).value;
+
+
+  var discount =
+    Number(
+      document.getElementById(
+        "mairixSalesDiscount"
+      ).value ||
+      0
+    );
+
+
+  var items =
+    MAIRIX_UI_SALES_STATE.items.map(
+      function(item) {
+
+        return {
+
+          productCode:
+            item.productCode,
+
+          barcode:
+            item.barcode,
+
+          productName:
+            item.productName,
+
+          quantity:
+            Number(
+              item.quantity
+            ),
+
+          unitPrice:
+            Number(
+              item.unitPrice
+            )
+
+        };
+
+      }
+    );
+
+
+  return {
+
+    customerCode:
+      customerCode,
+
+    warehouseCode:
+      warehouseCode,
+
+    paymentMethod:
+      paymentMethod,
+
+    discount:
+      discount,
+
+    items:
+      items
+
+  };
+
+}
+
+
+/************************************************************
+ * SUBMIT
+ ************************************************************/
+
+function mairixUISalesSubmit() {
+
+  if (
+    MAIRIX_UI_SALES_STATE.submitting
+  ) {
+
+    return;
+
+  }
+
+
+  try {
+
+    mairixUISalesValidate();
+
+
+    var payload =
+      mairixUISalesBuildPayload();
+
+
+    MAIRIX_UI_SALES_STATE.submitting =
+      true;
+
+
+    var button =
+      document.getElementById(
+        "mairixSalesSubmit"
+      );
+
+
+    if (button) {
+
+      button.disabled =
+        true;
+
+    }
+
+
+    if (
+      typeof mairixUIApiCreateSale !==
+      "function"
+    ) {
+
+      throw new Error(
+        "خدمة تسجيل البيع غير متاحة."
+      );
+
+    }
+
+
+    mairixUIApiCreateSale(
+      payload,
+      function(result) {
+
+        MAIRIX_UI_SALES_STATE.submitting =
+          false;
+
+
+        if (button) {
+
+          button.disabled =
+            false;
+
+        }
+
+
+        if (
+          !result ||
+          result.success !== true
+        ) {
+
+          mairixUISalesShowStatus(
+            (
+              result &&
+              result.error &&
+              result.error.message
+            ) ||
+            "تعذر تسجيل البيع.",
+            true
+          );
+
+          return;
+
+        }
+
+
+        mairixUISalesShowStatus(
+          "تم تسجيل البيع بنجاح.",
+          false
+        );
+
+
+        mairixUISalesClear();
+
+      }
+    );
+
+  } catch (
+    error
+  ) {
+
+    MAIRIX_UI_SALES_STATE.submitting =
+      false;
+
+
+    var button =
+      document.getElementById(
+        "mairixSalesSubmit"
+      );
+
+
+    if (button) {
+
+      button.disabled =
+        false;
+
+    }
+
+
+    mairixUISalesShowStatus(
+      error.message ||
+      String(
+        error
+      ),
+      true
+    );
+
+  }
+
+}
+
+
+/************************************************************
+ * STATUS
+ ************************************************************/
+
+function mairixUISalesShowStatus(
+  message,
+  isError
+) {
+
+  var element =
+    document.getElementById(
+      "mairixSalesStatus"
+    );
+
+
+  if (!element) {
+
+    return;
+
+  }
+
+
+  element.textContent =
+    message ||
+    "";
+
+
+  element.classList.add(
+    "is-visible"
+  );
+
+
+  /*
+   * No fixed colors here.
+   *
+   * The global UI theme may style status
+   * states later.
+   */
+
+  if (
+    isError
+  ) {
+
+    element.setAttribute(
+      "data-state",
+      "error"
+    );
+
+  } else {
+
+    element.setAttribute(
+      "data-state",
+      "success"
+    );
+
+  }
+
+}
+
+
+/************************************************************
+ * MOUNT SALES SCREEN
+ ************************************************************/
+
+function mairixUISalesMount(
+  root
+) {
+
+  if (!root) {
+
+    return;
+
+  }
+
+
+  /*
+   * The HTML file is expected to be included
+   * in the Web App template.
+   *
+   * This function is intentionally lightweight.
+   */
+
+  var customerHost =
+    document.getElementById(
+      "mairixSalesCustomerHost"
+    );
+
+
+  if (
+    customerHost &&
+    typeof mairixUICreateCustomerDropdown ===
+    "function"
+  ) {
+
+    customerHost.innerHTML =
+      "";
+
+
+    var customerDropdown =
+      mairixUICreateCustomerDropdown(
+        {
+
+          onSelect:
+            mairixUISalesSetCustomer
+
+        }
+      );
+
+
+    customerHost.appendChild(
+      customerDropdown
+    );
+
+  }
+
+
+  var warehouseHost =
+    document.getElementById(
+      "mairixSalesWarehouseHost"
+    );
+
+
+  if (
+    warehouseHost &&
+    typeof mairixUICreateWarehouseDropdown ===
+    "function"
+  ) {
+
+    warehouseHost.innerHTML =
+      "";
+
+
+    var warehouseDropdown =
+      mairixUICreateWarehouseDropdown(
+        {
+
+          onSelect:
+            function(warehouse) {
+
+              MAIRIX_UI_SALES_STATE.warehouse =
+                warehouse;
+
+            }
+
+        }
+      );
+
+
+    warehouseHost.appendChild(
+      warehouseDropdown
+    );
+
+  }
+
+
+  document
+    .getElementById(
+      "mairixSalesAddItem"
+    )
+    .addEventListener(
+      "click",
+      mairixUISalesAddItem
+    );
+
+
+  document
+    .getElementById(
+      "mairixSalesClear"
+    )
+    .addEventListener(
+      "click",
+      mairixUISalesClear
+    );
+
+
+  document
+    .getElementById(
+      "mairixSalesSubmit"
+    )
+    .addEventListener(
+      "click",
+      mairixUISalesSubmit
+    );
+
+
+  document
+    .getElementById(
+      "mairixSalesDiscount"
+    )
+    .addEventListener(
+      "change",
+      mairixUISalesRenderTotals
+    );
+
+
+  mairixUISalesAddItem();
+
+}
+
+</script>

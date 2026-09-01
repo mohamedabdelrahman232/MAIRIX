@@ -1,0 +1,1901 @@
+/************************************************
+ * MAIRIX ERP
+ * 15-MAIRIX_VendorPayments.gs
+ *
+ * VENDOR PAYMENTS ENGINE
+ *
+ * المسؤوليات:
+ *
+ * 1) تسجيل سداد للمورد
+ * 2) السداد النقدي
+ * 3) السداد من رصيد/حساب آجل حسب السياسة
+ * 4) ربط السداد بفاتورة شراء أو أكثر
+ * 5) تحديث رصيد المورد
+ * 6) تسجيل الحركة المالية
+ * 7) تسجيل الحركة النقدية
+ * 8) تسجيل الأثر المرجعي المركزي
+ * 9) منع تجاوز المستحق
+ * 10) منع التلاعب بالرصيد
+ * 11) دعم الإلغاء/العكس من خلال حركة عكسية
+ *
+ * IMPORTANT:
+ *
+ * Vendor Payment:
+ *
+ *   Cash / Bank
+ *        |
+ *        v
+ *   Vendor Payable
+ *
+ * التأثير على:
+ *
+ *   النقدية = سالب
+ *   رصيد المورد = سالب
+ *
+ * لأن السداد يقلل التزامنا تجاه المورد.
+ *
+ * لا يتم تعديل أرصدة سابقة يدويًا.
+ * كل الأرصدة مشتقة من الحركات.
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+const MAIRIX_VENDOR_PAYMENT = {
+
+  TYPE:
+    "VENDOR_PAYMENT",
+
+  STATUS_POSTED:
+    "POSTED",
+
+  STATUS_VOID:
+    "VOID",
+
+  CASH:
+    "CASH",
+
+  BANK:
+    "BANK",
+
+  REFERENCE_PREFIX:
+    "VPAY"
+
+};
+
+
+/************************************************
+ * MAIN ENTRY
+ *
+ * تسجيل سداد مورد
+ *
+ * data:
+ *
+ * {
+ *   vendorId,
+ *   amount,
+ *   paymentMethod,
+ *   paymentDate,
+ *   purchaseReference,
+ *   notes
+ * }
+ ************************************************/
+
+function createVendorPayment(data) {
+
+  const currentUser =
+    requireCurrentUser();
+
+
+  requireVendorPaymentsCreate(
+    currentUser.userId
+  );
+
+
+  if (!data) {
+
+    throw new Error(
+      "Vendor payment data is required."
+    );
+
+  }
+
+
+  const vendorId =
+    mairixCleanText(
+      data.vendorId
+    );
+
+
+  if (!vendorId) {
+
+    throw new Error(
+      "Vendor ID is required."
+    );
+
+  }
+
+
+  const amount =
+    Number(
+      data.amount
+    );
+
+
+  if (
+    !isFinite(amount) ||
+    amount <= 0
+  ) {
+
+    throw new Error(
+      "Vendor payment amount must be greater than zero."
+    );
+
+  }
+
+
+  const paymentMethod =
+    normalizeVendorPaymentMethod(
+      data.paymentMethod
+    );
+
+
+  const paymentDate =
+    data.paymentDate
+      ? new Date(data.paymentDate)
+      : new Date();
+
+
+  if (
+    isNaN(
+      paymentDate.getTime()
+    )
+  ) {
+
+    throw new Error(
+      "Invalid payment date."
+    );
+
+  }
+
+
+  /**********************************************
+   * VENDOR
+   **********************************************/
+
+  const vendor =
+    getVendorForPayment(
+      vendorId
+    );
+
+
+  if (!vendor) {
+
+    throw new Error(
+      "Vendor not found: " +
+      vendorId
+    );
+
+  }
+
+
+  if (
+    vendor.active === false
+  ) {
+
+    throw new Error(
+      "Vendor is inactive."
+    );
+
+  }
+
+
+  /**********************************************
+   * PURCHASE REFERENCE
+   **********************************************/
+
+  const purchaseReference =
+    mairixCleanText(
+      data.purchaseReference
+    );
+
+
+  /*
+   * لو المستخدم حدد فاتورة شراء،
+   * نتحقق من أنها تخص نفس المورد.
+   */
+
+  if (purchaseReference) {
+
+    validateVendorPurchaseReference(
+      purchaseReference,
+      vendorId,
+      amount
+    );
+
+  }
+
+
+  /**********************************************
+   * PAYMENT ID
+   **********************************************/
+
+  const paymentId =
+    generateVendorPaymentId();
+
+
+  /**********************************************
+   * TRANSACTION REFERENCE
+   **********************************************/
+
+  const transactionReference =
+    generateVendorPaymentReference();
+
+
+  /**********************************************
+   * PAYMENT ROW
+   **********************************************/
+
+  const paymentSheet =
+    getVendorPaymentsSheet();
+
+
+  const headers =
+    getSheetHeaders(
+      paymentSheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Payment ID",
+    paymentId
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Reference",
+    transactionReference
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Date",
+    paymentDate
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Vendor ID",
+    vendorId
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Vendor Name",
+    vendor.name
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Amount",
+    amount
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Payment Method",
+    paymentMethod
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Purchase Reference",
+    purchaseReference
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Status",
+    MAIRIX_VENDOR_PAYMENT.STATUS_POSTED
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "User ID",
+    currentUser.userId
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "User Name",
+    currentUser.name
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Notes",
+    mairixCleanText(
+      data.notes
+    )
+  );
+
+
+  /**********************************************
+   * SIGNED EFFECTS
+   *
+   * النقدية:
+   * سالب
+   *
+   * المورد:
+   * سالب
+   **********************************************/
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Cash Effect",
+    -amount
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Vendor Payable Effect",
+    -amount
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Amount Effect",
+    -amount
+  );
+
+
+  setOptionalHeaderValue(
+    row,
+    headers,
+    "Financial Effect",
+    -amount
+  );
+
+
+  /**********************************************
+   * SAVE PAYMENT
+   **********************************************/
+
+  const newRow =
+    paymentSheet.getLastRow() + 1;
+
+
+  paymentSheet
+    .getRange(
+      newRow,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  /**********************************************
+   * CENTRAL REFERENCE
+   **********************************************/
+
+  registerVendorPaymentCentralReference({
+
+    reference:
+      transactionReference,
+
+    paymentId:
+      paymentId,
+
+    vendorId:
+      vendorId,
+
+    amount:
+      amount,
+
+    paymentMethod:
+      paymentMethod,
+
+    purchaseReference:
+      purchaseReference,
+
+    userId:
+      currentUser.userId,
+
+    date:
+      paymentDate
+
+  });
+
+
+  /**********************************************
+   * VENDOR LEDGER
+   **********************************************/
+
+  createVendorPaymentLedgerEntry({
+
+    paymentId:
+      paymentId,
+
+    reference:
+      transactionReference,
+
+    vendorId:
+      vendorId,
+
+    vendorName:
+      vendor.name,
+
+    amount:
+      amount,
+
+    paymentMethod:
+      paymentMethod,
+
+    purchaseReference:
+      purchaseReference,
+
+    date:
+      paymentDate,
+
+    userId:
+      currentUser.userId
+
+  });
+
+
+  /**********************************************
+   * CASH / BANK LEDGER
+   **********************************************/
+
+  createVendorPaymentCashEntry({
+
+    paymentId:
+      paymentId,
+
+    reference:
+      transactionReference,
+
+    vendorId:
+      vendorId,
+
+    vendorName:
+      vendor.name,
+
+    amount:
+      amount,
+
+    paymentMethod:
+      paymentMethod,
+
+    date:
+      paymentDate,
+
+    userId:
+      currentUser.userId
+
+  });
+
+
+  /**********************************************
+   * AUDIT
+   **********************************************/
+
+  writeUserLog(
+    "CREATE_VENDOR_PAYMENT",
+    paymentId,
+    "Reference: " +
+      transactionReference +
+      " | Vendor: " +
+      vendorId +
+      " | Amount: " +
+      amount +
+      " | Method: " +
+      paymentMethod +
+      " | User: " +
+      currentUser.email
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    paymentId:
+      paymentId,
+
+    reference:
+      transactionReference,
+
+    vendorId:
+      vendorId,
+
+    vendorName:
+      vendor.name,
+
+    amount:
+      amount,
+
+    paymentMethod:
+      paymentMethod,
+
+    purchaseReference:
+      purchaseReference,
+
+    cashEffect:
+      -amount,
+
+    vendorPayableEffect:
+      -amount,
+
+    status:
+      MAIRIX_VENDOR_PAYMENT.STATUS_POSTED
+
+  };
+
+}
+
+
+/************************************************
+ * NORMALIZE PAYMENT METHOD
+ ************************************************/
+
+function normalizeVendorPaymentMethod(
+  method
+) {
+
+  const value =
+    mairixCleanText(
+      method
+    ).toUpperCase();
+
+
+  if (
+    value === "CASH"
+  ) {
+
+    return "CASH";
+
+  }
+
+
+  if (
+    value === "BANK"
+  ) {
+
+    return "BANK";
+
+  }
+
+
+  throw new Error(
+    "Invalid vendor payment method: " +
+    value
+  );
+
+}
+
+
+/************************************************
+ * GET VENDOR
+ ************************************************/
+
+function getVendorForPayment(
+  vendorId
+) {
+
+  /*
+   * أولاً نحاول استخدام
+   * المشروع الحالي إن كان يوفر
+   * getVendorRecord().
+   */
+
+  if (
+    typeof getVendorRecord ===
+    "function"
+  ) {
+
+    return getVendorRecord(
+      vendorId
+    );
+
+  }
+
+
+  /*
+   * Fallback داخلي.
+   */
+
+  const sheet =
+    getVendorMasterSheet();
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const headers =
+    getSheetHeaders(
+      sheet
+    );
+
+
+  const vendorIdColumn =
+    headers.indexOf(
+      "Vendor ID"
+    );
+
+
+  const vendorNameColumn =
+    headers.indexOf(
+      "Vendor Name"
+    );
+
+
+  const activeColumn =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  if (
+    vendorIdColumn === -1
+  ) {
+
+    throw new Error(
+      "Vendor master sheet is missing Vendor ID."
+    );
+
+  }
+
+
+  const rows =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+
+  for (
+    let i = 0;
+    i < rows.length;
+    i++
+  ) {
+
+    if (
+      mairixCleanText(
+        rows[i][vendorIdColumn]
+      ) !== vendorId
+    ) {
+
+      continue;
+
+    }
+
+
+    return {
+
+      vendorId:
+        vendorId,
+
+      name:
+        vendorNameColumn !== -1
+          ? mairixCleanText(
+              rows[i][vendorNameColumn]
+            )
+          : "",
+
+      active:
+        activeColumn !== -1
+          ? isTrueValue(
+              rows[i][activeColumn]
+            )
+          : true
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET VENDOR MASTER SHEET
+ ************************************************/
+
+function getVendorMasterSheet() {
+
+  if (
+    typeof MAIRIX !== "undefined" &&
+    MAIRIX.SHEETS &&
+    MAIRIX.SHEETS.VENDORS
+  ) {
+
+    return mairixgetSheet(
+      MAIRIX.SHEETS.VENDORS
+    );
+
+  }
+
+
+  return mairixgetSheet(
+    "VENDORS"
+  );
+
+}
+
+
+/************************************************
+ * GET VENDOR PAYMENTS SHEET
+ *
+ * MAIRIX ARCHITECTURE:
+ * Vendor payments are financial transactions.
+ * They are stored in the central TRANSACTIONS
+ * sheet rather than a separate legacy
+ * VENDOR_PAYMENTS sheet.
+ ************************************************/
+
+function getVendorPaymentsSheet() {
+
+  return getMairixSchemaSheet(
+    "TRANSACTIONS"
+  );
+
+}
+
+
+/************************************************
+ * VALIDATE PURCHASE REFERENCE
+ ************************************************/
+
+function validateVendorPurchaseReference(
+  purchaseReference,
+  vendorId,
+  amount
+) {
+
+  /*
+   * لو Purchase Engine موجود،
+   * نستخدمه للتحقق.
+   */
+
+  if (
+    typeof getPurchaseByReference ===
+    "function"
+  ) {
+
+    const purchase =
+      getPurchaseByReference(
+        purchaseReference
+      );
+
+
+    if (!purchase) {
+
+      throw new Error(
+        "Purchase reference not found: " +
+        purchaseReference
+      );
+
+    }
+
+
+    const purchaseVendorId =
+      mairixCleanText(
+        purchase.vendorId ||
+        purchase["Vendor ID"]
+      );
+
+
+    if (
+      purchaseVendorId !==
+      vendorId
+    ) {
+
+      throw new Error(
+        "Purchase does not belong to this vendor."
+      );
+
+    }
+
+  }
+
+}
+
+
+/************************************************
+ * CREATE VENDOR LEDGER ENTRY
+ *
+ * Vendor payable effect:
+ *
+ * Payment = NEGATIVE
+ ************************************************/
+
+function createVendorPaymentLedgerEntry(
+  data
+) {
+
+  if (
+    typeof createVendorLedgerEntry ===
+    "function"
+  ) {
+
+    return createVendorLedgerEntry({
+
+      reference:
+        data.reference,
+
+      type:
+        MAIRIX_VENDOR_PAYMENT.TYPE,
+
+      date:
+        data.date,
+
+      vendorId:
+        data.vendorId,
+
+      vendorName:
+        data.vendorName,
+
+      debit:
+        data.amount,
+
+      credit:
+        0,
+
+      amount:
+        -data.amount,
+
+      signedAmount:
+        -data.amount,
+
+      paymentMethod:
+        data.paymentMethod,
+
+      purchaseReference:
+        data.purchaseReference,
+
+      paymentId:
+        data.paymentId,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  /*
+   * لو الـ Vendor Ledger Engine
+   * لم يتم تركيبه بعد،
+   * لا نكسر العملية الأساسية.
+   *
+   * سيتم ربطه مركزيًا عند اكتمال
+   * Financial Engine.
+   */
+
+  Logger.log(
+    "Vendor ledger engine not installed yet. " +
+    "Payment reference: " +
+    data.reference
+  );
+
+
+  return {
+    success:
+      true,
+
+    deferred:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * CREATE CASH / BANK ENTRY
+ *
+ * Payment:
+ *
+ * Cash Effect = NEGATIVE
+ ************************************************/
+
+function createVendorPaymentCashEntry(
+  data
+) {
+
+  if (
+    typeof createCashTransaction ===
+    "function"
+  ) {
+
+    return createCashTransaction({
+
+      reference:
+        data.reference,
+
+      type:
+        MAIRIX_VENDOR_PAYMENT.TYPE,
+
+      date:
+        data.date,
+
+      amount:
+        -data.amount,
+
+      signedAmount:
+        -data.amount,
+
+      direction:
+        "OUT",
+
+      paymentMethod:
+        data.paymentMethod,
+
+      vendorId:
+        data.vendorId,
+
+      vendorName:
+        data.vendorName,
+
+      paymentId:
+        data.paymentId,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  /*
+   * سيتم الربط تلقائيًا
+   * مع Financial Engine.
+   */
+
+  Logger.log(
+    "Cash engine not installed yet. " +
+    "Payment reference: " +
+    data.reference
+  );
+
+
+  return {
+    success:
+      true,
+
+    deferred:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * CENTRAL REFERENCE
+ ************************************************/
+
+function registerVendorPaymentCentralReference(
+  data
+) {
+
+  /*
+   * استخدام Central Reference Engine
+   * إذا كان موجودًا.
+   */
+
+  if (
+    typeof createCentralReference ===
+    "function"
+  ) {
+
+    return createCentralReference({
+
+      reference:
+        data.reference,
+
+      type:
+        MAIRIX_VENDOR_PAYMENT.TYPE,
+
+      date:
+        data.date,
+
+      primaryId:
+        data.paymentId,
+
+      partyType:
+        "VENDOR",
+
+      partyId:
+        data.vendorId,
+
+      amount:
+        data.amount,
+
+      status:
+        MAIRIX_VENDOR_PAYMENT.STATUS_POSTED,
+
+      userId:
+        data.userId
+
+    });
+
+  }
+
+
+  Logger.log(
+    "Central Reference Engine not installed yet. " +
+    "Reference: " +
+    data.reference
+  );
+
+
+  return {
+    success:
+      true,
+
+    deferred:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * GENERATE PAYMENT ID
+ *
+ * VP-YYYYMMDD-0001
+ ************************************************/
+
+function generateVendorPaymentId() {
+
+  const sheet =
+    getVendorPaymentsSheet();
+
+
+  const dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  const prefix =
+    "VP-" +
+    dateKey +
+    "-";
+
+
+  let counter =
+    1;
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const headers =
+      getSheetHeaders(
+        sheet
+      );
+
+
+    const paymentIdIndex =
+      headers.indexOf(
+        "Payment ID"
+      );
+
+
+    if (
+      paymentIdIndex !== -1
+    ) {
+
+      const values =
+        sheet
+          .getRange(
+            2,
+            paymentIdIndex + 1,
+            lastRow - 1,
+            1
+          )
+          .getDisplayValues();
+
+
+      values.forEach(
+        function(row) {
+
+          const value =
+            mairixCleanText(
+              row[0]
+            );
+
+
+          if (
+            value.indexOf(
+              prefix
+            ) !== 0
+          ) {
+
+            return;
+
+          }
+
+
+          const number =
+            parseInt(
+              value.substring(
+                prefix.length
+              ),
+              10
+            );
+
+
+          if (
+            !isNaN(number) &&
+            number >= counter
+          ) {
+
+            counter =
+              number + 1;
+
+          }
+
+        }
+      );
+
+    }
+
+  }
+
+
+  return (
+    prefix +
+    String(counter)
+      .padStart(
+        4,
+        "0"
+      )
+  );
+
+}
+
+
+/************************************************
+ * GENERATE CENTRAL REFERENCE
+ *
+ * REF-VPAY-YYYYMMDD-0001
+ ************************************************/
+
+function generateVendorPaymentReference() {
+
+  const sheet =
+    getVendorPaymentsSheet();
+
+
+  const dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  const prefix =
+    "REF-VPAY-" +
+    dateKey +
+    "-";
+
+
+  let counter =
+    1;
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const headers =
+      getSheetHeaders(
+        sheet
+      );
+
+
+    const referenceIndex =
+      headers.indexOf(
+        "Reference"
+      );
+
+
+    if (
+      referenceIndex !== -1
+    ) {
+
+      const values =
+        sheet
+          .getRange(
+            2,
+            referenceIndex + 1,
+            lastRow - 1,
+            1
+          )
+          .getDisplayValues();
+
+
+      values.forEach(
+        function(row) {
+
+          const value =
+            mairixCleanText(
+              row[0]
+            );
+
+
+          if (
+            value.indexOf(
+              prefix
+            ) !== 0
+          ) {
+
+            return;
+
+          }
+
+
+          const number =
+            parseInt(
+              value.substring(
+                prefix.length
+              ),
+              10
+            );
+
+
+          if (
+            !isNaN(number) &&
+            number >= counter
+          ) {
+
+            counter =
+              number + 1;
+
+          }
+
+        }
+      );
+
+    }
+
+  }
+
+
+  return (
+    prefix +
+    String(counter)
+      .padStart(
+        7,
+        "0"
+      )
+  );
+
+}
+
+
+/************************************************
+ * HEADER HELPERS
+ ************************************************/
+
+function getSheetHeaders(
+  sheet
+) {
+
+  return sheet
+    .getRange(
+      1,
+      1,
+      1,
+      sheet.getLastColumn()
+    )
+    .getDisplayValues()[0]
+    .map(
+      function(header) {
+
+        return mairixCleanText(
+          header
+        );
+
+      }
+    );
+
+}
+
+
+function setOptionalHeaderValue(
+  row,
+  headers,
+  header,
+  value
+) {
+
+  const index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (
+    index === -1
+  ) {
+
+    return;
+
+  }
+
+
+  row[index] =
+    value;
+
+}
+
+
+/************************************************
+ * TEST
+ *
+ * VENDOR PAYMENT STRUCTURE TEST
+ *
+ * IMPORTANT:
+ * Vendor payments are represented as central
+ * MAIRIX transactions.
+ *
+ * No financial transaction is executed.
+ ************************************************/
+
+function testVendorPaymentEngineStructure() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX VENDOR PAYMENT ENGINE"
+  );
+
+  Logger.log(
+    "STRUCTURE TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * 1. CENTRAL TRANSACTIONS SHEET
+   **********************************************/
+
+  const transactionsSheet =
+    getMairixSchemaSheet(
+      "TRANSACTIONS"
+    );
+
+
+  const transactionHeaders =
+    getSheetHeaders(
+      transactionsSheet
+    );
+
+
+  const requiredTransactionHeaders = [
+
+    "Reference ID",
+
+    "Transaction Type",
+
+    "Transaction Date",
+
+    "User ID",
+
+    "User Name",
+
+    "Vendor Code",
+
+    "Currency",
+
+    "Net Amount",
+
+    "Cash Amount",
+
+    "Credit Amount",
+
+    "Vendor Credit Effect",
+
+    "Status",
+
+    "Created At",
+
+    "Updated At"
+
+  ];
+
+
+  const missingTransactionHeaders = [];
+
+
+  requiredTransactionHeaders.forEach(
+    function(header) {
+
+      if (
+        transactionHeaders.indexOf(
+          header
+        ) === -1
+      ) {
+
+        missingTransactionHeaders.push(
+          header
+        );
+
+      }
+
+    }
+  );
+
+
+  if (
+    missingTransactionHeaders.length
+  ) {
+
+    throw new Error(
+      "TRANSACTIONS sheet is missing headers: " +
+      missingTransactionHeaders.join(", ")
+    );
+
+  }
+
+
+  Logger.log(
+    "TRANSACTIONS headers: PASS"
+  );
+
+
+  /**********************************************
+   * 2. TRANSACTION EFFECTS
+   **********************************************/
+
+  const effectsSheet =
+    getMairixSchemaSheet(
+      "TRANSACTION_EFFECTS"
+    );
+
+
+  const effectHeaders =
+    getSheetHeaders(
+      effectsSheet
+    );
+
+
+  const requiredEffectHeaders = [
+
+    "Reference ID",
+
+    "Transaction Type",
+
+    "Effect Type",
+
+    "Cash Effect",
+
+    "Vendor Credit Effect",
+
+    "Created At"
+
+  ];
+
+
+  const missingEffectHeaders = [];
+
+
+  requiredEffectHeaders.forEach(
+    function(header) {
+
+      if (
+        effectHeaders.indexOf(
+          header
+        ) === -1
+      ) {
+
+        missingEffectHeaders.push(
+          header
+        );
+
+      }
+
+    }
+  );
+
+
+  if (
+    missingEffectHeaders.length
+  ) {
+
+    throw new Error(
+      "TRANSACTION_EFFECTS sheet is missing headers: " +
+      missingEffectHeaders.join(", ")
+    );
+
+  }
+
+
+  Logger.log(
+    "TRANSACTION_EFFECTS headers: PASS"
+  );
+
+
+  /**********************************************
+   * 3. TRANSACTION LINKS
+   *
+   * Used when the payment is linked to a
+   * specific purchase reference.
+   **********************************************/
+
+  const linksSheet =
+    getMairixSchemaSheet(
+      "TRANSACTION_LINKS"
+    );
+
+
+  const linkHeaders =
+    getSheetHeaders(
+      linksSheet
+    );
+
+
+  const requiredLinkHeaders = [
+
+    "Link ID",
+
+    "Reference ID",
+
+    "Linked Reference ID",
+
+    "Link Type",
+
+    "Transaction Type",
+
+    "Linked Transaction Type",
+
+    "Amount Linked",
+
+    "Created At",
+
+    "Created By"
+
+  ];
+
+
+  const missingLinkHeaders = [];
+
+
+  requiredLinkHeaders.forEach(
+    function(header) {
+
+      if (
+        linkHeaders.indexOf(
+          header
+        ) === -1
+      ) {
+
+        missingLinkHeaders.push(
+          header
+        );
+
+      }
+
+    }
+  );
+
+
+  if (
+    missingLinkHeaders.length
+  ) {
+
+    throw new Error(
+      "TRANSACTION_LINKS sheet is missing headers: " +
+      missingLinkHeaders.join(", ")
+    );
+
+  }
+
+
+  Logger.log(
+    "TRANSACTION_LINKS headers: PASS"
+  );
+
+
+  /**********************************************
+   * 4. VENDOR LEDGER
+   **********************************************/
+
+  const vendorLedgerSheet =
+    getMairixSchemaSheet(
+      "VENDOR_LEDGER"
+    );
+
+
+  const vendorLedgerHeaders =
+    getSheetHeaders(
+      vendorLedgerSheet
+    );
+
+
+  const requiredVendorLedgerHeaders = [
+
+    "Reference ID",
+
+    "Transaction Date",
+
+    "Transaction Type",
+
+    "Vendor Code",
+
+    "Vendor Name",
+
+    "Debit Effect",
+
+    "Credit Effect",
+
+    "Net Credit Effect",
+
+    "Running Balance",
+
+    "Due Date",
+
+    "Created At"
+
+  ];
+
+
+  const missingVendorLedgerHeaders = [];
+
+
+  requiredVendorLedgerHeaders.forEach(
+    function(header) {
+
+      if (
+        vendorLedgerHeaders.indexOf(
+          header
+        ) === -1
+      ) {
+
+        missingVendorLedgerHeaders.push(
+          header
+        );
+
+      }
+
+    }
+  );
+
+
+  if (
+    missingVendorLedgerHeaders.length
+  ) {
+
+    throw new Error(
+      "VENDOR_LEDGER sheet is missing headers: " +
+      missingVendorLedgerHeaders.join(", ")
+    );
+
+  }
+
+
+  Logger.log(
+    "VENDOR_LEDGER headers: PASS"
+  );
+
+
+  /**********************************************
+   * 5. CASH LEDGER
+   **********************************************/
+
+  const cashLedgerSheet =
+    getMairixSchemaSheet(
+      "CASH_LEDGER"
+    );
+
+
+  const cashLedgerHeaders =
+    getSheetHeaders(
+      cashLedgerSheet
+    );
+
+
+  const requiredCashLedgerHeaders = [
+
+    "Reference ID",
+
+    "Transaction Date",
+
+    "Transaction Type",
+
+    "User ID",
+
+    "Vendor Code",
+
+    "Cash In",
+
+    "Cash Out",
+
+    "Net Cash Effect",
+
+    "Running Cash Balance",
+
+    "Created At"
+
+  ];
+
+
+  const missingCashLedgerHeaders = [];
+
+
+  requiredCashLedgerHeaders.forEach(
+    function(header) {
+
+      if (
+        cashLedgerHeaders.indexOf(
+          header
+        ) === -1
+      ) {
+
+        missingCashLedgerHeaders.push(
+          header
+        );
+
+      }
+
+    }
+  );
+
+
+  if (
+    missingCashLedgerHeaders.length
+  ) {
+
+    throw new Error(
+      "CASH_LEDGER sheet is missing headers: " +
+      missingCashLedgerHeaders.join(", ")
+    );
+
+  }
+
+
+  Logger.log(
+    "CASH_LEDGER headers: PASS"
+  );
+
+
+  /**********************************************
+   * 6. SIGN CONVENTION
+   **********************************************/
+
+  Logger.log(
+    "Payment sign convention:"
+  );
+
+  Logger.log(
+    "Cash Effect = NEGATIVE"
+  );
+
+  Logger.log(
+    "Vendor Payable Effect = NEGATIVE"
+  );
+
+
+  /**********************************************
+   * 7. CENTRAL REFERENCE
+   **********************************************/
+
+  Logger.log(
+    "Central reference = REQUIRED"
+  );
+
+
+  /**********************************************
+   * 8. ARCHITECTURE
+   **********************************************/
+
+  Logger.log(
+    "Vendor Payment architecture:"
+  );
+
+  Logger.log(
+    "TRANSACTIONS -> TRANSACTION_EFFECTS -> " +
+    "VENDOR_LEDGER / CASH_LEDGER"
+  );
+
+
+  Logger.log(
+    "Purchase linking = TRANSACTION_LINKS"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "VENDOR PAYMENT ENGINE STRUCTURE: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

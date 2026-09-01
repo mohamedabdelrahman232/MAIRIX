@@ -1,0 +1,1493 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE:
+ * 1 — MAIRIX CONFIGURATION
+ *
+ * CENTRAL CONFIGURATION ONLY
+ *
+ * RULES:
+ * - MAIRIX is defined once.
+ * - Business logic does NOT live here.
+ * - Runtime settings come from SETTINGS.
+ * - Transaction references are centralized.
+ * - Effects are explicit and reportable.
+ * - Signs describe direction, not business value.
+ ************************************************/
+
+
+/************************************************
+ * CENTRAL SYSTEM CONFIGURATION
+ ************************************************/
+
+const MAIRIX = {
+
+  /**********************************************
+   * SYSTEM IDENTITY
+   **********************************************/
+
+  SYSTEM_NAME:
+    "MAIRIX",
+
+  VERSION:
+    "1.0.0",
+
+  SCHEMA_VERSION:
+    "1.0.0",
+
+  CONFIG_SHEET:
+    "SETTINGS",
+
+  PROJECT_NAME:
+    "MAIRIX ERP",
+
+  DEFAULT_LANGUAGE:
+    "ar",
+
+  TIMEZONE:
+    "",
+
+
+  /**********************************************
+   * CENTRAL SHEET REGISTRY
+   **********************************************/
+
+  SHEETS: {
+
+    SETTINGS:
+      "SETTINGS",
+
+    SETTINGS_OPTIONS:
+      "SETTINGS_OPTIONS",
+
+    USERS:
+      "USERS",
+
+    EMPLOYEES:
+      "EMPLOYEES",
+
+    ROLES:
+      "ROLES",
+
+    PERMISSIONS:
+      "PERMISSIONS",
+
+    PERMISSION_CATALOG:
+      "PERMISSION_CATALOG",
+
+    USER_PERMISSIONS:
+      "USER_PERMISSIONS",
+
+    USER_WAREHOUSE_PERMISSIONS:
+      "USER_WAREHOUSE_PERMISSIONS",
+
+    WAREHOUSES:
+      "WAREHOUSES",
+
+    CUSTOMERS:
+      "CUSTOMERS",
+
+    VENDORS:
+      "VENDORS",
+
+    ITEMS:
+      "ITEMS",
+
+    SALESMEN:
+      "SALESMEN",
+
+    TRANSACTIONS:
+      "TRANSACTIONS",
+
+    TRANSACTION_LINES:
+      "TRANSACTION_LINES",
+
+    TRANSACTION_EFFECTS:
+      "TRANSACTION_EFFECTS",
+
+    TRANSACTION_LINKS:
+      "TRANSACTION_LINKS",
+
+    INVENTORY_LEDGER:
+      "INVENTORY_LEDGER",
+
+    INVENTORY_BALANCES:
+      "INVENTORY_BALANCES",
+
+    CUSTOMER_LEDGER:
+      "CUSTOMER_LEDGER",
+
+    VENDOR_LEDGER:
+      "VENDOR_LEDGER",
+
+    CASH_LEDGER:
+      "CASH_LEDGER",
+
+    COMMISSION_LEDGER:
+      "COMMISSION_LEDGER",
+
+    LOYALTY_LEDGER:
+      "LOYALTY_LEDGER",
+
+    EXPENSES:
+      "EXPENSES",
+
+    TAX_TYPES:
+      "TAX_TYPES",
+
+    TAX_RULES:
+      "TAX_RULES",
+
+    TAX_EFFECTS:
+      "TAX_EFFECTS",
+
+    FINANCIAL_ACCOUNTS:
+      "FINANCIAL_ACCOUNTS",
+
+    FINANCIAL_MAPPINGS:
+      "FINANCIAL_MAPPINGS",
+
+    FINANCIAL_EFFECTS:
+      "FINANCIAL_EFFECTS",
+
+    FINANCIAL_STATEMENTS:
+      "FINANCIAL_STATEMENTS",
+
+    COMMISSION_RULES:
+      "COMMISSION_RULES",
+
+    LOYALTY_RULES:
+      "LOYALTY_RULES",
+
+    DISCOUNT_RULES:
+      "DISCOUNT_RULES",
+
+    EMPLOYEE_EVALUATIONS:
+      "EMPLOYEE_EVALUATIONS",
+
+    EMPLOYEE_EVALUATION_FACTORS:
+      "EMPLOYEE_EVALUATION_FACTORS",
+
+    MANAGEMENT_EVALUATIONS:
+      "MANAGEMENT_EVALUATIONS",
+
+    AUDIT_LOG:
+      "AUDIT_LOG"
+
+  },
+
+
+  /**********************************************
+   * TRANSACTION TYPES
+   **********************************************/
+
+  TRANSACTION_TYPES: {
+
+    SALE:
+      "SALE",
+
+    SALES_RETURN:
+      "SALES_RETURN",
+
+    PURCHASE:
+      "PURCHASE",
+
+    PURCHASE_RETURN:
+      "PURCHASE_RETURN",
+
+    CUSTOMER_COLLECTION:
+      "CUSTOMER_COLLECTION",
+
+    CUSTOMER_REFUND:
+      "CUSTOMER_REFUND",
+
+    VENDOR_PAYMENT:
+      "VENDOR_PAYMENT",
+
+    EXPENSE:
+      "EXPENSE",
+
+    STOCK_TRANSFER:
+      "STOCK_TRANSFER",
+
+    STOCK_ADJUSTMENT:
+      "STOCK_ADJUSTMENT",
+
+    COMMISSION_SETTLEMENT:
+      "COMMISSION_SETTLEMENT",
+
+    OPENING_BALANCE:
+      "OPENING_BALANCE",
+
+    TAX_ADJUSTMENT:
+      "TAX_ADJUSTMENT"
+
+  },
+
+
+  /**********************************************
+   * TRANSACTION STATUS
+   **********************************************/
+
+  TRANSACTION_STATUS: {
+
+    DRAFT:
+      "DRAFT",
+
+    POSTED:
+      "POSTED",
+
+    VOID:
+      "VOID",
+
+    REVERSED:
+      "REVERSED"
+
+  },
+
+
+  /**********************************************
+   * PAYMENT METHODS
+   **********************************************/
+
+  PAYMENT_METHODS: {
+
+    CASH:
+      "CASH",
+
+    CREDIT:
+      "CREDIT",
+
+    MIXED:
+      "MIXED"
+
+  },
+
+
+  /**********************************************
+   * EFFECT DIMENSIONS
+   **********************************************/
+
+  EFFECTS: {
+
+    INVENTORY:
+      "INVENTORY",
+
+    CASH:
+      "CASH",
+
+    CUSTOMER_CREDIT:
+      "CUSTOMER_CREDIT",
+
+    VENDOR_CREDIT:
+      "VENDOR_CREDIT",
+
+    COMMISSION_PAYABLE:
+      "COMMISSION_PAYABLE",
+
+    LOYALTY:
+      "LOYALTY",
+
+    TAX:
+      "TAX",
+
+    FINANCIAL:
+      "FINANCIAL"
+
+  },
+
+
+  /**********************************************
+   * STANDARD SIGN VALUES
+   **********************************************/
+
+  SIGN: {
+
+    POSITIVE:
+      1,
+
+    NEGATIVE:
+      -1,
+
+    ZERO:
+      0
+
+  },
+
+
+  /**********************************************
+   * INVENTORY SIGN RULES
+   *
+   * Direction only.
+   * Actual quantity is calculated by the
+   * inventory engine.
+   **********************************************/
+
+  INVENTORY_EFFECT: {
+
+    SALE:
+      -1,
+
+    SALES_RETURN:
+      1,
+
+    PURCHASE:
+      1,
+
+    PURCHASE_RETURN:
+      -1,
+
+    STOCK_TRANSFER_OUT:
+      -1,
+
+    STOCK_TRANSFER_IN:
+      1,
+
+    STOCK_ADJUSTMENT_IN:
+      1,
+
+    STOCK_ADJUSTMENT_OUT:
+      -1
+
+  },
+
+
+  /**********************************************
+   * FINANCIAL SIGN RULES
+   *
+   * Signs describe balance movement.
+   * They do not determine payment method.
+   **********************************************/
+
+  FINANCIAL_EFFECT: {
+
+    CASH: {
+
+      CASH_SALE:
+        1,
+
+      CUSTOMER_COLLECTION:
+        1,
+
+      CUSTOMER_REFUND:
+        -1,
+
+      EXPENSE:
+        -1,
+
+      VENDOR_PAYMENT:
+        -1,
+
+      COMMISSION_SETTLEMENT:
+        -1
+
+    },
+
+
+    CUSTOMER_RECEIVABLE: {
+
+      CREDIT_SALE:
+        1,
+
+      CUSTOMER_COLLECTION:
+        -1,
+
+      SALES_RETURN:
+        -1,
+
+      CUSTOMER_REFUND:
+        -1
+
+    },
+
+
+    VENDOR_PAYABLE: {
+
+      CREDIT_PURCHASE:
+        1,
+
+      VENDOR_PAYMENT:
+        -1,
+
+      PURCHASE_RETURN:
+        -1
+
+    },
+
+
+    COMMISSION_PAYABLE: {
+
+      COMMISSION_EARNED:
+        1,
+
+      COMMISSION_SETTLEMENT:
+        -1
+
+    }
+
+  },
+
+
+  /**********************************************
+   * LOYALTY SIGN RULES
+   **********************************************/
+
+  LOYALTY_EFFECT: {
+
+    SALE:
+      1,
+
+    SALES_RETURN:
+      -1
+
+  },
+
+
+  /**********************************************
+   * ACCOUNTING DEFAULTS
+   **********************************************/
+
+  ACCOUNTING: {
+
+    INVENTORY_COST_METHOD:
+      "WAC",
+
+    REPORTING_CURRENCY:
+      "EGP",
+
+    COST_DECIMAL_PLACES:
+      4,
+
+    AMOUNT_DECIMAL_PLACES:
+      2,
+
+    QUANTITY_DECIMAL_PLACES:
+      3
+
+  },
+
+
+  /**********************************************
+   * TAX ENGINE DEFAULTS
+   **********************************************/
+
+  TAX: {
+
+    ENABLED:
+      true,
+
+    FINAL_TAXABLE_BASE:
+      "FINAL_TAXABLE_BASE",
+
+    UNLIMITED_TAX_TYPES:
+      true,
+
+    TRANSACTION_TAX_TOTALS:
+      true,
+
+    TAX_EFFECTS_CENTRALIZED:
+      true
+
+  },
+
+
+  /**********************************************
+   * CENTRAL REFERENCE SYSTEM
+   **********************************************/
+
+  REFERENCE: {
+
+    PREFIX:
+      "MX",
+
+    DATE_FORMAT:
+      "yyyyMMdd",
+
+    SEPARATOR:
+      "-",
+
+    MIN_SEQUENCE_LENGTH:
+      5,
+
+    MAX_REFERENCE_LENGTH:
+      50
+
+  },
+
+
+  /**********************************************
+   * REFERENCE PREFIXES
+   **********************************************/
+
+  REFERENCE_PREFIXES: {
+
+    SALE:
+      "SAL",
+
+    SALES_RETURN:
+      "SRT",
+
+    PURCHASE:
+      "PUR",
+
+    PURCHASE_RETURN:
+      "PRT",
+
+    CUSTOMER_COLLECTION:
+      "COL",
+
+    CUSTOMER_REFUND:
+      "REF",
+
+    VENDOR_PAYMENT:
+      "VPM",
+
+    EXPENSE:
+      "EXP",
+
+    STOCK_TRANSFER:
+      "TRF",
+
+    STOCK_ADJUSTMENT:
+      "ADJ",
+
+    COMMISSION_SETTLEMENT:
+      "CMP",
+
+    OPENING_BALANCE:
+      "OPN",
+
+    TAX_ADJUSTMENT:
+      "TAX"
+
+  },
+
+
+  /**********************************************
+   * ENTITY ID PREFIXES
+   **********************************************/
+
+  ID_PREFIXES: {
+
+    USER:
+      "USR",
+
+    CUSTOMER:
+      "CUS",
+
+    VENDOR:
+      "VND",
+
+    ITEM:
+      "ITM",
+
+    SALESMAN:
+      "SLS",
+
+    WAREHOUSE:
+      "WH",
+
+    TRANSACTION:
+      "TXN",
+
+    EXPENSE:
+      "EXP",
+
+    TAX:
+      "TAX",
+
+    FINANCIAL_ACCOUNT:
+      "ACC"
+
+  },
+
+
+  /**********************************************
+   * NUMBER FORMATS
+   **********************************************/
+
+  NUMBER_FORMATS: {
+
+    INTEGER:
+      "0",
+
+    DECIMAL:
+      "0.00",
+
+    MONEY:
+      "#,##0.00",
+
+    PERCENT:
+      "0.00%"
+
+  },
+
+
+  /**********************************************
+   * SYSTEM LIMITS
+   **********************************************/
+
+  LIMITS: {
+
+    MAX_REFERENCE_LENGTH:
+      50,
+
+    MAX_CODE_LENGTH:
+      50,
+
+    MAX_NAME_LENGTH:
+      150
+
+  },
+
+
+  /**********************************************
+   * SECURITY
+   **********************************************/
+
+  SECURITY: {
+
+    NEW_USERS_ACTIVE:
+      false,
+
+    REQUIRE_ACTIVE_USER:
+      true,
+
+    SERVER_SIDE_PERMISSION_CHECK:
+      true,
+
+    UI_PERMISSION_CHECK:
+      true,
+
+    NEVER_TRUST_UI_USER_ID:
+      true,
+
+    AUDIT_ENABLED:
+      true,
+
+    AUDIT_TRANSACTIONS:
+      true,
+
+    AUDIT_PERMISSION_CHANGES:
+      true
+
+  },
+
+
+  /**********************************************
+   * LOYALTY
+   **********************************************/
+
+  LOYALTY: {
+
+    ENABLED:
+      true,
+
+    POINTS_PER_UNIT:
+      1,
+
+    RETURN_REVERSES_POINTS:
+      true
+
+  },
+
+
+  /**********************************************
+   * DISCOUNT
+   **********************************************/
+
+  DISCOUNT: {
+
+    ENABLED:
+      true,
+
+    RATES_FROM_SETTINGS:
+      true
+
+  },
+
+
+  /**********************************************
+   * DEFAULT DISCOUNT RATES
+   *
+   * Fallback only.
+   * Runtime policy belongs to SETTINGS.
+   **********************************************/
+
+  DEFAULT_DISCOUNT_RATES: [
+
+    0,
+    5,
+    7,
+    10
+
+  ],
+
+
+  /**********************************************
+   * COMMISSIONS
+   **********************************************/
+
+  COMMISSION: {
+
+    ENABLED:
+      true,
+
+    HIDE_FROM_SALESMAN_SALE_SCREEN:
+      true,
+
+    SETTLEMENT_FROM_EXPENSES:
+      true
+
+  },
+
+
+  /**********************************************
+   * FINANCIAL STATEMENTS
+   **********************************************/
+
+  FINANCIAL_STATEMENTS: {
+
+    INCOME_STATEMENT:
+      "INCOME_STATEMENT",
+
+    BALANCE_SHEET:
+      "BALANCE_SHEET",
+
+    ADMINISTRATIVE:
+      true,
+
+    DOUBLE_ENTRY:
+      false,
+
+    INTERNATIONAL_AND_EGYPTIAN_MAPPING:
+      true
+
+  },
+
+
+  /**********************************************
+   * EMPLOYEE EVALUATION
+   **********************************************/
+
+  EVALUATION: {
+
+    ENABLED:
+      true,
+
+    SYSTEM_SCORE:
+      "SYSTEM_SCORE",
+
+    MANAGEMENT_SCORE:
+      "MANAGEMENT_SCORE",
+
+    FINAL_REVIEW:
+      "FINAL_REVIEW"
+
+  },
+
+
+  /**********************************************
+   * FEATURE FLAGS
+   **********************************************/
+
+  FEATURES: {
+
+    MULTI_WAREHOUSE:
+      true,
+
+    LOYALTY:
+      true,
+
+    SALESMAN_COMMISSION:
+      true,
+
+    DYNAMIC_TAXES:
+      true,
+
+    FINANCIAL_STATEMENTS:
+      true,
+
+    EXPENSE_ALLOCATION:
+      true,
+
+    EMPLOYEE_EVALUATION:
+      true,
+
+    DRILL_DOWN:
+      true,
+
+    AUDIT_TRAIL:
+      true
+
+  }
+
+};
+
+
+/************************************************
+ * CURRENT DATE / TIME
+ ************************************************/
+
+function mairixNow() {
+
+  return new Date();
+
+}
+
+
+/************************************************
+ * MAIRIX TIMEZONE
+ ************************************************/
+
+function mairixTimeZone() {
+
+  if (
+    MAIRIX.TIMEZONE
+  ) {
+
+    return MAIRIX.TIMEZONE;
+
+  }
+
+  return Session.getScriptTimeZone();
+
+}
+
+
+/************************************************
+ * MAIRIX DATE KEY
+ ************************************************/
+
+function mairixDateKey(
+  date
+) {
+
+  return Utilities.formatDate(
+    date || new Date(),
+    mairixTimeZone(),
+    MAIRIX.REFERENCE.DATE_FORMAT
+  );
+
+}
+
+
+/************************************************
+ * SAFE TEXT
+ ************************************************/
+
+function mairixCleanText(
+  value
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+  return String(value).trim();
+
+}
+
+
+/************************************************
+ * GET SHEET NAME
+ ************************************************/
+
+function getMairixSheetName(
+  key
+) {
+
+  if (
+    !key ||
+    !MAIRIX.SHEETS[key]
+  ) {
+
+    throw new Error(
+      "Unknown MAIRIX sheet key: " +
+      key
+    );
+
+  }
+
+  return MAIRIX.SHEETS[key];
+
+}
+
+
+/************************************************
+ * GET TRANSACTION TYPE
+ ************************************************/
+
+function getMairixTransactionType(
+  key
+) {
+
+  if (
+    !key ||
+    !MAIRIX.TRANSACTION_TYPES[key]
+  ) {
+
+    throw new Error(
+      "Unknown MAIRIX transaction type: " +
+      key
+    );
+
+  }
+
+  return MAIRIX.TRANSACTION_TYPES[key];
+
+}
+
+
+/************************************************
+ * GET REFERENCE PREFIX
+ ************************************************/
+
+function getMairixReferencePrefix(
+  transactionType
+) {
+
+  const normalized =
+    mairixCleanText(
+      transactionType
+    ).toUpperCase();
+
+  const transactionTypes =
+    MAIRIX.TRANSACTION_TYPES;
+
+  const prefixes =
+    MAIRIX.REFERENCE_PREFIXES;
+
+  for (
+    const key in transactionTypes
+  ) {
+
+    if (
+      transactionTypes[key] ===
+      normalized
+    ) {
+
+      if (
+        prefixes[key]
+      ) {
+
+        return prefixes[key];
+
+      }
+
+      break;
+
+    }
+
+  }
+
+  throw new Error(
+    "No reference prefix configured for transaction type: " +
+    normalized
+  );
+
+}
+
+
+/************************************************
+ * GET SETTINGS SHEET
+ ************************************************/
+
+function getMairixSettingsSheet() {
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  if (!spreadsheet) {
+
+    throw new Error(
+      "Active spreadsheet is not available."
+    );
+
+  }
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      MAIRIX.SHEETS.SETTINGS
+    );
+
+  if (!sheet) {
+
+    throw new Error(
+      "SETTINGS sheet does not exist."
+    );
+
+  }
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * GET CENTRAL SETTING
+ *
+ * SETTINGS:
+ *
+ * A = Key
+ * B = Value
+ ************************************************/
+
+function getMairixSetting(
+  key
+) {
+
+  const normalizedKey =
+    mairixCleanText(
+      key
+    );
+
+  if (!normalizedKey) {
+
+    throw new Error(
+      "MAIRIX setting key is required."
+    );
+
+  }
+
+  const sheet =
+    getMairixSettingsSheet();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (
+    lastRow < 2
+  ) {
+
+    return null;
+
+  }
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        2
+      )
+      .getDisplayValues();
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const currentKey =
+      mairixCleanText(
+        values[i][0]
+      );
+
+    if (
+      currentKey ===
+      normalizedKey
+    ) {
+
+      return values[i][1];
+
+    }
+
+  }
+
+  return null;
+
+}
+
+
+/************************************************
+ * SET CENTRAL SETTING
+ ************************************************/
+
+function setMairixSetting(
+  key,
+  value
+) {
+
+  const normalizedKey =
+    mairixCleanText(
+      key
+    );
+
+  if (!normalizedKey) {
+
+    const error =
+      new Error(
+        "MAIRIX setting key is required."
+      );
+
+    Logger.log(
+      "=========================================="
+    );
+
+    Logger.log(
+      "MAIRIX SETTING KEY ERROR"
+    );
+
+    Logger.log(
+      "Caller stack:"
+    );
+
+    Logger.log(
+      error.stack
+    );
+
+    Logger.log(
+      "=========================================="
+    );
+
+    throw error;
+
+  }
+
+  const sheet =
+    getMairixSettingsSheet();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const keys =
+      sheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          1
+        )
+        .getDisplayValues();
+
+    for (
+      let i = 0;
+      i < keys.length;
+      i++
+    ) {
+
+      if (
+        mairixCleanText(
+          keys[i][0]
+        ) ===
+        normalizedKey
+      ) {
+
+        sheet
+          .getRange(
+            i + 2,
+            2
+          )
+          .setValue(
+            value
+          );
+
+        sheet
+          .getRange(
+            i + 2,
+            6
+          )
+          .setValue(
+            new Date()
+          );
+
+        return {
+
+          success:
+            true,
+
+          updated:
+            true,
+
+          key:
+            normalizedKey,
+
+          value:
+            value
+
+        };
+
+      }
+
+    }
+
+  }
+
+  sheet.appendRow([
+
+    normalizedKey,
+    value,
+    "",
+    "",
+    true,
+    new Date()
+
+  ]);
+
+  return {
+
+    success:
+      true,
+
+    updated:
+      false,
+
+    created:
+      true,
+
+    key:
+      normalizedKey,
+
+    value:
+      value
+
+  };
+
+}
+
+
+/************************************************
+ * GET SYSTEM NAME
+ ************************************************/
+
+function getMairixSystemName() {
+
+  const configured =
+    getMairixSetting(
+      "SYSTEM_NAME"
+    );
+
+  return (
+    mairixCleanText(
+      configured
+    ) ||
+    MAIRIX.SYSTEM_NAME
+  );
+
+}
+
+
+/************************************************
+ * GET PROJECT NAME
+ ************************************************/
+
+function getMairixProjectName() {
+
+  const configured =
+    getMairixSetting(
+      "PROJECT_NAME"
+    );
+
+  return (
+    mairixCleanText(
+      configured
+    ) ||
+    MAIRIX.PROJECT_NAME
+  );
+
+}
+
+
+/************************************************
+ * CONFIGURATION SELF TEST
+ ************************************************/
+
+function testMairixConfig() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CONFIGURATION TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  const system =
+    getMairixSystemName();
+
+  const project =
+    getMairixProjectName();
+
+  Logger.log(
+    "System: " +
+    system
+  );
+
+  Logger.log(
+    "Project: " +
+    project
+  );
+
+  Logger.log(
+    "Version: " +
+    MAIRIX.VERSION
+  );
+
+  Logger.log(
+    "Schema Version: " +
+    MAIRIX.SCHEMA_VERSION
+  );
+
+  Logger.log(
+    "Timezone: " +
+    mairixTimeZone()
+  );
+
+  Logger.log(
+    "Currency: " +
+    MAIRIX.ACCOUNTING.REPORTING_CURRENCY
+  );
+
+  Logger.log(
+    "Inventory Cost Method: " +
+    MAIRIX.ACCOUNTING.INVENTORY_COST_METHOD
+  );
+
+  Logger.log(
+    "USERS Sheet: " +
+    getMairixSheetName(
+      "USERS"
+    )
+  );
+
+  Logger.log(
+    "ITEMS Sheet: " +
+    getMairixSheetName(
+      "ITEMS"
+    )
+  );
+
+  Logger.log(
+    "WAREHOUSES Sheet: " +
+    getMairixSheetName(
+      "WAREHOUSES"
+    )
+  );
+
+  Logger.log(
+    "SALE Type: " +
+    getMairixTransactionType(
+      "SALE"
+    )
+  );
+
+  Logger.log(
+    "SALE Prefix: " +
+    getMairixReferencePrefix(
+      MAIRIX.TRANSACTION_TYPES.SALE
+    )
+  );
+
+  Logger.log(
+    "SALE Inventory Sign: " +
+    MAIRIX.INVENTORY_EFFECT.SALE
+  );
+
+  Logger.log(
+    "SALES RETURN Inventory Sign: " +
+    MAIRIX.INVENTORY_EFFECT.SALES_RETURN
+  );
+
+  Logger.log(
+    "CASH SALE Sign: " +
+    MAIRIX.FINANCIAL_EFFECT.CASH.CASH_SALE
+  );
+
+  Logger.log(
+    "CREDIT SALE Receivable Sign: " +
+    MAIRIX.FINANCIAL_EFFECT
+      .CUSTOMER_RECEIVABLE
+      .CREDIT_SALE
+  );
+
+  Logger.log(
+    "CUSTOMER COLLECTION Cash Sign: " +
+    MAIRIX.FINANCIAL_EFFECT
+      .CASH
+      .CUSTOMER_COLLECTION
+  );
+
+  Logger.log(
+    "CUSTOMER COLLECTION Receivable Sign: " +
+    MAIRIX.FINANCIAL_EFFECT
+      .CUSTOMER_RECEIVABLE
+      .CUSTOMER_COLLECTION
+  );
+
+  Logger.log(
+    "LOYALTY Sale Sign: " +
+    MAIRIX.LOYALTY_EFFECT.SALE
+  );
+
+  Logger.log(
+    "LOYALTY Return Sign: " +
+    MAIRIX.LOYALTY_EFFECT.SALES_RETURN
+  );
+
+  Logger.log(
+    "Dynamic Tax Types: " +
+    MAIRIX.TAX.UNLIMITED_TAX_TYPES
+  );
+
+  Logger.log(
+    "Multi Warehouse: " +
+    MAIRIX.FEATURES.MULTI_WAREHOUSE
+  );
+
+  Logger.log(
+    "Drill Down: " +
+    MAIRIX.FEATURES.DRILL_DOWN
+  );
+
+  Logger.log(
+    "Audit Trail: " +
+    MAIRIX.FEATURES.AUDIT_TRAIL
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CONFIGURATION TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  return {
+
+    success:
+      true,
+
+    system:
+      system,
+
+    project:
+      project,
+
+    version:
+      MAIRIX.VERSION,
+
+    schemaVersion:
+      MAIRIX.SCHEMA_VERSION
+
+  };
+
+}

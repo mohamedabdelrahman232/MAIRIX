@@ -1,0 +1,30 @@
+==========================================================================================
+48-MAIRIX_UI_EmployeeEvaluation.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>48 - Employee Evaluation</title><style>
+:root{--bg:#f4f6f8;--card:#fff;--line:#dfe4ea;--text:#17202a;--muted:#667085;--accent:#1f6feb;--danger:#c62828;--ok:#16834a}*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--text);direction:rtl}.wrap{max-width:1200px;margin:24px auto;padding:0 16px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.title{font-size:24px;font-weight:700}.sub{color:var(--muted);font-size:13px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.04)}.span12{grid-column:span 12}.span8{grid-column:span 8}.span6{grid-column:span 6}.span4{grid-column:span 4}.span3{grid-column:span 3}@media(max-width:800px){.span8,.span6,.span4,.span3{grid-column:span 12}}label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}input,select,textarea{width:100%;padding:10px;border:1px solid #cfd6de;border-radius:8px;background:#fff;font:inherit}textarea{min-height:100px}.row{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;margin-bottom:10px}.field{grid-column:span 4}.field6{grid-column:span 6}.field12{grid-column:span 12}@media(max-width:800px){.field,.field6{grid-column:span 12}}button{border:0;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:700;background:var(--accent);color:#fff}button.secondary{background:#667085}button.danger{background:var(--danger)}button.ok{background:var(--ok)}button:disabled{opacity:.5;cursor:not-allowed}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.status{padding:10px;border-radius:8px;background:#f1f5f9;white-space:pre-wrap;font-family:monospace;font-size:12px;min-height:40px}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:9px;text-align:right;white-space:nowrap}th{background:#f8fafc}.metric{font-size:25px;font-weight:700}.muted{color:var(--muted)}.dangerText{color:var(--danger)}.okText{color:var(--ok)}</style></head>
+<body><div class="wrap">
+<div class="top"><div><div class="title">48 - Employee Evaluation</div><div class="sub">إدارة التقييمات والمعايير والفترات والسجل.</div></div><div class="sub">MAIRIX ERP</div></div>
+<div class="grid"><div class="card span12"><div class="row"><div class="field4"><label>Employee ID</label><input id="employeeId"></div><div class="field4"><label>Period</label><input id="period"></div><div class="field4"><label>Final Rating</label><input id="rating" type="number" step="0.01" min="0"></div></div><div class="row"><div class="field6"><label>Criteria JSON</label><textarea id="criteria"></textarea></div><div class="field6"><label>Notes</label><textarea id="notes"></textarea></div></div><div class="actions"><button onclick="save()">حفظ التقييم</button><button class="secondary" onclick="history()">السجل</button><button class="secondary" onclick="criteria()">المعايير</button></div></div><div class="card span12"><div id="historyBox" class="status">لا توجد بيانات</div></div></div>
+<div class="card" style="margin-top:14px"><div class="sub">نتيجة آخر عملية</div><div id="status" class="status">جاهز</div></div>
+</div><script>
+const APP={};
+function $(id){return document.getElementById(id)}
+function val(id){return $(id)?.value?.trim()||""}
+function num(id){const n=Number($(id)?.value||0);return Number.isFinite(n)?n:0}
+function setStatus(x,err=false){const e=$("status");if(e){e.textContent=typeof x==='string'?x:JSON.stringify(x,null,2);e.className='status '+(err?'dangerText':'')}}
+function callServer(fn,payload,done){
+  setStatus('جاري التنفيذ...');
+  try{
+    const runner=google.script.run.withSuccessHandler(r=>{setStatus(r);if(done)done(r)}).withFailureHandler(e=>{setStatus(e&&e.message?e.message:String(e),true)});
+    if(!runner[fn]) throw new Error('Backend function غير موجودة: '+fn);
+    runner[fn](payload);
+  }catch(e){setStatus(e.message||String(e),true)}
+}
+function rowsToObjects(rows){return rows.map(r=>Object.fromEntries(r.map((v,i)=>['c'+i,v])))}
+</script><script>
+const API={SAVE:'createEmployeeEvaluation',HISTORY:'getEmployeeEvaluationHistory',CRITERIA:'getEvaluationCriteria'};
+function save(){let c={};try{c=JSON.parse(val('criteria')||'{}')}catch(e){return setStatus('Criteria JSON غير صحيح',true)}callServer(API.SAVE,{employeeId:val('employeeId'),period:val('period'),rating:num('rating'),criteria:c,notes:val('notes')},null)}function history(){callServer(API.HISTORY,{employeeId:val('employeeId')},r=>{$('historyBox').textContent=JSON.stringify(r,null,2)})}function criteria(){callServer(API.CRITERIA,{},r=>{$('criteria').value=JSON.stringify(r,null,2)})}
+</script></body></html>

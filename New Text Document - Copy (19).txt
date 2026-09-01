@@ -1,0 +1,1999 @@
+/************************************************
+ * MAIRIX ERP
+ * 5E-MAIRIX_EmployeeIdentityProfiles.gs
+ *
+ * EMPLOYEE IDENTITY & BUSINESS PROFILES
+ *
+ * RESPONSIBILITIES:
+ *
+ * 1. Central identity resolution
+ * 2. Employee <-> User relationship
+ * 3. Business profile management
+ * 4. Salesman profile provisioning
+ * 5. EMP <-> USR <-> SAL resolution
+ * 6. Prevent duplicate salesman profiles
+ * 7. Automatic salesman identity lookup
+ *
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+const MAIRIX_SALES_PROFILES_SHEET =
+  'SALES_PROFILES';
+
+
+/************************************************
+ * SALES PROFILE HEADERS
+ ************************************************/
+
+const MAIRIX_SALES_PROFILE_HEADERS = [
+
+  'Salesman Code',
+
+  'Employee Code',
+
+  'User ID',
+
+  'Employee Name',
+
+  'Gmail',
+
+  'Role Code',
+
+  'Active',
+
+  'Created At',
+
+  'Created By',
+
+  'Updated At'
+
+];
+
+
+/************************************************
+ * GET SPREADSHEET
+ ************************************************/
+
+function mairixIdentityGetSpreadsheet() {
+
+  if (
+    typeof mairixGetSpreadsheet === 'function'
+  ) {
+
+    return mairixGetSpreadsheet();
+
+  }
+
+  return SpreadsheetApp.getActiveSpreadsheet();
+
+}
+
+
+/************************************************
+ * GET SHEET
+ ************************************************/
+
+function mairixIdentityGetSheet(
+  sheetName
+) {
+
+  const ss =
+    mairixIdentityGetSpreadsheet();
+
+  const sheet =
+    ss.getSheetByName(
+      sheetName
+    );
+
+  if (!sheet) {
+
+    throw new Error(
+      'Required sheet not found: ' +
+      sheetName
+    );
+
+  }
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * NORMALIZE STRING
+ ************************************************/
+
+function mairixIdentityString(
+  value
+) {
+
+  return String(
+    value || ''
+  ).trim();
+
+}
+
+
+/************************************************
+ * NORMALIZE BOOLEAN
+ ************************************************/
+
+function mairixIdentityBoolean(
+  value
+) {
+
+  if (value === true) {
+    return true;
+  }
+
+  const normalized =
+    String(value || '')
+      .trim()
+      .toUpperCase();
+
+  return (
+    normalized === 'TRUE' ||
+    normalized === 'YES' ||
+    normalized === '1'
+  );
+
+}
+
+
+/************************************************
+ * GET HEADER MAP
+ ************************************************/
+
+function mairixIdentityGetHeaderMap(
+  sheet
+) {
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+  if (lastColumn < 1) {
+
+    throw new Error(
+      'Sheet has no headers: ' +
+      sheet.getName()
+    );
+
+  }
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getValues()[0];
+
+  const map = {};
+
+  headers.forEach(
+    function(header, index) {
+
+      const key =
+        mairixIdentityString(
+          header
+        );
+
+      if (key) {
+
+        map[key] =
+          index;
+
+      }
+
+    }
+  );
+
+  return map;
+
+}
+
+
+/************************************************
+ * REQUIRE HEADER
+ ************************************************/
+
+function mairixIdentityRequireHeader(
+  headerMap,
+  headerName,
+  sheetName
+) {
+
+  if (
+    headerMap[headerName] === undefined
+  ) {
+
+    throw new Error(
+      'Required header missing: ' +
+      sheetName +
+      ' -> ' +
+      headerName
+    );
+
+  }
+
+  return headerMap[headerName];
+
+}
+
+
+/************************************************
+ * ENSURE SALES PROFILES SHEET
+ ************************************************/
+
+function mairixEnsureSalesProfilesSheet() {
+
+  const ss =
+    mairixIdentityGetSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_SALES_PROFILES_SHEET
+    );
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_SALES_PROFILES_SHEET
+      );
+
+  }
+
+  const currentHeaders =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        Math.max(
+          sheet.getLastColumn(),
+          1
+        )
+      )
+      .getValues()[0];
+
+  const currentFirstHeader =
+    mairixIdentityString(
+      currentHeaders[0]
+    );
+
+  if (
+    sheet.getLastRow() === 0 ||
+    !currentFirstHeader
+  ) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        MAIRIX_SALES_PROFILE_HEADERS.length
+      )
+      .setValues([
+        MAIRIX_SALES_PROFILE_HEADERS
+      ]);
+
+    sheet.setFrozenRows(1);
+
+  }
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * GET NEXT SALESMAN CODE
+ ************************************************/
+
+function mairixGetNextSalesmanCode() {
+
+  const sheet =
+    mairixEnsureSalesProfilesSheet();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (lastRow < 2) {
+
+    return 'SAL-0000001';
+
+  }
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        1
+      )
+      .getValues();
+
+  let maxNumber = 0;
+
+  values.forEach(
+    function(row) {
+
+      const code =
+        mairixIdentityString(
+          row[0]
+        );
+
+      const match =
+        code.match(
+          /^SAL-(\d+)$/
+        );
+
+      if (match) {
+
+        const number =
+          Number(match[1]);
+
+        if (
+          number > maxNumber
+        ) {
+
+          maxNumber =
+            number;
+
+        }
+
+      }
+
+    }
+  );
+
+  const nextNumber =
+    maxNumber + 1;
+
+  return (
+    'SAL-' +
+    String(nextNumber)
+      .padStart(
+        7,
+        '0'
+      )
+  );
+
+}
+
+
+/************************************************
+ * READ SALES PROFILE ROW
+ ************************************************/
+
+function mairixIdentityReadSalesProfileRow(
+  row,
+  headerMap
+) {
+
+  return {
+
+    salesmanCode:
+      mairixIdentityString(
+        row[
+          headerMap['Salesman Code']
+        ]
+      ),
+
+    employeeCode:
+      mairixIdentityString(
+        row[
+          headerMap['Employee Code']
+        ]
+      ),
+
+    userId:
+      mairixIdentityString(
+        row[
+          headerMap['User ID']
+        ]
+      ),
+
+    employeeName:
+      mairixIdentityString(
+        row[
+          headerMap['Employee Name']
+        ]
+      ),
+
+    email:
+      mairixIdentityString(
+        row[
+          headerMap['Gmail']
+        ]
+      ),
+
+    roleCode:
+      mairixIdentityString(
+        row[
+          headerMap['Role Code']
+        ]
+      ),
+
+    active:
+      mairixIdentityBoolean(
+        row[
+          headerMap['Active']
+        ]
+      ),
+
+    createdAt:
+      row[
+        headerMap['Created At']
+      ],
+
+    createdBy:
+      mairixIdentityString(
+        row[
+          headerMap['Created By']
+        ]
+      ),
+
+    updatedAt:
+      row[
+        headerMap['Updated At']
+      ]
+
+  };
+
+}
+
+
+/************************************************
+ * GET ALL SALES PROFILES
+ ************************************************/
+
+function mairixGetAllSalesProfiles(
+  activeOnly
+) {
+
+  const sheet =
+    mairixEnsureSalesProfilesSheet();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (lastRow < 2) {
+
+    return [];
+
+  }
+
+  const headerMap =
+    mairixIdentityGetHeaderMap(
+      sheet
+    );
+
+  MAIRIX_SALES_PROFILE_HEADERS.forEach(
+    function(header) {
+
+      mairixIdentityRequireHeader(
+        headerMap,
+        header,
+        MAIRIX_SALES_PROFILES_SHEET
+      );
+
+    }
+  );
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        sheet.getLastColumn()
+      )
+      .getValues();
+
+  const profiles =
+    values.map(
+      function(row) {
+
+        return mairixIdentityReadSalesProfileRow(
+          row,
+          headerMap
+        );
+
+      }
+    );
+
+  if (activeOnly === true) {
+
+    return profiles.filter(
+      function(profile) {
+
+        return profile.active === true;
+
+      }
+    );
+
+  }
+
+  return profiles;
+
+}
+
+
+/************************************************
+ * FIND SALES PROFILE
+ ************************************************/
+
+function mairixFindSalesProfile(
+  criteria
+) {
+
+  criteria =
+    criteria || {};
+
+  const salesmanCode =
+    mairixIdentityString(
+      criteria.salesmanCode
+    );
+
+  const employeeCode =
+    mairixIdentityString(
+      criteria.employeeCode
+    );
+
+  const userId =
+    mairixIdentityString(
+      criteria.userId
+    );
+
+  const profiles =
+    mairixGetAllSalesProfiles(
+      false
+    );
+
+  for (
+    let i = 0;
+    i < profiles.length;
+    i++
+  ) {
+
+    const profile =
+      profiles[i];
+
+    if (
+      salesmanCode &&
+      profile.salesmanCode === salesmanCode
+    ) {
+
+      return profile;
+
+    }
+
+    if (
+      employeeCode &&
+      profile.employeeCode === employeeCode
+    ) {
+
+      return profile;
+
+    }
+
+    if (
+      userId &&
+      profile.userId === userId
+    ) {
+
+      return profile;
+
+    }
+
+  }
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET EMPLOYEE BY CODE
+ *
+ * Uses EMPLOYEES sheet.
+ ************************************************/
+
+function mairixGetEmployeeIdentityByCode(
+  employeeCode
+) {
+
+  employeeCode =
+    mairixIdentityString(
+      employeeCode
+    );
+
+  if (!employeeCode) {
+
+    return null;
+
+  }
+
+  const sheet =
+    mairixIdentityGetSheet(
+      'EMPLOYEES'
+    );
+
+  const headerMap =
+    mairixIdentityGetHeaderMap(
+      sheet
+    );
+
+  const requiredHeaders = [
+
+    'Employee Code',
+    'Employee Name',
+    'Gmail',
+    'Active'
+
+  ];
+
+  requiredHeaders.forEach(
+    function(header) {
+
+      mairixIdentityRequireHeader(
+        headerMap,
+        header,
+        'EMPLOYEES'
+      );
+
+    }
+  );
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (lastRow < 2) {
+
+    return null;
+
+  }
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        sheet.getLastColumn()
+      )
+      .getValues();
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const row =
+      values[i];
+
+    if (
+      mairixIdentityString(
+        row[
+          headerMap['Employee Code']
+        ]
+      ) === employeeCode
+    ) {
+
+      return {
+
+        employeeCode:
+          mairixIdentityString(
+            row[
+              headerMap['Employee Code']
+            ]
+          ),
+
+        employeeName:
+          mairixIdentityString(
+            row[
+              headerMap['Employee Name']
+            ]
+          ),
+
+        email:
+          mairixIdentityString(
+            row[
+              headerMap['Gmail']
+            ]
+          ),
+
+        active:
+          mairixIdentityBoolean(
+            row[
+              headerMap['Active']
+            ]
+          )
+
+      };
+
+    }
+
+  }
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET USER BY EMPLOYEE CODE
+ *
+ * Uses USERS sheet.
+ ************************************************/
+
+function mairixGetUserIdentityByEmployeeCode(
+  employeeCode
+) {
+
+  employeeCode =
+    mairixIdentityString(
+      employeeCode
+    );
+
+  if (!employeeCode) {
+
+    return null;
+
+  }
+
+  const sheet =
+    mairixIdentityGetSheet(
+      'USERS'
+    );
+
+  const headerMap =
+    mairixIdentityGetHeaderMap(
+      sheet
+    );
+
+    const requiredHeaders = [
+
+    'User ID',
+
+    'Employee Code',
+
+    'Gmail',
+
+    'Employee Name',
+
+    'Role Code',
+
+    'Active'
+
+  ];
+
+  requiredHeaders.forEach(
+    function(header) {
+
+      mairixIdentityRequireHeader(
+        headerMap,
+        header,
+        'USERS'
+      );
+
+    }
+  );
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (lastRow < 2) {
+
+    return null;
+
+  }
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        sheet.getLastColumn()
+      )
+      .getValues();
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const row =
+      values[i];
+
+    if (
+      mairixIdentityString(
+        row[
+          headerMap['Employee Code']
+        ]
+      ) === employeeCode
+    ) {
+
+      return {
+
+        userId:
+          mairixIdentityString(
+            row[
+              headerMap['User ID']
+            ]
+          ),
+
+        employeeCode:
+          mairixIdentityString(
+            row[
+              headerMap['Employee Code']
+            ]
+          ),
+
+        email:
+          mairixIdentityString(
+            row[
+              headerMap['Gmail']
+            ]
+          ),
+
+        userName:
+          mairixIdentityString(
+            row[
+              headerMap['User Name']
+            ]
+          ),
+
+        roleCode:
+          mairixIdentityString(
+            row[
+              headerMap['Role Code']
+            ]
+          ),
+
+        active:
+          mairixIdentityBoolean(
+            row[
+              headerMap['Active']
+            ]
+          )
+
+      };
+
+    }
+
+  }
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET USER BY USER ID
+ ************************************************/
+
+function mairixGetUserIdentityById(
+  userId
+) {
+
+  userId =
+    mairixIdentityString(
+      userId
+    );
+
+  if (!userId) {
+
+    return null;
+
+  }
+
+  const sheet =
+    mairixIdentityGetSheet(
+      'USERS'
+    );
+
+  const headerMap =
+    mairixIdentityGetHeaderMap(
+      sheet
+    );
+
+  const requiredHeaders = [
+
+    'User ID',
+    'Employee Code',
+    'Gmail',
+    'User Name',
+    'Active'
+
+  ];
+
+  requiredHeaders.forEach(
+    function(header) {
+
+      mairixIdentityRequireHeader(
+        headerMap,
+        header,
+        'USERS'
+      );
+    }
+  );
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (lastRow < 2) {
+
+    return null;
+
+  }
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        sheet.getLastColumn()
+      )
+      .getValues();
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const row =
+      values[i];
+
+    if (
+      mairixIdentityString(
+        row[
+          headerMap['User ID']
+        ]
+      ) === userId
+    ) {
+
+      return {
+
+        userId:
+          mairixIdentityString(
+            row[
+              headerMap['User ID']
+            ]
+          ),
+
+        employeeCode:
+          mairixIdentityString(
+            row[
+              headerMap['Employee Code']
+            ]
+          ),
+
+        email:
+          mairixIdentityString(
+            row[
+              headerMap['Gmail']
+            ]
+          ),
+
+        userName:
+          mairixIdentityString(
+            row[
+              headerMap['User Name']
+            ]
+          ),
+
+        roleCode:
+          mairixIdentityString(
+            row[
+              headerMap['Role Code']
+            ]
+          ),
+
+        active:
+          mairixIdentityBoolean(
+            row[
+              headerMap['Active']
+            ]
+          )
+
+      };
+
+    }
+
+  }
+
+  return null;
+
+}
+
+
+/************************************************
+ * CREATE SALESMAN PROFILE
+ ************************************************/
+
+function mairixCreateSalesmanProfile(
+  employeeCode,
+  options
+) {
+
+  options =
+    options || {};
+
+  employeeCode =
+    mairixIdentityString(
+      employeeCode
+    );
+
+  if (!employeeCode) {
+
+    throw new Error(
+      'Employee Code is required.'
+    );
+
+  }
+
+
+  /**********************************************
+   * CHECK EMPLOYEE
+   **********************************************/
+
+  const employee =
+    mairixGetEmployeeIdentityByCode(
+      employeeCode
+    );
+
+  if (!employee) {
+
+    throw new Error(
+      'Employee not found: ' +
+      employeeCode
+    );
+
+  }
+
+
+  /**********************************************
+   * CHECK USER
+   **********************************************/
+
+  const user =
+    mairixGetUserIdentityByEmployeeCode(
+      employeeCode
+    );
+
+  if (!user) {
+
+    throw new Error(
+      'User not found for employee: ' +
+      employeeCode
+    );
+
+  }
+
+
+  /**********************************************
+   * CHECK DUPLICATE
+   **********************************************/
+
+  const existing =
+    mairixFindSalesProfile({
+
+      employeeCode:
+        employeeCode
+
+    });
+
+  if (existing) {
+
+    return {
+
+      success: true,
+
+      action:
+        'ALREADY_EXISTS',
+
+      profile:
+        existing
+
+    };
+
+  }
+
+
+  /**********************************************
+   * VALIDATE ROLE
+   **********************************************/
+
+  const roleCode =
+  mairixIdentityString(
+    user.roleCode
+  ).toUpperCase();
+
+  const allowedRoles = [
+
+    'SALESMAN',
+
+    'SENIOR_SALESMAN',
+
+    'SALES_MANAGER'
+
+  ];
+
+  if (
+    allowedRoles.indexOf(
+      roleCode
+    ) === -1
+  ) {
+
+    throw new Error(
+      'Employee role is not eligible for a salesman profile: ' +
+      roleCode
+    );
+
+  }
+
+
+  /**********************************************
+   * CREATE CODE
+   **********************************************/
+
+  const salesmanCode =
+    mairixGetNextSalesmanCode();
+
+  const sheet =
+    mairixEnsureSalesProfilesSheet();
+
+  const now =
+    new Date();
+
+  const createdBy =
+    mairixIdentityString(
+      options.createdBy ||
+      ''
+    );
+
+
+  /**********************************************
+   * CREATE PROFILE
+   **********************************************/
+
+  const profile = {
+
+    salesmanCode:
+      salesmanCode,
+
+    employeeCode:
+      employee.employeeCode,
+
+    userId:
+      user.userId,
+
+    employeeName:
+      employee.employeeName ||
+      user.userName,
+
+    email:
+      employee.email ||
+      user.email,
+
+    roleCode:
+      roleCode,
+
+    active:
+      (
+        employee.active === true &&
+        user.active === true
+      ),
+
+    createdAt:
+      now,
+
+    createdBy:
+      createdBy,
+
+    updatedAt:
+      now
+
+  };
+
+
+  /**********************************************
+   * SAVE
+   **********************************************/
+
+  sheet.appendRow([
+
+    profile.salesmanCode,
+
+    profile.employeeCode,
+
+    profile.userId,
+
+    profile.employeeName,
+
+    profile.email,
+
+    profile.roleCode,
+
+    profile.active,
+
+    profile.createdAt,
+
+    profile.createdBy,
+
+    profile.updatedAt
+
+  ]);
+
+
+  return {
+
+    success: true,
+
+    action:
+      'CREATED',
+
+    profile:
+      profile
+
+  };
+
+}
+
+
+/************************************************
+ * ENSURE EMPLOYEE BUSINESS PROFILE
+ *
+ * Called after employee provisioning.
+ ************************************************/
+
+function mairixEnsureEmployeeBusinessProfile(
+  employeeCode,
+  options
+) {
+
+  options =
+    options || {};
+
+  const employee =
+    mairixGetEmployeeIdentityByCode(
+      employeeCode
+    );
+
+  if (!employee) {
+
+    throw new Error(
+      'Employee not found: ' +
+      employeeCode
+    );
+
+  }
+
+    const user =
+    mairixGetUserIdentityByEmployeeCode(
+      employee.employeeCode
+    );
+
+  if (!user) {
+    throw new Error(
+      'User not found for employee: ' +
+      employee.employeeCode
+    );
+  }
+
+  const roleCode =
+    mairixIdentityString(
+      user.roleCode
+    ).toUpperCase();
+
+    
+  /**********************************************
+   * SALES ROLES
+   **********************************************/
+
+  const salesRoles = [
+
+    'SALESMAN',
+
+    'SENIOR_SALESMAN',
+
+    'SALES_MANAGER'
+
+  ];
+
+  if (
+    salesRoles.indexOf(
+      roleCode
+    ) !== -1
+  ) {
+
+    return {
+
+      success: true,
+
+      profileType:
+        'SALESMAN',
+
+      result:
+        mairixCreateSalesmanProfile(
+          employee.employeeCode,
+          options
+        )
+
+    };
+
+  }
+
+
+  /**********************************************
+   * NO PROFILE REQUIRED
+   **********************************************/
+
+  return {
+
+    success: true,
+
+    profileType:
+      null,
+
+    result: null
+
+  };
+
+}
+
+
+/************************************************
+ * RESOLVE SALESMAN IDENTITY
+ *
+ * ACCEPTS:
+ *
+ * SAL-XXXXXXX
+ * EMP-XXXXXXX
+ * USR-XXXXXXX
+ *
+ ************************************************/
+
+function mairixResolveSalesmanIdentity(
+  identity
+) {
+
+  identity =
+    mairixIdentityString(
+      identity
+    );
+
+  if (!identity) {
+
+    return null;
+
+  }
+
+
+  /**********************************************
+   * SALESMAN CODE
+   **********************************************/
+
+  if (
+    identity.indexOf('SAL-') === 0
+  ) {
+
+    const profile =
+      mairixFindSalesProfile({
+
+        salesmanCode:
+          identity
+
+      });
+
+    if (!profile) {
+
+      return null;
+
+    }
+
+    return profile;
+
+  }
+
+
+  /**********************************************
+   * EMPLOYEE CODE
+   **********************************************/
+
+  if (
+    identity.indexOf('EMP-') === 0
+  ) {
+
+    return mairixFindSalesProfile({
+
+      employeeCode:
+        identity
+
+    });
+
+  }
+
+
+  /**********************************************
+   * USER ID
+   **********************************************/
+
+  if (
+    identity.indexOf('USR-') === 0
+  ) {
+
+    return mairixFindSalesProfile({
+
+      userId:
+        identity
+
+    });
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * REQUIRE ACTIVE SALESMAN
+ ************************************************/
+
+function mairixRequireActiveSalesman(
+  identity
+) {
+
+  const profile =
+    mairixResolveSalesmanIdentity(
+      identity
+    );
+
+  if (!profile) {
+
+    throw new Error(
+      'Salesman not found: ' +
+      identity
+    );
+
+  }
+
+  if (
+    profile.active !== true
+  ) {
+
+    throw new Error(
+      'Salesman is inactive: ' +
+      profile.salesmanCode
+    );
+
+  }
+
+  return profile;
+
+}
+
+
+/************************************************
+ * GET CURRENT USER SALESMAN
+ ************************************************/
+
+function mairixGetCurrentUserSalesman() {
+
+  if (
+    typeof requireCurrentUser !== 'function'
+  ) {
+
+    throw new Error(
+      'requireCurrentUser() is not available.'
+    );
+
+  }
+
+  const currentUser =
+    requireCurrentUser();
+
+  if (
+    !currentUser ||
+    !currentUser.userId
+  ) {
+
+    throw new Error(
+      'Current authenticated user is required.'
+    );
+
+  }
+
+  return mairixRequireActiveSalesman(
+    currentUser.userId
+  );
+
+}
+
+
+/************************************************
+ * PROVISION ALL EXISTING SALES EMPLOYEES
+ *
+ * SAFE TO RUN MULTIPLE TIMES.
+ *
+ * ROLE SOURCE:
+ *
+ * EMPLOYEES
+ *      ↓ Employee Code
+ * USERS
+ *      ↓ Role Code
+ *
+ ************************************************/
+
+function mairixProvisionExistingSalesProfiles() {
+
+  const employeeSheet =
+    mairixIdentityGetSheet(
+      'EMPLOYEES'
+    );
+
+  const employeeHeaderMap =
+    mairixIdentityGetHeaderMap(
+      employeeSheet
+    );
+
+  const requiredEmployeeHeaders = [
+
+    'Employee Code',
+
+    'Active'
+
+  ];
+
+  requiredEmployeeHeaders.forEach(
+    function(header) {
+
+      mairixIdentityRequireHeader(
+        employeeHeaderMap,
+        header,
+        'EMPLOYEES'
+      );
+
+    }
+  );
+
+
+  /**********************************************
+   * USERS
+   **********************************************/
+
+  const userSheet =
+    mairixIdentityGetSheet(
+      'USERS'
+    );
+
+  const userHeaderMap =
+    mairixIdentityGetHeaderMap(
+      userSheet
+    );
+
+  const requiredUserHeaders = [
+
+    'Employee Code',
+
+    'Role Code',
+
+    'Active'
+
+  ];
+
+  requiredUserHeaders.forEach(
+    function(header) {
+
+      mairixIdentityRequireHeader(
+        userHeaderMap,
+        header,
+        'USERS'
+      );
+
+    }
+  );
+
+
+  /**********************************************
+   * EMPTY EMPLOYEES
+   **********************************************/
+
+  const employeeLastRow =
+    employeeSheet.getLastRow();
+
+  if (employeeLastRow < 2) {
+
+    return {
+
+      success: true,
+
+      processed: 0,
+
+      created: 0,
+
+      existing: 0,
+
+      skipped: 0,
+
+      results: []
+
+    };
+
+  }
+
+
+  /**********************************************
+   * BUILD USER ROLE MAP
+   *
+   * Employee Code → User
+   **********************************************/
+
+  const userLastRow =
+    userSheet.getLastRow();
+
+  const userMap = {};
+
+  if (userLastRow >= 2) {
+
+    const userValues =
+      userSheet
+        .getRange(
+          2,
+          1,
+          userLastRow - 1,
+          userSheet.getLastColumn()
+        )
+        .getValues();
+
+
+    userValues.forEach(
+      function(row) {
+
+        const employeeCode =
+          mairixIdentityString(
+            row[
+              userHeaderMap[
+                'Employee Code'
+              ]
+            ]
+          );
+
+        if (!employeeCode) {
+          return;
+        }
+
+
+        userMap[employeeCode] = {
+
+          employeeCode:
+            employeeCode,
+
+          roleCode:
+            mairixIdentityString(
+              row[
+                userHeaderMap[
+                  'Role Code'
+                ]
+              ]
+            ).toUpperCase(),
+
+          active:
+            mairixIdentityBoolean(
+              row[
+                userHeaderMap[
+                  'Active'
+                ]
+              ]
+            )
+
+        };
+
+      }
+    );
+
+  }
+
+
+  /**********************************************
+   * EMPLOYEE DATA
+   **********************************************/
+
+  const employeeValues =
+    employeeSheet
+      .getRange(
+        2,
+        1,
+        employeeLastRow - 1,
+        employeeSheet.getLastColumn()
+      )
+      .getValues();
+
+
+  const salesRoles = [
+
+    'SALESMAN',
+
+    'SENIOR_SALESMAN',
+
+    'SALES_MANAGER'
+
+  ];
+
+
+  let processed = 0;
+
+  let created = 0;
+
+  let existing = 0;
+
+  let skipped = 0;
+
+
+  const results = [];
+
+
+  /**********************************************
+   * PROCESS EMPLOYEES
+   **********************************************/
+
+  employeeValues.forEach(
+    function(row) {
+
+      const employeeCode =
+        mairixIdentityString(
+          row[
+            employeeHeaderMap[
+              'Employee Code'
+            ]
+          ]
+        );
+
+
+      const employeeActive =
+        mairixIdentityBoolean(
+          row[
+            employeeHeaderMap[
+              'Active'
+            ]
+          ]
+        );
+
+
+      if (
+        !employeeCode ||
+        !employeeActive
+      ) {
+
+        skipped++;
+
+        return;
+
+      }
+
+
+      /********************************************
+       * GET USER FROM MAP
+       ********************************************/
+
+      const user =
+        userMap[employeeCode];
+
+
+      if (
+        !user ||
+        user.active !== true
+      ) {
+
+        skipped++;
+
+        results.push({
+
+          employeeCode:
+            employeeCode,
+
+          action:
+            'SKIPPED_NO_ACTIVE_USER',
+
+          roleCode:
+            null
+
+        });
+
+        return;
+
+      }
+
+
+      const roleCode =
+        mairixIdentityString(
+          user.roleCode
+        ).toUpperCase();
+
+
+      /********************************************
+       * CHECK SALES ROLE
+       ********************************************/
+
+      if (
+        salesRoles.indexOf(
+          roleCode
+        ) === -1
+      ) {
+
+        skipped++;
+
+        return;
+
+      }
+
+
+      processed++;
+
+
+      /********************************************
+       * CREATE / ENSURE PROFILE
+       ********************************************/
+
+      const result =
+        mairixEnsureEmployeeBusinessProfile(
+          employeeCode,
+          {
+
+            createdBy:
+              'SYSTEM_MIGRATION'
+
+          }
+        );
+
+
+      if (
+        result.result &&
+        result.result.action === 'CREATED'
+      ) {
+
+        created++;
+
+      }
+      else if (
+        result.result &&
+        result.result.action ===
+          'ALREADY_EXISTS'
+      ) {
+
+        existing++;
+
+      }
+
+
+      results.push({
+
+        employeeCode:
+          employeeCode,
+
+        roleCode:
+          roleCode,
+
+        result:
+          result
+
+      });
+
+    }
+  );
+
+
+  /**********************************************
+   * RESULT
+   **********************************************/
+
+  return {
+
+    success: true,
+
+    processed:
+      processed,
+
+    created:
+      created,
+
+    existing:
+      existing,
+
+    skipped:
+      skipped,
+
+    results:
+      results
+
+  };
+
+}
+
+
+/************************************************
+ * TEST
+ *
+ * EXISTING EMPLOYEE -> SALESMAN PROFILE
+ ************************************************/
+
+function mairixTestEmployeeIdentityProfiles() {
+
+  Logger.log(
+    '=========================================='
+  );
+
+  Logger.log(
+    'MAIRIX EMPLOYEE IDENTITY PROFILES TEST'
+  );
+
+  Logger.log(
+    '=========================================='
+  );
+
+
+  const result =
+    mairixProvisionExistingSalesProfiles();
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    '=========================================='
+  );
+
+  Logger.log(
+    'SALES PROFILES'
+  );
+
+  Logger.log(
+    JSON.stringify(
+      mairixGetAllSalesProfiles(
+        false
+      ),
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    '=========================================='
+  );
+
+  Logger.log(
+    'MAIRIX EMPLOYEE IDENTITY PROFILES: COMPLETED'
+  );
+
+  Logger.log(
+    '=========================================='
+  );
+
+
+  return result;
+
+}

@@ -1,0 +1,4291 @@
+/************************************************
+ * MAIRIX ERP
+ * 11 - SALES RETURNS ENGINE
+ *
+ * SYSTEM:
+ *   MAIRIX
+ *
+ * PURPOSE:
+ *   Sales return processing.
+ *
+ * DESIGN PRINCIPLES:
+ *
+ *   1. Every return is a new centralized transaction.
+ *   2. Every return MUST reference the original sale.
+ *   3. Inventory effect:
+ *        SALES RETURN = POSITIVE (+)
+ *
+ *   4. Financial effect:
+ *        SALES RETURN = NEGATIVE (-)
+ *
+ *      Cash and credit are maintained separately.
+ *
+ *   5. Loyalty:
+ *        Returned quantity removes the same number
+ *        of loyalty points.
+ *
+ *   6. Tax:
+ *        Every tax type receives its own signed effect.
+ *        Sales return reverses the tax effect of sale.
+ *
+ *   7. No destructive editing of posted transactions.
+ *
+ *   8. Central reference:
+ *        Every return has a unique transaction reference.
+ *
+ *   9. Multi-warehouse:
+ *        The warehouse is part of the transaction.
+ *
+ *  10. Every operation records:
+ *        User
+ *        Date
+ *        Original reference
+ *        Return reference
+ *        Warehouse
+ *        Customer
+ *
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+const MAIRIX_SALES_RETURN = {
+
+  SHEET:
+    "SALES_RETURNS",
+
+  ITEMS_SHEET:
+    "SALES_RETURN_ITEMS",
+
+  TRANSACTION_TYPE:
+    "SALES_RETURN",
+
+  INVENTORY_SIGN:
+    1,
+
+  FINANCIAL_SIGN:
+    -1,
+
+  TAX_SIGN:
+    -1,
+
+  LOYALTY_SIGN:
+    -1
+
+};
+
+
+/************************************************
+ * SHEET HEADERS
+ ************************************************/
+
+const MAIRIX_SALES_RETURN_HEADERS = [
+
+  "Return Reference",
+  "Return Date",
+  "Original Sale Reference",
+
+  "Customer Code",
+  "Customer Name",
+
+  "Warehouse Code",
+  "Warehouse Name",
+
+  "Salesman Code",
+  "Salesman Name",
+
+  "Return Type",
+
+  "Gross Amount",
+  "Discount Amount",
+  "Net Amount",
+
+  "Taxable Amount",
+  "Total Tax",
+
+  "Cash Effect",
+  "Credit Effect",
+
+  "Inventory Effect",
+  "Loyalty Points Effect",
+
+  "Status",
+
+  "Created By",
+  "Created At",
+
+  "Posted By",
+  "Posted At",
+
+  "Void Reason",
+
+  "Central Reference"
+
+];
+
+
+const MAIRIX_SALES_RETURN_ITEM_HEADERS = [
+
+  "Return Reference",
+
+  "Line No",
+
+  "Original Sale Reference",
+
+  "Original Sale Line",
+
+  "Item Code",
+  "Item Name",
+
+  "Warehouse Code",
+
+  "Returned Quantity",
+
+  "Unit Price",
+
+  "Gross Amount",
+  "Discount Amount",
+  "Net Amount",
+
+  "Unit Cost",
+  "Inventory Value",
+
+  "Taxable Amount",
+  "Total Tax",
+
+  "Loyalty Points",
+
+  "Inventory Effect",
+  "Financial Effect",
+  "Tax Effect",
+
+  "Central Reference"
+
+];
+
+
+/************************************************
+ * SETUP
+ ************************************************/
+
+function setupMairixSalesReturns() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const headerSheet =
+    mairixGetOrCreateSheet(
+      ss,
+      MAIRIX_SALES_RETURN.SHEET
+    );
+
+
+  const itemSheet =
+    mairixGetOrCreateSheet(
+      ss,
+      MAIRIX_SALES_RETURN.ITEMS_SHEET
+    );
+
+
+  mairixEnsureHeaders(
+    headerSheet,
+    MAIRIX_SALES_RETURN_HEADERS
+  );
+
+
+  mairixEnsureHeaders(
+    itemSheet,
+    MAIRIX_SALES_RETURN_ITEM_HEADERS
+  );
+
+
+  headerSheet.setFrozenRows(1);
+  itemSheet.setFrozenRows(1);
+
+
+  return {
+
+    success: true,
+
+    sheets: [
+
+      MAIRIX_SALES_RETURN.SHEET,
+      MAIRIX_SALES_RETURN.ITEMS_SHEET
+
+    ]
+
+  };
+
+}
+
+
+/************************************************
+ * CREATE SALES RETURN
+ *
+ * INPUT:
+ *
+ * {
+ *   originalSaleReference: "...",
+ *
+ *   returnDate: Date,
+ *
+ *   customerCode: "...",
+ *
+ *   warehouseCode: "...",
+ *
+ *   returnType: "CASH" / "CREDIT",
+ *
+ *   items: [
+ *
+ *     {
+ *       originalSaleLine: 1,
+ *       itemCode: "...",
+ *       quantity: 2
+ *     }
+ *
+ *   ]
+ *
+ * }
+ *
+ ************************************************/
+
+function createMairixSalesReturn(data) {
+
+  if (!data) {
+
+    throw new Error(
+      "Sales return data is required."
+    );
+
+  }
+
+
+  /**********************************************
+   * CURRENT USER
+   **********************************************/
+
+  const user =
+    mairixRequireCurrentUser();
+
+
+  /**********************************************
+   * PERMISSION
+   **********************************************/
+
+  mairixRequireSalesReturnCreate(
+    user
+  );
+
+
+  /**********************************************
+   * BASIC VALIDATION
+   **********************************************/
+
+  const originalSaleReference =
+    mairixClean(
+      data.originalSaleReference
+    );
+
+
+  if (!originalSaleReference) {
+
+    throw new Error(
+      "Original Sale Reference is required."
+    );
+
+  }
+
+
+  if (
+    !Array.isArray(data.items) ||
+    data.items.length === 0
+  ) {
+
+    throw new Error(
+      "At least one return item is required."
+    );
+
+  }
+
+
+  const returnType =
+    mairixNormalizeReturnType(
+      data.returnType
+    );
+
+
+  /**********************************************
+   * LOAD ORIGINAL SALE
+   **********************************************/
+
+  const sale =
+    mairixGetOriginalSale(
+      originalSaleReference
+    );
+
+
+  if (!sale) {
+
+    throw new Error(
+      "Original sale not found: " +
+      originalSaleReference
+    );
+
+  }
+
+
+  /**********************************************
+   * PREVENT RETURN OF RETURN
+   **********************************************/
+
+  if (
+    mairixClean(
+      sale.transactionType
+    ).toUpperCase() ===
+    "SALES_RETURN"
+  ) {
+
+    throw new Error(
+      "A sales return cannot itself be returned."
+    );
+
+  }
+
+
+  /**********************************************
+   * CUSTOMER
+   **********************************************/
+
+  const customerCode =
+    mairixClean(
+      data.customerCode ||
+      sale.customerCode
+    );
+
+
+  const customerName =
+    mairixClean(
+      data.customerName ||
+      sale.customerName
+    );
+
+
+  if (
+    customerCode &&
+    sale.customerCode &&
+    customerCode !==
+    mairixClean(sale.customerCode)
+  ) {
+
+    throw new Error(
+      "Return customer does not match original sale."
+    );
+
+  }
+
+
+  /**********************************************
+   * WAREHOUSE
+   **********************************************/
+
+  const warehouseCode =
+    mairixClean(
+      data.warehouseCode ||
+      sale.warehouseCode
+    );
+
+
+  if (!warehouseCode) {
+
+    throw new Error(
+      "Warehouse is required for sales return."
+    );
+
+  }
+
+
+  /**********************************************
+   * RETURN REFERENCE
+   **********************************************/
+
+  const returnReference =
+    mairixGenerateReference(
+      "SRET"
+    );
+
+
+  /**********************************************
+   * DATE
+   **********************************************/
+
+  const returnDate =
+    data.returnDate
+      ? new Date(data.returnDate)
+      : new Date();
+
+
+  if (
+    isNaN(
+      returnDate.getTime()
+    )
+  ) {
+
+    throw new Error(
+      "Invalid return date."
+    );
+
+  }
+
+
+  /**********************************************
+   * VALIDATE ITEMS
+   **********************************************/
+
+  const preparedItems =
+    [];
+
+
+  let totalGross = 0;
+  let totalDiscount = 0;
+  let totalNet = 0;
+  let totalTaxable = 0;
+  let totalTax = 0;
+  let totalInventory = 0;
+  let totalLoyalty = 0;
+
+
+  data.items.forEach(
+    function(inputItem, index) {
+
+      const item =
+        mairixPrepareReturnItem(
+          inputItem,
+          sale,
+          warehouseCode,
+          originalSaleReference
+        );
+
+
+      if (!item) {
+
+        throw new Error(
+          "Invalid return item at line " +
+          (index + 1)
+        );
+
+      }
+
+
+      preparedItems.push(item);
+
+
+      totalGross +=
+        item.grossAmount;
+
+      totalDiscount +=
+        item.discountAmount;
+
+      totalNet +=
+        item.netAmount;
+
+      totalTaxable +=
+        item.taxableAmount;
+
+      totalTax +=
+        item.totalTax;
+
+      totalInventory +=
+        item.inventoryValue;
+
+      totalLoyalty +=
+        item.loyaltyPoints;
+
+    }
+  );
+
+
+  /**********************************************
+   * ENSURE RETURN DOES NOT EXCEED ALLOWED QTY
+   **********************************************/
+
+  mairixValidateReturnQuantities(
+    originalSaleReference,
+    preparedItems
+  );
+
+
+  /**********************************************
+   * BUILD TRANSACTION
+   **********************************************/
+
+  const transaction = {
+
+    returnReference:
+      returnReference,
+
+    returnDate:
+      returnDate,
+
+    originalSaleReference:
+      originalSaleReference,
+
+    customerCode:
+      customerCode,
+
+    customerName:
+      customerName,
+
+    warehouseCode:
+      warehouseCode,
+
+    warehouseName:
+      mairixGetWarehouseName(
+        warehouseCode
+      ),
+
+    salesmanCode:
+      mairixClean(
+        data.salesmanCode ||
+        sale.salesmanCode
+      ),
+
+    salesmanName:
+      mairixClean(
+        data.salesmanName ||
+        sale.salesmanName
+      ),
+
+    returnType:
+      returnType,
+
+    grossAmount:
+      mairixRound(totalGross),
+
+    discountAmount:
+      mairixRound(totalDiscount),
+
+    netAmount:
+      mairixRound(totalNet),
+
+    taxableAmount:
+      mairixRound(totalTaxable),
+
+    totalTax:
+      mairixRound(totalTax),
+
+    cashEffect:
+      returnType === "CASH"
+        ? mairixRound(
+            totalNet + totalTax
+          ) *
+          MAIRIX_SALES_RETURN.FINANCIAL_SIGN
+        : 0,
+
+    creditEffect:
+      returnType === "CREDIT"
+        ? mairixRound(
+            totalNet + totalTax
+          ) *
+          MAIRIX_SALES_RETURN.FINANCIAL_SIGN
+        : 0,
+
+    inventoryEffect:
+      mairixRound(totalInventory) *
+      MAIRIX_SALES_RETURN.INVENTORY_SIGN,
+
+    loyaltyPointsEffect:
+      Math.round(
+        totalLoyalty
+      ) *
+      MAIRIX_SALES_RETURN.LOYALTY_SIGN,
+
+    status:
+      "DRAFT",
+
+    createdBy:
+      user.userId,
+
+    createdAt:
+      new Date(),
+
+    centralReference:
+      returnReference
+
+  };
+
+
+  /**********************************************
+   * SAVE DRAFT
+   **********************************************/
+
+  mairixSaveSalesReturn(
+    transaction,
+    preparedItems
+  );
+
+
+  /**********************************************
+   * AUDIT
+   **********************************************/
+
+  mairixWriteReturnAudit(
+    "CREATE_SALES_RETURN",
+    returnReference,
+    user,
+    "Original Sale: " +
+      originalSaleReference
+  );
+
+
+  return {
+
+    success: true,
+
+    status:
+      "DRAFT",
+
+    returnReference:
+      returnReference,
+
+    originalSaleReference:
+      originalSaleReference,
+
+    transaction:
+      transaction,
+
+    items:
+      preparedItems
+
+  };
+
+}
+
+
+/************************************************
+ * POST SALES RETURN
+ *
+ * Posting is the point where the transaction
+ * affects:
+ *
+ *   Inventory
+ *   Cash
+ *   Credit
+ *   Taxes
+ *   Loyalty
+ *   Financial statements
+ ************************************************/
+
+function postMairixSalesReturn(
+  returnReference
+) {
+
+  const user =
+    mairixRequireCurrentUser();
+
+
+  mairixRequireSalesReturnCreate(
+    user
+  );
+
+
+  const reference =
+    mairixClean(
+      returnReference
+    );
+
+
+  if (!reference) {
+
+    throw new Error(
+      "Return Reference is required."
+    );
+
+  }
+
+
+  const transaction =
+    mairixGetSalesReturn(
+      reference
+    );
+
+
+  if (!transaction) {
+
+    throw new Error(
+      "Sales return not found: " +
+      reference
+    );
+
+  }
+
+
+  if (
+    transaction.status ===
+    "POSTED"
+  ) {
+
+    throw new Error(
+      "Sales return is already posted."
+    );
+
+  }
+
+
+  if (
+    transaction.status ===
+    "VOID"
+  ) {
+
+    throw new Error(
+      "Voided sales return cannot be posted."
+    );
+
+  }
+
+
+  const items =
+    mairixGetSalesReturnItems(
+      reference
+    );
+
+
+  if (!items.length) {
+
+    throw new Error(
+      "Sales return contains no items."
+    );
+
+  }
+
+
+  /**********************************************
+   * REVALIDATE BEFORE POSTING
+   **********************************************/
+
+  mairixValidateReturnQuantities(
+    transaction.originalSaleReference,
+    items
+  );
+
+
+  /**********************************************
+   * CENTRAL TRANSACTION LOCK
+   **********************************************/
+
+  return mairixWithReturnLock(
+    function() {
+
+      /******************************************
+       * INVENTORY
+       ******************************************/
+
+      mairixPostReturnInventory(
+        transaction,
+        items,
+        user
+      );
+
+
+      /******************************************
+       * FINANCIAL
+       ******************************************/
+
+      mairixPostReturnFinancial(
+        transaction,
+        items,
+        user
+      );
+
+
+      /******************************************
+       * TAX
+       ******************************************/
+
+      mairixPostReturnTaxes(
+        transaction,
+        items,
+        user
+      );
+
+
+      /******************************************
+       * LOYALTY
+       ******************************************/
+
+      mairixPostReturnLoyalty(
+        transaction,
+        items,
+        user
+      );
+
+
+      /******************************************
+       * MARK POSTED
+       ******************************************/
+
+      mairixMarkReturnPosted(
+        reference,
+        user
+      );
+
+
+      /******************************************
+       * AUDIT
+       ******************************************/
+
+      mairixWriteReturnAudit(
+        "POST_SALES_RETURN",
+        reference,
+        user,
+        "Original Sale: " +
+          transaction.originalSaleReference
+      );
+
+
+      return {
+
+        success: true,
+
+        status:
+          "POSTED",
+
+        returnReference:
+          reference,
+
+        originalSaleReference:
+          transaction.originalSaleReference
+
+      };
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * VOID SALES RETURN
+ *
+ * A posted return is NOT deleted.
+ *
+ * It is reversed through a controlled
+ * financial/inventory reversal mechanism.
+ ************************************************/
+
+function voidMairixSalesReturn(
+  returnReference,
+  reason
+) {
+
+  const user =
+    mairixRequireCurrentUser();
+
+
+  mairixRequireSalesReturnEdit(
+    user
+  );
+
+
+  const reference =
+    mairixClean(
+      returnReference
+    );
+
+
+  const voidReason =
+    mairixClean(
+      reason
+    );
+
+
+  if (!voidReason) {
+
+    throw new Error(
+      "Void reason is required."
+    );
+
+  }
+
+
+  const transaction =
+    mairixGetSalesReturn(
+      reference
+    );
+
+
+  if (!transaction) {
+
+    throw new Error(
+      "Sales return not found."
+    );
+
+  }
+
+
+  if (
+    transaction.status ===
+    "VOID"
+  ) {
+
+    throw new Error(
+      "Sales return is already void."
+    );
+
+  }
+
+
+  /*
+   * DRAFT:
+   * Can be voided without financial impact.
+   */
+
+  if (
+    transaction.status ===
+    "DRAFT"
+  ) {
+
+    mairixMarkReturnVoid(
+      reference,
+      voidReason,
+      user
+    );
+
+
+    return {
+
+      success: true,
+
+      status:
+        "VOID",
+
+      financialReversal:
+        false
+
+    };
+
+  }
+
+
+  /*
+   * POSTED:
+   *
+   * Create a controlled reversal
+   * through the central engines.
+   */
+
+  return mairixWithReturnLock(
+    function() {
+
+      mairixReversePostedReturn(
+        transaction,
+        user,
+        voidReason
+      );
+
+
+      mairixMarkReturnVoid(
+        reference,
+        voidReason,
+        user
+      );
+
+
+      mairixWriteReturnAudit(
+        "VOID_SALES_RETURN",
+        reference,
+        user,
+        "Reason: " +
+          voidReason
+      );
+
+
+      return {
+
+        success: true,
+
+        status:
+          "VOID",
+
+        financialReversal:
+          true
+
+      };
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * PREPARE RETURN ITEM
+ ************************************************/
+
+function mairixPrepareReturnItem(
+  input,
+  sale,
+  warehouseCode,
+  originalSaleReference
+) {
+
+  if (!input) {
+    return null;
+  }
+
+
+  const itemCode =
+    mairixClean(
+      input.itemCode
+    );
+
+
+  const quantity =
+    Number(
+      input.quantity
+    );
+
+
+  if (!itemCode) {
+
+    throw new Error(
+      "Return item code is required."
+    );
+
+  }
+
+
+  if (
+    !isFinite(quantity) ||
+    quantity <= 0
+  ) {
+
+    throw new Error(
+      "Return quantity must be greater than zero."
+    );
+
+  }
+
+
+  const saleLine =
+    mairixFindSaleLine(
+      sale,
+      input.originalSaleLine,
+      itemCode
+    );
+
+
+  if (!saleLine) {
+
+    throw new Error(
+      "Original sale line not found for item: " +
+      itemCode
+    );
+
+  }
+
+
+  const saleQuantity =
+    Number(
+      saleLine.quantity
+    );
+
+
+  if (
+    !isFinite(saleQuantity) ||
+    saleQuantity <= 0
+  ) {
+
+    throw new Error(
+      "Original sale quantity is invalid for item: " +
+      itemCode
+    );
+
+  }
+
+
+  const unitPrice =
+    Number(
+      saleLine.unitPrice || 0
+    );
+
+
+  const discountAmount =
+    mairixCalculateReturnDiscount(
+      saleLine,
+      quantity
+    );
+
+
+  const grossAmount =
+    mairixRound(
+      unitPrice *
+      quantity
+    );
+
+
+  const netAmount =
+    mairixRound(
+      grossAmount -
+      discountAmount
+    );
+
+
+  const unitCost =
+    Number(
+      saleLine.unitCost || 0
+    );
+
+
+  const inventoryValue =
+    mairixRound(
+      unitCost *
+      quantity
+    );
+
+
+  const taxableAmount =
+    mairixGetReturnTaxableAmount(
+      saleLine,
+      netAmount
+    );
+
+
+  const taxDetails =
+    mairixCalculateReturnTaxes(
+      saleLine,
+      taxableAmount,
+      quantity
+    );
+
+
+  const loyaltyPoints =
+    mairixCalculateReturnLoyalty(
+      saleLine,
+      quantity
+    );
+
+
+  return {
+
+    returnReference:
+      "",
+
+    lineNo:
+      0,
+
+    originalSaleReference:
+      originalSaleReference,
+
+    originalSaleLine:
+      input.originalSaleLine ||
+      saleLine.lineNo,
+
+    itemCode:
+      itemCode,
+
+    itemName:
+      mairixClean(
+        saleLine.itemName
+      ),
+
+    warehouseCode:
+      warehouseCode,
+
+    returnedQuantity:
+      quantity,
+
+    unitPrice:
+      mairixRound(
+        unitPrice
+      ),
+
+    grossAmount:
+      grossAmount,
+
+    discountAmount:
+      discountAmount,
+
+    netAmount:
+      netAmount,
+
+    unitCost:
+      mairixRound(
+        unitCost
+      ),
+
+    inventoryValue:
+      inventoryValue,
+
+    taxableAmount:
+      taxableAmount,
+
+    totalTax:
+      taxDetails.totalTax,
+
+    taxDetails:
+      taxDetails,
+
+    loyaltyPoints:
+      loyaltyPoints,
+
+    inventoryEffect:
+      inventoryValue *
+      MAIRIX_SALES_RETURN.INVENTORY_SIGN,
+
+    financialEffect:
+      netAmount *
+      MAIRIX_SALES_RETURN.FINANCIAL_SIGN,
+
+    taxEffect:
+      taxDetails.totalTax *
+      MAIRIX_SALES_RETURN.TAX_SIGN,
+
+    centralReference:
+      ""
+
+  };
+
+}
+
+
+/************************************************
+ * VALIDATE RETURN QUANTITIES
+ ************************************************/
+
+function mairixValidateReturnQuantities(
+  originalSaleReference,
+  items
+) {
+
+  const previousReturns =
+    mairixGetPostedReturnQuantities(
+      originalSaleReference
+    );
+
+
+  const requested = {};
+
+
+  items.forEach(
+    function(item) {
+
+      const key =
+        mairixClean(
+          item.itemCode
+        ) +
+        "|" +
+        String(
+          item.originalSaleLine
+        );
+
+
+      requested[key] =
+        (requested[key] || 0) +
+        Number(
+          item.returnedQuantity
+        );
+
+    }
+  );
+
+
+  Object.keys(
+    requested
+  ).forEach(
+    function(key) {
+
+      const parts =
+        key.split("|");
+
+
+      const itemCode =
+        parts[0];
+
+
+      const lineNo =
+        parts[1];
+
+
+      const originalQuantity =
+        mairixGetOriginalSaleLineQuantity(
+          originalSaleReference,
+          itemCode,
+          lineNo
+        );
+
+
+      const alreadyReturned =
+        previousReturns[key] || 0;
+
+
+      const requestedQuantity =
+        requested[key];
+
+
+      const remaining =
+        originalQuantity -
+        alreadyReturned;
+
+
+      if (
+        requestedQuantity >
+        remaining
+      ) {
+
+        throw new Error(
+          "Return quantity exceeds remaining quantity. " +
+          "Item: " +
+          itemCode +
+          " | Sale Line: " +
+          lineNo +
+          " | Remaining: " +
+          remaining
+        );
+
+      }
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * POST INVENTORY
+ ************************************************/
+
+function mairixPostReturnInventory(
+  transaction,
+  items,
+  user
+) {
+
+  /*
+   * Inventory engine integration.
+   *
+   * The return sends a POSITIVE quantity effect.
+   */
+
+  if (
+    typeof postInventoryMovement !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Inventory Engine is not connected: postInventoryMovement()."
+    );
+
+  }
+
+
+  items.forEach(
+    function(item) {
+
+      postInventoryMovement({
+
+        transactionReference:
+          transaction.returnReference,
+
+        centralReference:
+          transaction.centralReference,
+
+        transactionType:
+          "SALES_RETURN",
+
+        transactionDate:
+          transaction.returnDate,
+
+        warehouseCode:
+          transaction.warehouseCode,
+
+        itemCode:
+          item.itemCode,
+
+        quantity:
+          item.returnedQuantity,
+
+        quantityEffect:
+          item.returnedQuantity *
+          MAIRIX_SALES_RETURN.INVENTORY_SIGN,
+
+        unitCost:
+          item.unitCost,
+
+        inventoryValue:
+          item.inventoryValue,
+
+        originalReference:
+          transaction.originalSaleReference,
+
+        userId:
+          user.userId
+
+      });
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * POST FINANCIAL
+ ************************************************/
+
+function mairixPostReturnFinancial(
+  transaction,
+  items,
+  user
+) {
+
+  /*
+   * Cash and credit MUST remain separate.
+   */
+
+  if (
+    typeof postFinancialTransaction !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Engine is not connected: postFinancialTransaction()."
+    );
+
+  }
+
+
+  const total =
+    mairixRound(
+      transaction.netAmount +
+      transaction.totalTax
+    );
+
+
+  postFinancialTransaction({
+
+    transactionReference:
+      transaction.returnReference,
+
+    centralReference:
+      transaction.centralReference,
+
+    transactionType:
+      "SALES_RETURN",
+
+    transactionDate:
+      transaction.returnDate,
+
+    customerCode:
+      transaction.customerCode,
+
+    warehouseCode:
+      transaction.warehouseCode,
+
+    returnType:
+      transaction.returnType,
+
+    netAmount:
+      transaction.netAmount,
+
+    taxAmount:
+      transaction.totalTax,
+
+    totalAmount:
+      total,
+
+    cashEffect:
+      transaction.cashEffect,
+
+    creditEffect:
+      transaction.creditEffect,
+
+    financialSign:
+      MAIRIX_SALES_RETURN.FINANCIAL_SIGN,
+
+    originalReference:
+      transaction.originalSaleReference,
+
+    userId:
+      user.userId
+
+  });
+
+}
+
+
+/************************************************
+ * POST TAXES
+ ************************************************/
+
+function mairixPostReturnTaxes(
+  transaction,
+  items,
+  user
+) {
+
+  if (
+    typeof postTaxTransaction !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Tax Engine is not connected: postTaxTransaction()."
+    );
+
+  }
+
+
+  items.forEach(
+    function(item) {
+
+      if (
+        !item.taxDetails
+      ) {
+
+        return;
+
+      }
+
+
+      postTaxTransaction({
+
+        transactionReference:
+          transaction.returnReference,
+
+        centralReference:
+          transaction.centralReference,
+
+        transactionType:
+          "SALES_RETURN",
+
+        originalReference:
+          transaction.originalSaleReference,
+
+        itemCode:
+          item.itemCode,
+
+        taxableAmount:
+          item.taxableAmount,
+
+        taxEffectSign:
+          MAIRIX_SALES_RETURN.TAX_SIGN,
+
+        totalTax:
+          item.totalTax,
+
+        taxes:
+          item.taxDetails.taxes,
+
+        userId:
+          user.userId
+
+      });
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * POST LOYALTY
+ ************************************************/
+
+function mairixPostReturnLoyalty(
+  transaction,
+  items,
+  user
+) {
+
+  if (
+    typeof postLoyaltyTransaction !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Loyalty Engine is not connected: postLoyaltyTransaction()."
+    );
+
+  }
+
+
+  const points =
+    Math.round(
+      transaction.loyaltyPointsEffect
+    );
+
+
+  postLoyaltyTransaction({
+
+    transactionReference:
+      transaction.returnReference,
+
+    originalReference:
+      transaction.originalSaleReference,
+
+    customerCode:
+      transaction.customerCode,
+
+    pointsEffect:
+      points,
+
+    transactionType:
+      "SALES_RETURN",
+
+    userId:
+      user.userId
+
+  });
+
+}
+
+
+/************************************************
+ * REVERSE POSTED RETURN
+ ************************************************/
+
+function mairixReversePostedReturn(
+  transaction,
+  user,
+  reason
+) {
+
+  if (
+    typeof postInventoryMovement !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Inventory Engine is not connected."
+    );
+
+  }
+
+
+  if (
+    typeof postFinancialTransaction !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Engine is not connected."
+    );
+
+  }
+
+
+  const items =
+    mairixGetSalesReturnItems(
+      transaction.returnReference
+    );
+
+
+  /**********************************************
+   * INVENTORY REVERSAL
+   *
+   * Original return:
+   *   +
+   *
+   * Void reversal:
+   *   -
+   **********************************************/
+
+  items.forEach(
+    function(item) {
+
+      postInventoryMovement({
+
+        transactionReference:
+          transaction.returnReference +
+          "-VOID",
+
+        centralReference:
+          transaction.centralReference,
+
+        transactionType:
+          "SALES_RETURN_VOID",
+
+        transactionDate:
+          new Date(),
+
+        warehouseCode:
+          transaction.warehouseCode,
+
+        itemCode:
+          item.itemCode,
+
+        quantity:
+          Number(
+            item.returnedQuantity
+          ) *
+          -1,
+
+        quantityEffect:
+          Number(
+            item.returnedQuantity
+          ) *
+          -1,
+
+        unitCost:
+          item.unitCost,
+
+        inventoryValue:
+          Number(
+            item.inventoryValue
+          ) *
+          -1,
+
+        originalReference:
+          transaction.returnReference,
+
+        userId:
+          user.userId
+
+      });
+
+    }
+  );
+
+
+  /**********************************************
+   * FINANCIAL REVERSAL
+   *
+   * Reverse the return's negative effect.
+   **********************************************/
+
+  postFinancialTransaction({
+
+    transactionReference:
+      transaction.returnReference +
+      "-VOID",
+
+    centralReference:
+      transaction.centralReference,
+
+    transactionType:
+      "SALES_RETURN_VOID",
+
+    transactionDate:
+      new Date(),
+
+    customerCode:
+      transaction.customerCode,
+
+    warehouseCode:
+      transaction.warehouseCode,
+
+    returnType:
+      transaction.returnType,
+
+    netAmount:
+      Number(
+        transaction.netAmount
+      ) *
+      -1,
+
+    taxAmount:
+      Number(
+        transaction.totalTax
+      ) *
+      -1,
+
+    totalAmount:
+      Number(
+        transaction.netAmount
+      ) *
+      -1 +
+      Number(
+        transaction.totalTax
+      ) *
+      -1,
+
+    cashEffect:
+      Number(
+        transaction.cashEffect
+      ) *
+      -1,
+
+    creditEffect:
+      Number(
+        transaction.creditEffect
+      ) *
+      -1,
+
+    financialSign:
+      1,
+
+    originalReference:
+      transaction.returnReference,
+
+    reversalReason:
+      reason,
+
+    userId:
+      user.userId
+
+  });
+
+
+  /**********************************************
+   * TAX REVERSAL
+   **********************************************/
+
+  if (
+    typeof postTaxTransaction ===
+    "function"
+  ) {
+
+    postTaxTransaction({
+
+      transactionReference:
+        transaction.returnReference +
+        "-VOID",
+
+      centralReference:
+        transaction.centralReference,
+
+      transactionType:
+        "SALES_RETURN_VOID",
+
+      originalReference:
+        transaction.returnReference,
+
+      taxableAmount:
+        Number(
+          transaction.taxableAmount
+        ) *
+        -1,
+
+      taxEffectSign:
+        1,
+
+      totalTax:
+        Number(
+          transaction.totalTax
+        ) *
+        -1,
+
+      userId:
+        user.userId
+
+    });
+
+  }
+
+
+  /**********************************************
+   * LOYALTY REVERSAL
+   **********************************************/
+
+  if (
+    typeof postLoyaltyTransaction ===
+    "function"
+  ) {
+
+    postLoyaltyTransaction({
+
+      transactionReference:
+        transaction.returnReference +
+        "-VOID",
+
+      originalReference:
+        transaction.returnReference,
+
+      customerCode:
+        transaction.customerCode,
+
+      pointsEffect:
+        Number(
+          transaction.loyaltyPointsEffect
+        ) *
+        -1,
+
+      transactionType:
+        "SALES_RETURN_VOID",
+
+      userId:
+        user.userId
+
+    });
+
+  }
+
+}
+
+
+/************************************************
+ * MARK POSTED
+ ************************************************/
+
+function mairixMarkReturnPosted(
+  reference,
+  user
+) {
+
+  const sheet =
+    mairixGetSheet(
+      MAIRIX_SALES_RETURN.SHEET
+    );
+
+
+  const headers =
+    mairixGetHeaders(
+      sheet
+    );
+
+
+  const row =
+    mairixFindReferenceRow(
+      sheet,
+      "Return Reference",
+      reference
+    );
+
+
+  if (row === -1) {
+
+    throw new Error(
+      "Sales return row not found."
+    );
+
+  }
+
+
+  mairixSetCellByHeader(
+    sheet,
+    row,
+    headers,
+    "Status",
+    "POSTED"
+  );
+
+
+  mairixSetCellByHeader(
+    sheet,
+    row,
+    headers,
+    "Posted By",
+    user.userId
+  );
+
+
+  mairixSetCellByHeader(
+    sheet,
+    row,
+    headers,
+    "Posted At",
+    new Date()
+  );
+
+}
+
+
+/************************************************
+ * MARK VOID
+ ************************************************/
+
+function mairixMarkReturnVoid(
+  reference,
+  reason,
+  user
+) {
+
+  const sheet =
+    mairixGetSheet(
+      MAIRIX_SALES_RETURN.SHEET
+    );
+
+
+  const headers =
+    mairixGetHeaders(
+      sheet
+    );
+
+
+  const row =
+    mairixFindReferenceRow(
+      sheet,
+      "Return Reference",
+      reference
+    );
+
+
+  if (row === -1) {
+
+    throw new Error(
+      "Sales return not found."
+    );
+
+  }
+
+
+  mairixSetCellByHeader(
+    sheet,
+    row,
+    headers,
+    "Status",
+    "VOID"
+  );
+
+
+  mairixSetCellByHeader(
+    sheet,
+    row,
+    headers,
+    "Void Reason",
+    reason
+  );
+
+
+  mairixSetCellByHeader(
+    sheet,
+    row,
+    headers,
+    "Posted By",
+    user.userId
+  );
+
+
+  mairixSetCellByHeader(
+    sheet,
+    row,
+    headers,
+    "Posted At",
+    new Date()
+  );
+
+}
+
+
+/************************************************
+ * SAVE RETURN
+ ************************************************/
+
+function mairixSaveSalesReturn(
+  transaction,
+  items
+) {
+
+  const sheet =
+    mairixGetSheet(
+      MAIRIX_SALES_RETURN.SHEET
+    );
+
+
+  const itemSheet =
+    mairixGetSheet(
+      MAIRIX_SALES_RETURN.ITEMS_SHEET
+    );
+
+
+  const headers =
+    mairixGetHeaders(
+      sheet
+    );
+
+
+  const itemHeaders =
+    mairixGetHeaders(
+      itemSheet
+    );
+
+
+  const row =
+    mairixBuildRow(
+      headers,
+      transaction
+    );
+
+
+  sheet
+    .getRange(
+      sheet.getLastRow() + 1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([row]);
+
+
+  const itemRows =
+    items.map(
+      function(item, index) {
+
+        item.returnReference =
+          transaction.returnReference;
+
+        item.lineNo =
+          index + 1;
+
+        item.centralReference =
+          transaction.centralReference;
+
+
+        return mairixBuildRow(
+          itemHeaders,
+          item
+        );
+
+      }
+    );
+
+
+  if (itemRows.length) {
+
+    itemSheet
+      .getRange(
+        itemSheet.getLastRow() + 1,
+        1,
+        itemRows.length,
+        itemHeaders.length
+      )
+      .setValues(
+        itemRows
+      );
+
+  }
+
+}
+
+
+/************************************************
+ * GET RETURN
+ ************************************************/
+
+function mairixGetSalesReturn(
+  reference
+) {
+
+  const sheet =
+    mairixGetSheet(
+      MAIRIX_SALES_RETURN.SHEET
+    );
+
+
+  const headers =
+    mairixGetHeaders(
+      sheet
+    );
+
+
+  const row =
+    mairixFindReferenceRow(
+      sheet,
+      "Return Reference",
+      reference
+    );
+
+
+  if (row === -1) {
+    return null;
+  }
+
+
+  return mairixReadObject(
+    sheet,
+    row,
+    headers
+  );
+
+}
+
+
+/************************************************
+ * GET RETURN ITEMS
+ ************************************************/
+
+function mairixGetSalesReturnItems(
+  reference
+) {
+
+  const sheet =
+    mairixGetSheet(
+      MAIRIX_SALES_RETURN.ITEMS_SHEET
+    );
+
+
+  const headers =
+    mairixGetHeaders(
+      sheet
+    );
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+
+  const output = [];
+
+
+  values.forEach(
+    function(row) {
+
+      if (
+        mairixClean(
+          row[
+            headers.indexOf(
+              "Return Reference"
+            )
+          ]
+        ) !==
+        mairixClean(reference)
+      ) {
+
+        return;
+
+      }
+
+
+      const object = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          object[
+            mairixClean(header)
+          ] =
+            row[index];
+
+        }
+      );
+
+
+      output.push(
+        object
+      );
+
+    }
+  );
+
+
+  return output;
+
+}
+
+
+/************************************************
+ * ORIGINAL SALE LOADER
+ *
+ * This is intentionally isolated.
+ *
+ * Sales Engine will become the single
+ * source of truth for original sales.
+ ************************************************/
+
+function mairixGetOriginalSale(
+  reference
+) {
+
+  if (
+    typeof getMairixSaleByReference ===
+    "function"
+  ) {
+
+    return getMairixSaleByReference(
+      reference
+    );
+
+  }
+
+
+  /*
+   * Fallback for the new blank project.
+   *
+   * This allows the Sales Engine to be
+   * connected later without rewriting
+   * Sales Returns.
+   */
+
+  const sheetName =
+    "SALES";
+
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    ss.getSheetByName(
+      sheetName
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Sales Engine is not connected: " +
+      "getMairixSaleByReference() is missing."
+    );
+
+  }
+
+
+  return mairixFindTransactionInSheet(
+    sheet,
+    "Sale Reference",
+    reference
+  );
+
+}
+
+
+/************************************************
+ * SALE LINE FINDER
+ ************************************************/
+
+function mairixFindSaleLine(
+  sale,
+  originalSaleLine,
+  itemCode
+) {
+
+  if (
+    !sale.items ||
+    !Array.isArray(
+      sale.items
+    )
+  ) {
+
+    throw new Error(
+      "Original sale does not contain line details."
+    );
+
+  }
+
+
+  const requestedLine =
+    originalSaleLine !== undefined &&
+    originalSaleLine !== null &&
+    String(
+      originalSaleLine
+    ) !== "";
+
+
+  for (
+    let i = 0;
+    i < sale.items.length;
+    i++
+  ) {
+
+    const line =
+      sale.items[i];
+
+
+    const sameItem =
+      mairixClean(
+        line.itemCode
+      ) ===
+      mairixClean(
+        itemCode
+      );
+
+
+    if (!sameItem) {
+      continue;
+    }
+
+
+    if (!requestedLine) {
+      return line;
+    }
+
+
+    if (
+      String(
+        line.lineNo
+      ) ===
+      String(
+        originalSaleLine
+      )
+    ) {
+
+      return line;
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * PREVIOUS RETURN QUANTITIES
+ ************************************************/
+
+function mairixGetPostedReturnQuantities(
+  originalReference
+) {
+
+  const returns =
+    mairixGetAllReturnsForSale(
+      originalReference
+    );
+
+
+  const result = {};
+
+
+  returns.forEach(
+    function(ret) {
+
+      if (
+        mairixClean(
+          ret.Status
+        ).toUpperCase() !==
+        "POSTED"
+      ) {
+
+        return;
+
+      }
+
+
+      const items =
+        mairixGetSalesReturnItems(
+          ret[
+            "Return Reference"
+          ]
+        );
+
+
+      items.forEach(
+        function(item) {
+
+          const key =
+            mairixClean(
+              item["Item Code"]
+            ) +
+            "|" +
+            String(
+              item["Original Sale Line"]
+            );
+
+
+          result[key] =
+            (result[key] || 0) +
+            Number(
+              item["Returned Quantity"] || 0
+            );
+
+        }
+      );
+
+    }
+  );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * GET ALL RETURNS FOR SALE
+ ************************************************/
+
+function mairixGetAllReturnsForSale(
+  originalReference
+) {
+
+  const sheet =
+    mairixGetSheet(
+      MAIRIX_SALES_RETURN.SHEET
+    );
+
+
+  const headers =
+    mairixGetHeaders(
+      sheet
+    );
+
+
+  const originalIndex =
+    headers.indexOf(
+      "Original Sale Reference"
+    );
+
+
+  if (originalIndex === -1) {
+
+    throw new Error(
+      "Original Sale Reference column missing."
+    );
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+
+  const output = [];
+
+
+  values.forEach(
+    function(row) {
+
+      if (
+        mairixClean(
+          row[originalIndex]
+        ) !==
+        mairixClean(
+          originalReference
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      const object = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          object[
+            mairixClean(header)
+          ] =
+            row[index];
+
+        }
+      );
+
+
+      output.push(
+        object
+      );
+
+    }
+  );
+
+
+  return output;
+
+}
+
+
+/************************************************
+ * ORIGINAL SALE LINE QUANTITY
+ ************************************************/
+
+function mairixGetOriginalSaleLineQuantity(
+  saleReference,
+  itemCode,
+  lineNo
+) {
+
+  const sale =
+    mairixGetOriginalSale(
+      saleReference
+    );
+
+
+  if (!sale) {
+
+    throw new Error(
+      "Original sale not found."
+    );
+
+  }
+
+
+  const line =
+    mairixFindSaleLine(
+      sale,
+      lineNo,
+      itemCode
+    );
+
+
+  if (!line) {
+
+    throw new Error(
+      "Original sale line not found."
+    );
+
+  }
+
+
+  return Number(
+    line.quantity || 0
+  );
+
+}
+
+
+/************************************************
+ * DISCOUNT
+ ************************************************/
+
+function mairixCalculateReturnDiscount(
+  saleLine,
+  quantity
+) {
+
+  if (
+    saleLine.discountAmount !==
+    undefined
+  ) {
+
+    const originalQuantity =
+      Number(
+        saleLine.quantity || 0
+      );
+
+
+    if (
+      originalQuantity > 0
+    ) {
+
+      return mairixRound(
+        Number(
+          saleLine.discountAmount
+        ) *
+        (
+          quantity /
+          originalQuantity
+        )
+      );
+
+    }
+
+  }
+
+
+  const gross =
+    Number(
+      saleLine.unitPrice || 0
+    ) *
+    quantity;
+
+
+  const discountRate =
+    Number(
+      saleLine.discountRate || 0
+    );
+
+
+  return mairixRound(
+    gross *
+    discountRate /
+    100
+  );
+
+}
+
+
+/************************************************
+ * TAXABLE AMOUNT
+ ************************************************/
+
+function mairixGetReturnTaxableAmount(
+  saleLine,
+  netAmount
+) {
+
+  if (
+    saleLine.taxableAmount !==
+    undefined
+  ) {
+
+    const originalQuantity =
+      Number(
+        saleLine.quantity || 0
+      );
+
+
+    if (
+      originalQuantity > 0
+    ) {
+
+      const lineTaxable =
+        Number(
+          saleLine.taxableAmount || 0
+        );
+
+
+      const quantity =
+        Number(
+          saleLine.returnQuantity ||
+          saleLine.quantity
+        );
+
+
+      if (quantity > 0) {
+
+        return mairixRound(
+          Math.min(
+            netAmount,
+            lineTaxable
+          )
+        );
+
+      }
+
+    }
+
+  }
+
+
+  return mairixRound(
+    netAmount
+  );
+
+}
+
+
+/************************************************
+ * TAX CALCULATION
+ *
+ * Supports UNLIMITED TAX TYPES.
+ *
+ * Expected tax configuration from Tax Engine:
+ *
+ * [
+ *   {
+ *     code: "VAT",
+ *     rate: 14
+ *   },
+ *
+ *   {
+ *     code: "WITHHOLDING",
+ *     rate: 1
+ *   }
+ * ]
+ *
+ ************************************************/
+
+function mairixCalculateReturnTaxes(
+  saleLine,
+  taxableAmount,
+  quantity
+) {
+
+  /*
+   * If original sale already contains
+   * exact tax amounts per tax type,
+   * reverse proportionally.
+   */
+
+  if (
+    Array.isArray(
+      saleLine.taxes
+    )
+  ) {
+
+    const originalQuantity =
+      Number(
+        saleLine.quantity || 0
+      );
+
+
+    const taxes = [];
+
+
+    let totalTax = 0;
+
+
+    saleLine.taxes.forEach(
+      function(tax) {
+
+        const originalAmount =
+          Number(
+            tax.amount || 0
+          );
+
+
+        let amount =
+          originalAmount;
+
+
+        if (
+          originalQuantity > 0
+        ) {
+
+          amount =
+            originalAmount *
+            (
+              quantity /
+              originalQuantity
+            );
+
+        }
+
+
+        amount =
+          mairixRound(
+            amount
+          );
+
+
+        taxes.push({
+
+          code:
+            mairixClean(
+              tax.code
+            ),
+
+          name:
+            mairixClean(
+              tax.name
+            ),
+
+          rate:
+            Number(
+              tax.rate || 0
+            ),
+
+          taxableAmount:
+            taxableAmount,
+
+          amount:
+            amount,
+
+          effectSign:
+            MAIRIX_SALES_RETURN.TAX_SIGN,
+
+          signedAmount:
+            amount *
+            MAIRIX_SALES_RETURN.TAX_SIGN
+
+        });
+
+
+        totalTax +=
+          amount;
+
+      }
+    );
+
+
+    return {
+
+      taxes:
+        taxes,
+
+      totalTax:
+        mairixRound(
+          totalTax
+        )
+
+    };
+
+  }
+
+
+  /*
+   * If Tax Engine exists, delegate
+   * calculation to it.
+   */
+
+  if (
+    typeof calculateMairixTaxes ===
+    "function"
+  ) {
+
+    const result =
+      calculateMairixTaxes({
+
+        transactionType:
+          "SALES_RETURN",
+
+        taxableAmount:
+          taxableAmount,
+
+        quantity:
+          quantity,
+
+        source:
+          saleLine
+
+      });
+
+
+    return {
+
+      taxes:
+        result.taxes || [],
+
+      totalTax:
+        mairixRound(
+          result.totalTax || 0
+        )
+
+    };
+
+  }
+
+
+  /*
+   * No tax data available yet.
+   */
+
+  return {
+
+    taxes: [],
+
+    totalTax: 0
+
+  };
+
+}
+
+
+/************************************************
+ * LOYALTY
+ ************************************************/
+
+function mairixCalculateReturnLoyalty(
+  saleLine,
+  quantity
+) {
+
+  if (
+    saleLine.loyaltyPoints !==
+    undefined
+  ) {
+
+    const originalQuantity =
+      Number(
+        saleLine.quantity || 0
+      );
+
+
+    const originalPoints =
+      Number(
+        saleLine.loyaltyPoints || 0
+      );
+
+
+    if (
+      originalQuantity > 0
+    ) {
+
+      return Math.round(
+        originalPoints *
+        (
+          quantity /
+          originalQuantity
+        )
+      );
+
+    }
+
+  }
+
+
+  /*
+   * MAIRIX default:
+   * one purchased piece = one point.
+   */
+
+  return Math.round(
+    quantity
+  );
+
+}
+
+
+/************************************************
+ * RETURN TYPE
+ ************************************************/
+
+function mairixNormalizeReturnType(
+  value
+) {
+
+  const normalized =
+    mairixClean(
+      value
+    ).toUpperCase();
+
+
+  if (
+    normalized !== "CASH" &&
+    normalized !== "CREDIT"
+  ) {
+
+    throw new Error(
+      "Return Type must be CASH or CREDIT."
+    );
+
+  }
+
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * CURRENT USER BRIDGE
+ ************************************************/
+
+function mairixRequireCurrentUser() {
+
+  if (
+    typeof getMairixCurrentUser ===
+    "function"
+  ) {
+
+    const user =
+      getMairixCurrentUser();
+
+
+    if (!user) {
+
+      throw new Error(
+        "Current MAIRIX user could not be identified."
+      );
+
+    }
+
+
+    return user;
+
+  }
+
+
+  if (
+    typeof requireCurrentUser ===
+    "function"
+  ) {
+
+    return requireCurrentUser();
+
+  }
+
+
+  throw new Error(
+    "Users Engine is not connected."
+  );
+
+}
+
+
+/************************************************
+ * PERMISSION BRIDGE
+ ************************************************/
+
+function mairixRequireSalesReturnCreate(
+  user
+) {
+
+  if (
+    typeof requireERPPermission ===
+    "function"
+  ) {
+
+    return requireERPPermission(
+      user.userId,
+      "SALES_RETURNS",
+      "Create"
+    );
+
+  }
+
+
+  if (
+    typeof requireSalesCreate ===
+    "function"
+  ) {
+
+    return requireSalesCreate(
+      user.userId
+    );
+
+  }
+
+
+  throw new Error(
+    "Permission Engine is not connected."
+  );
+
+}
+
+
+function mairixRequireSalesReturnEdit(
+  user
+) {
+
+  if (
+    typeof requireERPPermission ===
+    "function"
+  ) {
+
+    return requireERPPermission(
+      user.userId,
+      "SALES_RETURNS",
+      "Edit"
+    );
+
+  }
+
+
+  if (
+    typeof requireSalesEdit ===
+    "function"
+  ) {
+
+    return requireSalesEdit(
+      user.userId
+    );
+
+  }
+
+
+  throw new Error(
+    "Permission Engine is not connected."
+  );
+
+}
+
+
+/************************************************
+ * CENTRAL LOCK
+ ************************************************/
+
+function mairixWithReturnLock(
+  callback
+) {
+
+  if (
+    typeof withMairixTransactionLock ===
+    "function"
+  ) {
+
+    return withMairixTransactionLock(
+      callback,
+      10000
+    );
+
+  }
+
+
+  const lock =
+    LockService
+      .getScriptLock();
+
+
+  lock.waitLock(
+    10000
+  );
+
+
+  try {
+
+    return callback();
+
+  } finally {
+
+    lock.releaseLock();
+
+  }
+
+}
+
+
+/************************************************
+ * AUDIT
+ ************************************************/
+
+function mairixWriteReturnAudit(
+  action,
+  reference,
+  user,
+  details
+) {
+
+  try {
+
+    if (
+      typeof logAction ===
+      "function"
+    ) {
+
+      logAction(
+        action,
+        reference,
+        details
+      );
+
+      return;
+
+    }
+
+
+    const ss =
+      SpreadsheetApp
+        .getActiveSpreadsheet();
+
+
+    let sheet =
+      ss.getSheetByName(
+        "MAIRIX_AUDIT"
+      );
+
+
+    if (!sheet) {
+
+      sheet =
+        ss.insertSheet(
+          "MAIRIX_AUDIT"
+        );
+
+
+      sheet
+        .appendRow([
+
+          "Timestamp",
+          "User ID",
+          "Action",
+          "Reference",
+          "Details"
+
+        ]);
+
+    }
+
+
+    sheet
+      .appendRow([
+
+        new Date(),
+
+        user
+          ? user.userId
+          : "SYSTEM",
+
+        action,
+
+        reference,
+
+        details || ""
+
+      ]);
+
+  } catch (error) {
+
+    Logger.log(
+      "Sales Return audit failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * WAREHOUSE
+ ************************************************/
+
+function mairixGetWarehouseName(
+  warehouseCode
+) {
+
+  if (
+    typeof getMairixWarehouseByCode ===
+    "function"
+  ) {
+
+    const warehouse =
+      getMairixWarehouseByCode(
+        warehouseCode
+      );
+
+
+    return warehouse
+      ? mairixClean(
+          warehouse.name
+        )
+      : "";
+
+  }
+
+
+  return "";
+
+}
+
+
+/************************************************
+ * REFERENCE
+ ************************************************/
+
+function mairixGenerateReference(
+  prefix
+) {
+
+  const timestamp =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd-HHmmss"
+    );
+
+
+  const random =
+    Math.floor(
+      Math.random() *
+      9000
+    ) +
+    1000;
+
+
+  return (
+    prefix +
+    "-" +
+    timestamp +
+    "-" +
+    random
+  );
+
+}
+
+
+/************************************************
+ * SHEET HELPERS
+ ************************************************/
+
+function mairixGetOrCreateSheet(
+  ss,
+  name
+) {
+
+  let sheet =
+    ss.getSheetByName(
+      name
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        name
+      );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+function mairixGetSheet(
+  name
+) {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        name
+      );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Required MAIRIX sheet not found: " +
+      name
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+function mairixEnsureHeaders(
+  sheet,
+  headers
+) {
+
+  if (
+    sheet.getLastRow() === 0
+  ) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        headers.length
+      )
+      .setValues([
+        headers
+      ]);
+
+    return;
+
+  }
+
+
+  const existing =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        Math.max(
+          sheet.getLastColumn(),
+          headers.length
+        )
+      )
+      .getDisplayValues()[0];
+
+
+  headers.forEach(
+    function(header, index) {
+
+      if (
+        mairixClean(
+          existing[index]
+        ) !==
+        header
+      ) {
+
+        sheet
+          .getRange(
+            1,
+            index + 1
+          )
+          .setValue(
+            header
+          );
+
+      }
+
+    }
+  );
+
+}
+
+
+function mairixGetHeaders(
+  sheet
+) {
+
+  return sheet
+    .getRange(
+      1,
+      1,
+      1,
+      sheet.getLastColumn()
+    )
+    .getDisplayValues()[0]
+    .map(
+      function(header) {
+
+        return mairixClean(
+          header
+        );
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * BUILD ROW
+ ************************************************/
+
+function mairixBuildRow(
+  headers,
+  object
+) {
+
+  return headers.map(
+    function(header) {
+
+      const key =
+        mairixClean(
+          header
+        );
+
+
+      if (
+        object[key] !== undefined
+      ) {
+
+        return object[key];
+
+      }
+
+
+      /*
+       * Map internal camelCase names
+       * to sheet headers.
+       */
+
+      const aliases = {
+
+        "Return Reference":
+          "returnReference",
+
+        "Return Date":
+          "returnDate",
+
+        "Original Sale Reference":
+          "originalSaleReference",
+
+        "Customer Code":
+          "customerCode",
+
+        "Customer Name":
+          "customerName",
+
+        "Warehouse Code":
+          "warehouseCode",
+
+        "Warehouse Name":
+          "warehouseName",
+
+        "Salesman Code":
+          "salesmanCode",
+
+        "Salesman Name":
+          "salesmanName",
+
+        "Return Type":
+          "returnType",
+
+        "Gross Amount":
+          "grossAmount",
+
+        "Discount Amount":
+          "discountAmount",
+
+        "Net Amount":
+          "netAmount",
+
+        "Taxable Amount":
+          "taxableAmount",
+
+        "Total Tax":
+          "totalTax",
+
+        "Cash Effect":
+          "cashEffect",
+
+        "Credit Effect":
+          "creditEffect",
+
+        "Inventory Effect":
+          "inventoryEffect",
+
+        "Loyalty Points Effect":
+          "loyaltyPointsEffect",
+
+        "Status":
+          "status",
+
+        "Created By":
+          "createdBy",
+
+        "Created At":
+          "createdAt",
+
+        "Posted By":
+          "postedBy",
+
+        "Posted At":
+          "postedAt",
+
+        "Void Reason":
+          "voidReason",
+
+        "Central Reference":
+          "centralReference",
+
+        "Return Reference":
+          "returnReference",
+
+        "Line No":
+          "lineNo",
+
+        "Original Sale Line":
+          "originalSaleLine",
+
+        "Item Code":
+          "itemCode",
+
+        "Item Name":
+          "itemName",
+
+        "Returned Quantity":
+          "returnedQuantity",
+
+        "Unit Price":
+          "unitPrice",
+
+        "Unit Cost":
+          "unitCost",
+
+        "Inventory Value":
+          "inventoryValue",
+
+        "Loyalty Points":
+          "loyaltyPoints",
+
+        "Financial Effect":
+          "financialEffect",
+
+        "Tax Effect":
+          "taxEffect"
+
+      };
+
+
+      const property =
+        aliases[header];
+
+
+      return property
+        ? (
+            object[property] !== undefined
+              ? object[property]
+              : ""
+          )
+        : "";
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * FIND ROW
+ ************************************************/
+
+function mairixFindReferenceRow(
+  sheet,
+  header,
+  reference
+) {
+
+  const headers =
+    mairixGetHeaders(
+      sheet
+    );
+
+
+  const index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (index === -1) {
+
+    throw new Error(
+      "Column not found: " +
+      header
+    );
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (lastRow < 2) {
+    return -1;
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        index + 1,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  const normalized =
+    mairixClean(
+      reference
+    );
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      mairixClean(
+        values[i][0]
+      ) ===
+      normalized
+    ) {
+
+      return i + 2;
+
+    }
+
+  }
+
+
+  return -1;
+
+}
+
+
+/************************************************
+ * READ OBJECT
+ ************************************************/
+
+function mairixReadObject(
+  sheet,
+  row,
+  headers
+) {
+
+  const values =
+    sheet
+      .getRange(
+        row,
+        1,
+        1,
+        headers.length
+      )
+      .getValues()[0];
+
+
+  const object = {};
+
+
+  headers.forEach(
+    function(header, index) {
+
+      object[header] =
+        values[index];
+
+    }
+  );
+
+
+  /*
+   * Normalize important fields.
+   */
+
+  object.status =
+    mairixClean(
+      object.Status
+    ).toUpperCase();
+
+
+  object.returnReference =
+    mairixClean(
+      object[
+        "Return Reference"
+      ]
+    );
+
+
+  object.originalSaleReference =
+    mairixClean(
+      object[
+        "Original Sale Reference"
+      ]
+    );
+
+
+  object.customerCode =
+    mairixClean(
+      object[
+        "Customer Code"
+      ]
+    );
+
+
+  object.warehouseCode =
+    mairixClean(
+      object[
+        "Warehouse Code"
+      ]
+    );
+
+
+  object.returnType =
+    mairixClean(
+      object[
+        "Return Type"
+      ]
+    ).toUpperCase();
+
+
+  object.netAmount =
+    Number(
+      object[
+        "Net Amount"
+      ] || 0
+    );
+
+
+  object.totalTax =
+    Number(
+      object[
+        "Total Tax"
+      ] || 0
+    );
+
+
+  object.cashEffect =
+    Number(
+      object[
+        "Cash Effect"
+      ] || 0
+    );
+
+
+  object.creditEffect =
+    Number(
+      object[
+        "Credit Effect"
+      ] || 0
+    );
+
+
+  object.taxableAmount =
+    Number(
+      object[
+        "Taxable Amount"
+      ] || 0
+    );
+
+
+  object.loyaltyPointsEffect =
+    Number(
+      object[
+        "Loyalty Points Effect"
+      ] || 0
+    );
+
+
+  object.centralReference =
+    mairixClean(
+      object[
+        "Central Reference"
+      ]
+    );
+
+
+  return object;
+
+}
+
+
+/************************************************
+ * SET CELL BY HEADER
+ ************************************************/
+
+function mairixSetCellByHeader(
+  sheet,
+  row,
+  headers,
+  header,
+  value
+) {
+
+  const index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (index === -1) {
+
+    throw new Error(
+      "Column not found: " +
+      header
+    );
+
+  }
+
+
+  sheet
+    .getRange(
+      row,
+      index + 1
+    )
+    .setValue(
+      value
+    );
+
+}
+
+
+/************************************************
+ * TRANSACTION FINDER
+ ************************************************/
+
+function mairixFindTransactionInSheet(
+  sheet,
+  referenceHeader,
+  reference
+) {
+
+  const row =
+    mairixFindReferenceRow(
+      sheet,
+      referenceHeader,
+      reference
+    );
+
+
+  if (row === -1) {
+    return null;
+  }
+
+
+  const headers =
+    mairixGetHeaders(
+      sheet
+    );
+
+
+  return mairixReadObject(
+    sheet,
+    row,
+    headers
+  );
+
+}
+
+
+/************************************************
+ * CLEAN
+ ************************************************/
+
+function mairixClean(
+  value
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(
+    value
+  )
+    .trim();
+
+}
+
+
+/************************************************
+ * ROUND
+ ************************************************/
+
+function mairixRound(
+  value
+) {
+
+  return Math.round(
+    Number(value || 0) *
+    100
+  ) / 100;
+
+}
+
+
+/************************************************
+ * TEST SETUP
+ ************************************************/
+
+function testMairixSalesReturnsSetup() {
+
+  const result =
+    setupMairixSalesReturns();
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "Sales Returns setup failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SALES RETURNS SETUP: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST RETURN REFERENCE
+ ************************************************/
+
+function testMairixSalesReturnReference() {
+
+  const reference =
+    mairixGenerateReference(
+      "SRET"
+    );
+
+
+  Logger.log(
+    "Generated Reference: " +
+    reference
+  );
+
+
+  if (
+    reference.indexOf(
+      "SRET-"
+    ) !== 0
+  ) {
+
+    throw new Error(
+      "Invalid sales return reference."
+    );
+
+  }
+
+
+  Logger.log(
+    "SALES RETURN REFERENCE TEST: PASS"
+  );
+
+}
+
+
+/************************************************
+ * TEST RETURN TYPE
+ ************************************************/
+
+function testMairixSalesReturnType() {
+
+  if (
+    mairixNormalizeReturnType(
+      "cash"
+    ) !==
+    "CASH"
+  ) {
+
+    throw new Error(
+      "CASH normalization failed."
+    );
+
+  }
+
+
+  if (
+    mairixNormalizeReturnType(
+      "credit"
+    ) !==
+    "CREDIT"
+  ) {
+
+    throw new Error(
+      "CREDIT normalization failed."
+    );
+
+  }
+
+
+  let failed =
+    false;
+
+
+  try {
+
+    mairixNormalizeReturnType(
+      "INVALID"
+    );
+
+  } catch (error) {
+
+    failed = true;
+
+  }
+
+
+  if (!failed) {
+
+    throw new Error(
+      "Invalid return type was accepted."
+    );
+
+  }
+
+
+  Logger.log(
+    "SALES RETURN TYPE TEST: PASS"
+  );
+
+}
+
+
+/************************************************
+ * TEST SIGNS
+ ************************************************/
+
+function testMairixSalesReturnSigns() {
+
+  if (
+    MAIRIX_SALES_RETURN
+      .INVENTORY_SIGN !==
+    1
+  ) {
+
+    throw new Error(
+      "Sales return inventory sign must be positive."
+    );
+
+  }
+
+
+  if (
+    MAIRIX_SALES_RETURN
+      .FINANCIAL_SIGN !==
+    -1
+  ) {
+
+    throw new Error(
+      "Sales return financial sign must be negative."
+    );
+
+  }
+
+
+  if (
+    MAIRIX_SALES_RETURN
+      .TAX_SIGN !==
+    -1
+  ) {
+
+    throw new Error(
+      "Sales return tax sign must be negative."
+    );
+
+  }
+
+
+  if (
+    MAIRIX_SALES_RETURN
+      .LOYALTY_SIGN !==
+    -1
+  ) {
+
+    throw new Error(
+      "Sales return loyalty sign must be negative."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "SALES RETURN SIGN TEST: PASS"
+  );
+
+  Logger.log(
+    "Inventory: +"
+  );
+
+  Logger.log(
+    "Financial: -"
+  );
+
+  Logger.log(
+    "Tax: -"
+  );
+
+  Logger.log(
+    "Loyalty: -"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

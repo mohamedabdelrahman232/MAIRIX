@@ -1,0 +1,56 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 62-MAIRIX_PurchaseReturnIntegration.gs
+ *
+ * Purchase Return integration facade.
+ ************************************************/
+
+function mairixE2EPurchaseReturnCreate(data) {
+
+  if (typeof apiCreatePurchaseReturn !== "function") {
+    throw new Error("apiCreatePurchaseReturn() is not available.");
+  }
+
+  if (!data) {
+    throw new Error("Purchase return data is required.");
+  }
+
+  var request = Object.assign({}, data);
+
+  delete request.userId;
+  delete request.serverUserId;
+  delete request.createdBy;
+  delete request.updatedBy;
+
+  var result = apiCreatePurchaseReturn(request);
+
+  if (!result || result.success !== true) {
+    throw new Error(
+      "Purchase return integration failed: " +
+      JSON.stringify(result && result.error ? result.error : result)
+    );
+  }
+
+  return result;
+}
+
+function testMairixPurchaseReturnIntegrationContract() {
+
+  [
+    "apiCreatePurchaseReturn",
+    "createPurchaseReturn",
+    "mairixApiRequirePermission"
+  ].forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Missing Purchase Return function: " + name);
+    }
+  });
+
+  Logger.log("62 PURCHASE RETURN INTEGRATION: PASS");
+
+  return {
+    success: true,
+    module: "PURCHASE_RETURN",
+    status: "READY"
+  };
+}

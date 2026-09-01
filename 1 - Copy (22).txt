@@ -1,0 +1,1384 @@
+/************************************************
+ * MAIRIX ERP
+ * 23-MAIRIX_ReferenceViewer.gs
+ *
+ * PURPOSE
+ * -------
+ * Central reference drill-down engine.
+ *
+ * RULE:
+ * Any reference number shown in any report
+ * can be opened to reveal the complete
+ * transaction and all related operations.
+ *
+ * DESIGN:
+ * - Reference is the central link between
+ *   transaction and reports.
+ * - Read-only viewer.
+ * - Never changes source transactions.
+ * - Supports unlimited transaction types.
+ * - Supports linked references.
+ * - Supports financial / inventory / tax
+ *   effects when available.
+ *
+ * IMPORTANT:
+ * This file is designed for the NEW WHITE
+ * SHEET architecture.
+ *
+ * It does NOT depend on legacy data layouts.
+ ************************************************/
+
+
+/************************************************
+ * CONFIGURATION
+ ************************************************/
+
+const MAIRIX_REFERENCE_VIEWER = {
+
+  NAME:
+    "REFERENCE_VIEWER",
+
+  MAX_DEPTH:
+    5,
+
+  MAX_ROWS_PER_SHEET:
+    10000,
+
+  DISPLAY_FIELDS: [
+
+    "Reference",
+    "Reference ID",
+    "Transaction ID",
+    "Document No",
+    "Date",
+    "Type",
+    "Status",
+    "User ID",
+    "User Name",
+    "Warehouse ID",
+    "Warehouse Name",
+    "Customer ID",
+    "Customer Name",
+    "Vendor ID",
+    "Vendor Name",
+    "Salesman ID",
+    "Salesman Name",
+    "Currency",
+    "Gross Amount",
+    "Discount",
+    "Net Amount",
+    "Taxable Amount",
+    "Total Tax",
+    "Final Total",
+    "Cash Effect",
+    "Receivable Effect",
+    "Payable Effect",
+    "Inventory Effect",
+    "Notes"
+  ]
+
+};
+
+
+/************************************************
+ * PUBLIC ENTRY POINT
+ *
+ * Called by UI/report when user clicks
+ * a reference number.
+ ************************************************/
+
+function viewReference(reference) {
+
+  const normalizedReference =
+    normalizeReference(
+      reference
+    );
+
+
+  if (!normalizedReference) {
+
+    throw new Error(
+      "Reference is required."
+    );
+
+  }
+
+
+  const result =
+    findReferenceTransaction(
+      normalizedReference
+    );
+
+
+  if (!result) {
+
+    throw new Error(
+      "Reference not found: " +
+      normalizedReference
+    );
+
+  }
+
+
+  return buildReferenceView(
+    result
+  );
+
+}
+
+
+/************************************************
+ * NORMALIZE REFERENCE
+ ************************************************/
+
+function normalizeReference(
+  reference
+) {
+
+  return String(
+    reference === undefined ||
+    reference === null
+      ? ""
+      : reference
+  )
+    .trim();
+
+}
+
+
+/************************************************
+ * FIND CENTRAL REFERENCE
+ *
+ * The new architecture expects every
+ * transaction engine to expose its reference
+ * through the CENTRAL TRANSACTIONS sheet.
+ *
+ * We deliberately do not hard-code old
+ * transaction tables.
+ ************************************************/
+
+function findReferenceTransaction(
+  reference
+) {
+
+  const sheet =
+    getOptionalMairixSheet(
+      "TRANSACTIONS"
+    );
+
+
+  if (!sheet) {
+
+    return findReferenceThroughEngines(
+      reference
+    );
+
+  }
+
+
+  const data =
+    readSheetObjects(
+      sheet
+    );
+
+
+  for (
+    let i = 0;
+    i < data.length;
+    i++
+  ) {
+
+    const row =
+      data[i];
+
+
+    if (
+      referenceMatchesRow(
+        row,
+        reference
+      )
+    ) {
+
+      return {
+
+        source:
+          "TRANSACTIONS",
+
+        row:
+          row,
+
+        transactionType:
+          getFirstValue(
+            row,
+            [
+              "Transaction Type",
+              "Type"
+            ]
+          ),
+
+        reference:
+          reference
+
+      };
+
+    }
+
+  }
+
+
+  return findReferenceThroughEngines(
+    reference
+  );
+
+}
+
+
+/************************************************
+ * ENGINE FALLBACK
+ *
+ * Used while individual transaction engines
+ * are being built.
+ *
+ * The function searches only sheets that
+ * belong to the NEW architecture.
+ ************************************************/
+
+function findReferenceThroughEngines(
+  reference
+) {
+
+  const candidateSheets = [
+
+    "SALES",
+    "SALES_RETURNS",
+    "PURCHASES",
+    "PURCHASE_RETURNS",
+    "COLLECTIONS",
+    "VENDOR_PAYMENTS",
+    "EXPENSES",
+    "COMMISSIONS",
+    "TAX_TRANSACTIONS",
+    "INVENTORY_TRANSACTIONS"
+
+  ];
+
+
+  for (
+    let i = 0;
+    i < candidateSheets.length;
+    i++
+  ) {
+
+    const sheet =
+      getOptionalMairixSheet(
+        candidateSheets[i]
+      );
+
+
+    if (!sheet) {
+      continue;
+    }
+
+
+    const rows =
+      readSheetObjects(
+        sheet
+      );
+
+
+    for (
+      let r = 0;
+      r < rows.length;
+      r++
+    ) {
+
+      if (
+        referenceMatchesRow(
+          rows[r],
+          reference
+        )
+      ) {
+
+        return {
+
+          source:
+            candidateSheets[i],
+
+          row:
+            rows[r],
+
+          transactionType:
+            candidateSheets[i],
+
+          reference:
+            reference
+
+        };
+
+      }
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * REFERENCE MATCH
+ *
+ * Supports multiple standard reference
+ * column names so the architecture can evolve
+ * without breaking the viewer.
+ ************************************************/
+
+function referenceMatchesRow(
+  row,
+  reference
+) {
+
+  const fields = [
+
+    "Reference",
+    "Reference ID",
+    "Reference No",
+    "Reference Number",
+    "Transaction ID",
+    "Transaction No",
+    "Document No",
+    "Document ID",
+    "Sale ID",
+    "Return ID",
+    "Purchase ID",
+    "Collection ID",
+    "Payment ID",
+    "Expense ID",
+    "Commission ID"
+
+  ];
+
+
+  for (
+    let i = 0;
+    i < fields.length;
+    i++
+  ) {
+
+    const value =
+      cleanReferenceValue(
+        row[fields[i]]
+      );
+
+
+    if (
+      value &&
+      value ===
+      cleanReferenceValue(
+        reference
+      )
+    ) {
+
+      return true;
+
+    }
+
+  }
+
+
+  return false;
+
+}
+
+
+/************************************************
+ * BUILD COMPLETE REFERENCE VIEW
+ ************************************************/
+
+function buildReferenceView(
+  transaction
+) {
+
+  const row =
+    transaction.row;
+
+
+  const result = {
+
+    success:
+      true,
+
+    reference:
+      transaction.reference,
+
+    source:
+      transaction.source,
+
+    transactionType:
+      transaction.transactionType,
+
+    transaction:
+      normalizeTransactionObject(
+        row
+      ),
+
+    financial:
+      getReferenceFinancialEffects(
+        transaction.reference,
+        row
+      ),
+
+    inventory:
+      getReferenceInventoryEffects(
+        transaction.reference,
+        row
+      ),
+
+    taxes:
+      getReferenceTaxEffects(
+        transaction.reference,
+        row
+      ),
+
+    linkedOperations:
+      getLinkedOperations(
+        transaction.reference
+      ),
+
+    references:
+      getRelatedReferences(
+        transaction.reference,
+        row
+      )
+
+  };
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * NORMALIZE TRANSACTION OBJECT
+ ************************************************/
+
+function normalizeTransactionObject(
+  row
+) {
+
+  const output = {};
+
+
+  Object.keys(row)
+    .forEach(
+      function(key) {
+
+        if (
+          key === ""
+        ) {
+          return;
+        }
+
+
+        output[key] =
+          row[key];
+
+      }
+    );
+
+
+  return output;
+
+}
+
+
+/************************************************
+ * FINANCIAL EFFECTS
+ *
+ * Viewer reads effects already calculated
+ * by FinancialEngine.
+ *
+ * No financial formula is recreated here.
+ ************************************************/
+
+function getReferenceFinancialEffects(
+  reference,
+  transactionRow
+) {
+
+  const result = {
+
+    cashEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "Cash Effect",
+          "Cash Impact"
+        ]
+      ),
+
+    receivableEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "Receivable Effect",
+          "AR Effect",
+          "Customer Credit Effect"
+        ]
+      ),
+
+    payableEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "Payable Effect",
+          "AP Effect",
+          "Vendor Credit Effect"
+        ]
+      ),
+
+    inventoryValueEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "Inventory Value Effect",
+          "Stock Value Effect"
+        ]
+      ),
+
+    revenueEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "Revenue Effect",
+          "Sales Effect"
+        ]
+      ),
+
+    cogsEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "COGS Effect",
+          "Cost Of Goods Sold Effect"
+        ]
+      ),
+
+    expenseEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "Expense Effect"
+        ]
+      )
+
+  };
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * INVENTORY EFFECTS
+ ************************************************/
+
+function getReferenceInventoryEffects(
+  reference,
+  transactionRow
+) {
+
+  const result = {
+
+    quantityEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "Inventory Effect",
+          "Quantity Effect",
+          "Stock Effect"
+        ]
+      ),
+
+    inventoryValueEffect:
+      getNumericField(
+        transactionRow,
+        [
+          "Inventory Value Effect",
+          "Stock Value Effect"
+        ]
+      ),
+
+    warehouseId:
+      getFirstValue(
+        transactionRow,
+        [
+          "Warehouse ID"
+        ]
+      ),
+
+    warehouseName:
+      getFirstValue(
+        transactionRow,
+        [
+          "Warehouse Name"
+        ]
+      )
+
+  };
+
+
+  const inventorySheet =
+    getOptionalMairixSheet(
+      "INVENTORY_TRANSACTIONS"
+    );
+
+
+  if (!inventorySheet) {
+    return result;
+  }
+
+
+  const rows =
+    readSheetObjects(
+      inventorySheet
+    );
+
+
+  const movements = [];
+
+
+  rows.forEach(
+    function(row) {
+
+      if (
+        referenceMatchesRow(
+          row,
+          reference
+        )
+      ) {
+
+        movements.push(
+          row
+        );
+
+      }
+
+    }
+  );
+
+
+  result.movements =
+    movements;
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * TAX EFFECTS
+ *
+ * Supports unlimited tax types.
+ *
+ * The viewer does NOT assume VAT only.
+ ************************************************/
+
+function getReferenceTaxEffects(
+  reference,
+  transactionRow
+) {
+
+  const result = {
+
+    taxableAmount:
+      getNumericField(
+        transactionRow,
+        [
+          "Taxable Amount",
+          "Tax Base"
+        ]
+      ),
+
+    totalTax:
+      getNumericField(
+        transactionRow,
+        [
+          "Total Tax"
+        ]
+      ),
+
+    finalTaxBase:
+      getNumericField(
+        transactionRow,
+        [
+          "Final Taxable Amount",
+          "Final Tax Base"
+        ]
+      ),
+
+    taxes: []
+
+  };
+
+
+  const taxSheet =
+    getOptionalMairixSheet(
+      "TAX_TRANSACTIONS"
+    );
+
+
+  if (!taxSheet) {
+    return result;
+  }
+
+
+  const rows =
+    readSheetObjects(
+      taxSheet
+    );
+
+
+  rows.forEach(
+    function(row) {
+
+      if (
+        referenceMatchesRow(
+          row,
+          reference
+        )
+      ) {
+
+        result.taxes.push(
+          row
+        );
+
+      }
+
+    }
+  );
+
+
+  /*
+   * Tax summary by type.
+   */
+
+  result.byTaxType =
+    summarizeTaxesByType(
+      result.taxes
+    );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * TAX SUMMARY
+ ************************************************/
+
+function summarizeTaxesByType(
+  taxes
+) {
+
+  const summary = {};
+
+
+  taxes.forEach(
+    function(row) {
+
+      const taxType =
+        getFirstValue(
+          row,
+          [
+            "Tax Type",
+            "Tax Code",
+            "Tax Name"
+          ]
+        ) ||
+        "UNSPECIFIED";
+
+
+      const effect =
+        getNumericField(
+          row,
+          [
+            "Tax Effect",
+            "Amount",
+            "Tax Amount"
+          ]
+        );
+
+
+      if (
+        !summary[taxType]
+      ) {
+
+        summary[taxType] = {
+
+          taxType:
+            taxType,
+
+          amount:
+            0,
+
+          count:
+            0
+
+        };
+
+      }
+
+
+      summary[taxType].amount +=
+        effect;
+
+
+      summary[taxType].count++;
+
+    }
+  );
+
+
+  return Object.keys(
+    summary
+  ).map(
+    function(key) {
+
+      return summary[key];
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * LINKED OPERATIONS
+ *
+ * Finds every transaction that explicitly
+ * points to this reference.
+ ************************************************/
+
+function getLinkedOperations(
+  reference
+) {
+
+  const linked = [];
+
+
+  const sheetNames = [
+
+    "TRANSACTIONS",
+    "SALES",
+    "SALES_RETURNS",
+    "PURCHASES",
+    "PURCHASE_RETURNS",
+    "COLLECTIONS",
+    "VENDOR_PAYMENTS",
+    "EXPENSES",
+    "COMMISSIONS",
+    "TAX_TRANSACTIONS",
+    "INVENTORY_TRANSACTIONS"
+
+  ];
+
+
+  sheetNames.forEach(
+    function(sheetName) {
+
+      const sheet =
+        getOptionalMairixSheet(
+          sheetName
+        );
+
+
+      if (!sheet) {
+        return;
+      }
+
+
+      const rows =
+        readSheetObjects(
+          sheet
+        );
+
+
+      rows.forEach(
+        function(row) {
+
+          if (
+            rowContainsReference(
+              row,
+              reference
+            )
+          ) {
+
+            linked.push({
+
+              source:
+                sheetName,
+
+              data:
+                row
+
+            });
+
+          }
+
+        }
+      );
+
+    }
+  );
+
+
+  return linked;
+
+}
+
+
+/************************************************
+ * RELATED REFERENCES
+ ************************************************/
+
+function getRelatedReferences(
+  reference,
+  transactionRow
+) {
+
+  const references = [];
+
+
+  Object.keys(
+    transactionRow
+  )
+  .forEach(
+    function(key) {
+
+      if (
+        key.toLowerCase()
+          .indexOf(
+            "reference"
+          ) === -1
+      ) {
+
+        return;
+
+      }
+
+
+      const value =
+        cleanReferenceValue(
+          transactionRow[key]
+        );
+
+
+      if (
+        !value ||
+        value ===
+        cleanReferenceValue(
+          reference
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      references.push({
+
+        field:
+          key,
+
+        reference:
+          value
+
+      });
+
+    }
+  );
+
+
+  return references;
+
+}
+
+
+/************************************************
+ * ROW CONTAINS REFERENCE
+ ************************************************/
+
+function rowContainsReference(
+  row,
+  reference
+) {
+
+  const normalized =
+    cleanReferenceValue(
+      reference
+    );
+
+
+  const keys =
+    Object.keys(row);
+
+
+  for (
+    let i = 0;
+    i < keys.length;
+    i++
+  ) {
+
+    const key =
+      keys[i];
+
+
+    if (
+      key.toLowerCase()
+        .indexOf(
+          "reference"
+        ) === -1
+    ) {
+
+      continue;
+
+    }
+
+
+    const value =
+      cleanReferenceValue(
+        row[key]
+      );
+
+
+    if (
+      value === normalized
+    ) {
+
+      return true;
+
+    }
+
+  }
+
+
+  return false;
+
+}
+
+
+/************************************************
+ * NUMERIC FIELD HELPER
+ ************************************************/
+
+function getNumericField(
+  row,
+  fields
+) {
+
+  for (
+    let i = 0;
+    i < fields.length;
+    i++
+  ) {
+
+    const value =
+      row[fields[i]];
+
+
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
+
+      const number =
+        Number(
+          value
+        );
+
+
+      if (
+        !isNaN(number)
+      ) {
+
+        return number;
+
+      }
+
+    }
+
+  }
+
+
+  return 0;
+
+}
+
+
+/************************************************
+ * FIRST AVAILABLE FIELD
+ ************************************************/
+
+function getFirstValue(
+  row,
+  fields
+) {
+
+  for (
+    let i = 0;
+    i < fields.length;
+    i++
+  ) {
+
+    if (
+      row[fields[i]] !== undefined &&
+      row[fields[i]] !== null &&
+      row[fields[i]] !== ""
+    ) {
+
+      return row[fields[i]];
+
+    }
+
+  }
+
+
+  return "";
+
+}
+
+
+/************************************************
+ * CLEAN REFERENCE
+ ************************************************/
+
+function cleanReferenceValue(
+  value
+) {
+
+  return String(
+    value === undefined ||
+    value === null
+      ? ""
+      : value
+  )
+    .trim()
+    .toUpperCase();
+
+}
+
+
+/************************************************
+ * OPTIONAL SHEET
+ ************************************************/
+
+function getOptionalMairixSheet(
+  sheetName
+) {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  return ss.getSheetByName(
+    sheetName
+  );
+
+}
+
+
+/************************************************
+ * READ SHEET OBJECTS
+ ************************************************ */
+
+function readSheetObjects(
+  sheet
+) {
+
+  if (!sheet) {
+    return [];
+  }
+
+
+  const lastRow =
+    Math.min(
+      sheet.getLastRow(),
+      MAIRIX_REFERENCE_VIEWER
+        .MAX_ROWS_PER_SHEET
+    );
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  return values.map(
+    function(row) {
+
+      const object = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          const normalizedHeader =
+            String(
+              header || ""
+            ).trim();
+
+
+          if (!normalizedHeader) {
+            return;
+          }
+
+
+          object[
+            normalizedHeader
+          ] =
+            row[index];
+
+        }
+      );
+
+
+      return object;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * TEST
+ ************************************************/
+
+function testReferenceViewer() {
+
+  const reference =
+    "TEST-REFERENCE-001";
+
+
+  try {
+
+    const result =
+      viewReference(
+        reference
+      );
+
+
+    Logger.log(
+      JSON.stringify(
+        result,
+        null,
+        2
+      )
+    );
+
+
+  } catch (error) {
+
+    Logger.log(
+      "REFERENCE VIEWER TEST:"
+    );
+
+    Logger.log(
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * UI HELPER
+ *
+ * Returns only the data required to render
+ * a reference popup/modal.
+ ************************************************/
+
+function getReferenceDetails(
+  reference
+) {
+
+  const result =
+    viewReference(
+      reference
+    );
+
+
+  return {
+
+    success:
+      true,
+
+    reference:
+      result.reference,
+
+    transactionType:
+      result.transactionType,
+
+    transaction:
+      result.transaction,
+
+    financial:
+      result.financial,
+
+    inventory:
+      result.inventory,
+
+    taxes:
+      result.taxes,
+
+    linkedOperations:
+      result.linkedOperations,
+
+    references:
+      result.references
+
+  };
+
+}

@@ -1,0 +1,54 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 67-MAIRIX_LoyaltyDiscountIntegration.gs
+ *
+ * Loyalty + Discount integration contract.
+ *
+ * Rules:
+ * - Allowed fixed discounts: 0/5/7/10%.
+ * - 1 purchased piece = 1 point.
+ * - Sales return reverses the related points.
+ * - Loyalty points are UI-visible beside customer name only.
+ * - Server-side validation remains authoritative.
+ ************************************************/
+
+const MAIRIX_LOYALTY_DISCOUNT_RULES = {
+  allowedDiscounts: [0, 5, 7, 10],
+  pointsPerUnit: 1
+};
+
+function mairixValidateSaleDiscount(discountPercent) {
+  var value = Number(discountPercent);
+
+  if (!MAIRIX_LOYALTY_DISCOUNT_RULES.allowedDiscounts.includes(value)) {
+    throw new Error("Invalid sale discount. Allowed: 0%, 5%, 7%, 10%.");
+  }
+
+  return value;
+}
+
+function mairixCalculateLoyaltyPoints(quantity) {
+  var qty = Number(quantity);
+  if (!Number.isFinite(qty) || qty < 0) {
+    throw new Error("Invalid quantity for loyalty calculation.");
+  }
+  return Math.floor(qty) * MAIRIX_LOYALTY_DISCOUNT_RULES.pointsPerUnit;
+}
+
+function testMairixLoyaltyDiscountContract() {
+  [0, 5, 7, 10].forEach(mairixValidateSaleDiscount);
+
+  try {
+    mairixValidateSaleDiscount(6);
+    throw new Error("Invalid discount was accepted.");
+  } catch (e) {
+    if (String(e.message).indexOf("Invalid sale discount") === -1) throw e;
+  }
+
+  if (mairixCalculateLoyaltyPoints(3) !== 3) {
+    throw new Error("Loyalty point calculation failed.");
+  }
+
+  Logger.log("67 LOYALTY + DISCOUNT CONTRACT: PASS");
+  return { success: true, discounts: [0, 5, 7, 10], pointsPerUnit: 1 };
+}

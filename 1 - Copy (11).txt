@@ -1,0 +1,2155 @@
+/************************************************
+ * MAIRIX ERP
+ * 7-MAIRIX_TaxEngine.gs
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Central tax engine for MAIRIX.
+ *
+ * DESIGN PRINCIPLES
+ * ------------------------------------------------
+ * 1) Unlimited tax types.
+ * 2) Tax types are configuration-driven.
+ * 3) Every transaction carries tax impact signs.
+ * 4) Tax calculations are centralized.
+ * 5) Taxable base is calculated before tax totals.
+ * 6) Each transaction can contain multiple taxes.
+ * 7) Reports can aggregate taxes by:
+ *      - Tax Type
+ *      - Transaction Type
+ *      - Reference
+ *      - Period
+ *      - Warehouse
+ *      - Customer
+ *      - Vendor
+ * 8) Tax data is linked to the central transaction
+ *    reference.
+ * 9) No hard-coded tax names.
+ * 10) No dependency on old MAIF data.
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * This engine does NOT assume a fixed number of
+ * taxes such as VAT only.
+ *
+ * The Settings / Tax Configuration layer defines
+ * the active tax types and rates.
+ *
+ * The engine only executes the rules.
+ ************************************************/
+
+/************************************************
+ * BOOLEAN NORMALIZER
+ *
+ * Converts spreadsheet/config values
+ * into a reliable boolean value.
+ ************************************************/
+
+function isTrueValue(
+  value
+) {
+
+  if (
+    value === true ||
+    value === 1
+  ) {
+
+    return true;
+
+  }
+
+
+  if (
+    value === false ||
+    value === 0 ||
+    value === null ||
+    value === undefined
+  ) {
+
+    return false;
+
+  }
+
+
+  const normalized =
+    String(value)
+      .trim()
+      .toLowerCase();
+
+
+  return [
+
+    "true",
+    "yes",
+    "y",
+    "1",
+    "active",
+    "enabled",
+    "on"
+
+  ].indexOf(
+    normalized
+  ) !== -1;
+
+}
+
+/************************************************
+ * TAX CONSTANTS
+ ************************************************/
+
+const MAIRIX_TAX = {
+
+  SHEET:
+    "TAX_TYPES",
+
+  TRANSACTION_SHEET:
+    "TAX_TRANSACTIONS",
+
+  STATUS_ACTIVE:
+    "ACTIVE",
+
+  STATUS_INACTIVE:
+    "INACTIVE",
+
+  /*
+   * Tax impact signs.
+   *
+   * Positive:
+   * tax increases tax liability / output.
+   *
+   * Negative:
+   * tax reverses or reduces previous tax impact.
+   */
+
+  SIGN_POSITIVE:
+    1,
+
+  SIGN_NEGATIVE:
+    -1,
+
+  SIGN_ZERO:
+    0
+
+};
+
+
+/************************************************
+ * TAX TYPE SHEET STRUCTURE
+ *
+ * TAX_TYPES
+ *
+ * Tax Code
+ * Tax Name
+ * Rate
+ * Calculation Base
+ * Applies To Sales
+ * Applies To Sales Returns
+ * Applies To Purchases
+ * Applies To Purchase Returns
+ * Applies To Expenses
+ * Active
+ ************************************************/
+
+function setupMairixTaxTypesSheet() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_TAX.SHEET
+    );
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_TAX.SHEET
+      );
+
+  }
+
+  const headers = [
+
+    "Tax Code",
+    "Tax Name",
+    "Rate",
+    "Calculation Base",
+
+    "Applies To Sales",
+    "Applies To Sales Returns",
+
+    "Applies To Purchases",
+    "Applies To Purchase Returns",
+
+    "Applies To Expenses",
+
+    "Active"
+
+  ];
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([
+      headers
+    ]);
+
+  sheet
+    .setFrozenRows(1);
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+  return {
+
+    success:
+      true,
+
+    sheet:
+      MAIRIX_TAX.SHEET,
+
+    headers:
+      headers
+
+  };
+
+}
+
+
+/************************************************
+ * SETUP TAX TRANSACTIONS SHEET
+ *
+ * This is the centralized tax movement ledger.
+ ************************************************/
+
+function setupMairixTaxTransactionsSheet() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_TAX.TRANSACTION_SHEET
+    );
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_TAX.TRANSACTION_SHEET
+      );
+
+  }
+
+  const headers = [
+
+    "Tax Transaction ID",
+
+    "Reference ID",
+    "Transaction Type",
+    "Transaction Date",
+
+    "Warehouse ID",
+
+    "Party Type",
+    "Party ID",
+
+    "Party Name",
+
+    "Tax Code",
+    "Tax Name",
+
+    "Rate",
+
+    "Base Amount",
+
+    "Tax Sign",
+
+    "Tax Amount",
+
+    "Signed Tax Amount",
+
+    "Taxable Base",
+
+    "Final Tax Base",
+
+    "Currency",
+
+    "Status",
+
+    "Created At"
+
+  ];
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([
+      headers
+    ]);
+
+  sheet
+    .setFrozenRows(1);
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+  return {
+
+    success:
+      true,
+
+    sheet:
+      MAIRIX_TAX.TRANSACTION_SHEET,
+
+    headers:
+      headers
+
+  };
+
+}
+
+
+/************************************************
+ * GET TAX TYPES
+ ************************************************/
+
+function getMairixTaxTypes() {
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_TAX.SHEET
+    );
+
+  const lastRow =
+    sheet.getLastRow();
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+  return values.map(
+    function(row) {
+
+      const item = {};
+
+      headers.forEach(
+        function(header, index) {
+
+          item[
+            mairixCleanText(header)
+          ] =
+            row[index];
+
+        }
+      );
+
+      return item;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * GET ACTIVE TAX TYPES
+ ************************************************/
+
+function getActiveMairixTaxTypes() {
+
+  return getMairixTaxTypes()
+    .filter(
+      function(tax) {
+
+        return isTrueValue(
+          tax["Active"]
+        );
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * GET TAX TYPE BY CODE
+ ************************************************/
+
+function getMairixTaxByCode(
+  taxCode
+) {
+
+  const normalizedCode =
+    mairixCleanText(
+      taxCode
+    ).toUpperCase();
+
+  if (!normalizedCode) {
+
+    return null;
+
+  }
+
+  const taxes =
+    getMairixTaxTypes();
+
+  for (
+    let i = 0;
+    i < taxes.length;
+    i++
+  ) {
+
+    const code =
+      mairixCleanText(
+        taxes[i]["Tax Code"]
+      ).toUpperCase();
+
+    if (
+      code === normalizedCode
+    ) {
+
+      return taxes[i];
+
+    }
+
+  }
+
+  return null;
+
+}
+
+
+/************************************************
+ * NORMALIZE TRANSACTION TYPE
+ ************************************************/
+
+function normalizeMairixTaxTransactionType(
+  transactionType
+) {
+
+  const type =
+    mairixCleanText(
+      transactionType
+    )
+      .toUpperCase()
+      .replace(
+        /\s+/g,
+        "_"
+      );
+
+  return type;
+
+}
+
+
+/************************************************
+ * TAX SIGN BY TRANSACTION
+ *
+ * SALES
+ *      +1
+ *
+ * SALES RETURN
+ *      -1
+ *
+ * PURCHASE
+ *      -1
+ *
+ * PURCHASE RETURN
+ *      +1
+ *
+ * EXPENSE
+ *      configurable by expense treatment
+ *
+ * This is the TAX impact sign,
+ * not inventory sign.
+ ************************************************/
+
+function getMairixTaxSign(
+  transactionType
+) {
+
+  const type =
+    normalizeMairixTaxTransactionType(
+      transactionType
+    );
+
+  switch (type) {
+
+    case "SALE":
+    case "SALES":
+      return 1;
+
+    case "SALES_RETURN":
+    case "SALE_RETURN":
+    case "RETURN_SALE":
+      return -1;
+
+    case "PURCHASE":
+    case "PURCHASE_INVOICE":
+      return -1;
+
+    case "PURCHASE_RETURN":
+    case "PURCHASES_RETURN":
+      return 1;
+
+    case "EXPENSE":
+    case "EXPENSE_PAYMENT":
+      return -1;
+
+    default:
+      return 0;
+
+  }
+
+}
+
+
+/************************************************
+ * TAX APPLICATION CHECK
+ ************************************************/
+
+function taxAppliesToTransaction(
+  tax,
+  transactionType
+) {
+
+  const type =
+    normalizeMairixTaxTransactionType(
+      transactionType
+    );
+
+  if (
+    !isTrueValue(
+      tax["Active"]
+    )
+  ) {
+
+    return false;
+
+  }
+
+  switch (type) {
+
+    case "SALE":
+    case "SALES":
+
+      return isTrueValue(
+        tax["Applies To Sales"]
+      );
+
+
+    case "SALES_RETURN":
+    case "SALE_RETURN":
+    case "RETURN_SALE":
+
+      return isTrueValue(
+        tax["Applies To Sales Returns"]
+      );
+
+
+    case "PURCHASE":
+    case "PURCHASE_INVOICE":
+
+      return isTrueValue(
+        tax["Applies To Purchases"]
+      );
+
+
+    case "PURCHASE_RETURN":
+    case "PURCHASES_RETURN":
+
+      return isTrueValue(
+        tax["Applies To Purchase Returns"]
+      );
+
+
+    case "EXPENSE":
+    case "EXPENSE_PAYMENT":
+
+      return isTrueValue(
+        tax["Applies To Expenses"]
+      );
+
+
+    default:
+      return false;
+
+  }
+
+}
+
+
+/************************************************
+ * CALCULATE TAX
+ *
+ * baseAmount:
+ *      amount before this tax
+ *
+ * rate:
+ *      percentage
+ ************************************************/
+
+function calculateMairixTax(
+  baseAmount,
+  rate
+) {
+
+  const base =
+    Number(
+      baseAmount
+    ) || 0;
+
+  const taxRate =
+    Number(
+      rate
+    ) || 0;
+
+  const amount =
+    base *
+    (
+      taxRate /
+      100
+    );
+
+  return {
+
+    baseAmount:
+      base,
+
+    rate:
+      taxRate,
+
+    taxAmount:
+      roundMairixMoney(
+        amount
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * MONEY ROUNDING
+ ************************************************/
+
+function roundMairixMoney(
+  value
+) {
+
+  return Math.round(
+    (
+      Number(value) || 0
+    ) *
+    100
+  ) / 100;
+
+}
+
+
+/************************************************
+ * CALCULATE ALL TAXES
+ *
+ * Input:
+ *
+ * {
+ *   transactionType,
+ *   baseAmount,
+ *   taxes: optional array,
+ *   ...
+ * }
+ *
+ * If taxes are not supplied,
+ * all applicable active taxes are used.
+ ************************************************/
+
+function calculateMairixTransactionTaxes(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Tax calculation data is required."
+    );
+
+  }
+
+  const transactionType =
+    normalizeMairixTaxTransactionType(
+      data.transactionType
+    );
+
+  if (!transactionType) {
+
+    throw new Error(
+      "Transaction Type is required."
+    );
+
+  }
+
+  const baseAmount =
+    Number(
+      data.baseAmount
+    ) || 0;
+
+  if (
+    baseAmount < 0
+  ) {
+
+    throw new Error(
+      "Tax base cannot be negative."
+    );
+
+  }
+
+  const allTaxes =
+    getActiveMairixTaxTypes();
+
+  let selectedTaxes =
+    allTaxes;
+
+  /*
+   * Optional explicit tax selection.
+   */
+
+  if (
+    Array.isArray(
+      data.taxes
+    )
+  ) {
+
+    selectedTaxes =
+      data.taxes
+        .map(
+          function(item) {
+
+            if (
+              typeof item === "string"
+            ) {
+
+              return getMairixTaxByCode(
+                item
+              );
+
+            }
+
+            if (
+              item &&
+              item.taxCode
+            ) {
+
+              return getMairixTaxByCode(
+                item.taxCode
+              );
+
+            }
+
+            return null;
+
+          }
+        )
+        .filter(
+          function(item) {
+
+            return !!item;
+
+          }
+        );
+
+  }
+
+  const taxSign =
+    getMairixTaxSign(
+      transactionType
+    );
+
+  const results = [];
+
+  let totalTax =
+    0;
+
+  let finalTaxBase =
+    baseAmount;
+
+
+  selectedTaxes.forEach(
+    function(tax) {
+
+      if (
+        !taxAppliesToTransaction(
+          tax,
+          transactionType
+        )
+      ) {
+
+        return;
+
+      }
+
+      const calculation =
+        calculateMairixTax(
+          finalTaxBase,
+          tax["Rate"]
+        );
+
+      const signedAmount =
+        roundMairixMoney(
+          calculation.taxAmount *
+          taxSign
+        );
+
+
+      results.push({
+
+        taxCode:
+          mairixCleanText(
+            tax["Tax Code"]
+          ),
+
+        taxName:
+          mairixCleanText(
+            tax["Tax Name"]
+          ),
+
+        rate:
+          Number(
+            tax["Rate"]
+          ) || 0,
+
+        baseAmount:
+          calculation.baseAmount,
+
+        taxSign:
+          taxSign,
+
+        taxAmount:
+          calculation.taxAmount,
+
+        signedTaxAmount:
+          signedAmount,
+
+        taxableBase:
+          calculation.baseAmount
+
+      });
+
+
+      totalTax =
+        roundMairixMoney(
+          totalTax +
+          signedAmount
+        );
+
+
+      /*
+       * IMPORTANT
+       *
+       * Taxes can be cumulative.
+       *
+       * Therefore the next tax can be
+       * calculated on the base including
+       * the previous tax if the tax setup
+       * defines that behavior later.
+       *
+       * For the initial engine:
+       * finalTaxBase remains the original
+       * taxable amount.
+       */
+
+    }
+  );
+
+
+  return {
+
+    transactionType:
+      transactionType,
+
+    baseAmount:
+      baseAmount,
+
+    taxSign:
+      taxSign,
+
+    taxes:
+      results,
+
+    taxCount:
+      results.length,
+
+    totalTax:
+      totalTax,
+
+    finalTaxBase:
+      baseAmount
+
+  };
+
+}
+
+
+/************************************************
+ * BUILD TAX TRANSACTION ROWS
+ ************************************************/
+
+function buildMairixTaxTransactionRows(
+  data,
+  calculation
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Tax transaction data is required."
+    );
+
+  }
+
+  if (!calculation) {
+
+    throw new Error(
+      "Tax calculation is required."
+    );
+
+  }
+
+  const transactionId =
+    data.taxTransactionId ||
+    generateMairixTaxTransactionId();
+
+
+  const rows = [];
+
+  calculation.taxes.forEach(
+    function(tax) {
+
+      rows.push([
+
+        transactionId,
+
+        mairixCleanText(
+          data.referenceId
+        ),
+
+        normalizeMairixTaxTransactionType(
+          data.transactionType
+        ),
+
+        data.transactionDate ||
+          new Date(),
+
+        mairixCleanText(
+          data.warehouseId
+        ),
+
+        mairixCleanText(
+          data.partyType
+        ),
+
+        mairixCleanText(
+          data.partyId
+        ),
+
+        mairixCleanText(
+          data.partyName
+        ),
+
+        tax.taxCode,
+
+        tax.taxName,
+
+        tax.rate,
+
+        tax.baseAmount,
+
+        tax.taxSign,
+
+        tax.taxAmount,
+
+        tax.signedTaxAmount,
+
+        tax.taxableBase,
+
+        calculation.finalTaxBase,
+
+        mairixCleanText(
+          data.currency
+        ),
+
+        "POSTED",
+
+        new Date()
+
+      ]);
+
+    }
+  );
+
+
+  return {
+
+    transactionId:
+      transactionId,
+
+    rows:
+      rows
+
+  };
+
+}
+
+
+/************************************************
+ * POST TAX TRANSACTION
+ *
+ * Central tax posting point.
+ ************************************************/
+
+function postMairixTaxTransaction(
+  data
+) {
+
+  const calculation =
+    calculateMairixTransactionTaxes(
+      data
+    );
+
+
+  const built =
+    buildMairixTaxTransactionRows(
+      data,
+      calculation
+    );
+
+
+  if (
+    built.rows.length === 0
+  ) {
+
+    return {
+
+      success:
+        true,
+
+      transactionId:
+        built.transactionId,
+
+      taxCount:
+        0,
+
+      totalTax:
+        0,
+
+      rows:
+        0,
+
+      message:
+        "No applicable taxes for this transaction."
+
+    };
+
+  }
+
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_TAX.TRANSACTION_SHEET
+    );
+
+
+  sheet
+    .getRange(
+      sheet.getLastRow() + 1,
+      1,
+      built.rows.length,
+      built.rows[0].length
+    )
+    .setValues(
+      built.rows
+    );
+
+
+  return {
+
+    success:
+      true,
+
+    transactionId:
+      built.transactionId,
+
+    referenceId:
+      mairixCleanText(
+        data.referenceId
+      ),
+
+    transactionType:
+      calculation.transactionType,
+
+    taxCount:
+      calculation.taxCount,
+
+    totalTax:
+      calculation.totalTax,
+
+    finalTaxBase:
+      calculation.finalTaxBase,
+
+    rows:
+      built.rows.length
+
+  };
+
+}
+
+
+/************************************************
+ * GENERATE TAX TRANSACTION ID
+ ************************************************/
+
+function generateMairixTaxTransactionId() {
+
+  const dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd-HHmmss"
+    );
+
+  const suffix =
+    Utilities.getUuid()
+      .substring(
+        0,
+        8
+      )
+      .toUpperCase();
+
+  return (
+    "TAX-" +
+    dateKey +
+    "-" +
+    suffix
+  );
+
+}
+
+
+/************************************************
+ * GET TAX TOTALS BY TYPE
+ *
+ * Used by tax reports.
+ ************************************************/
+
+function getMairixTaxTotalsByType(
+  startDate,
+  endDate
+) {
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_TAX.TRANSACTION_SHEET
+    );
+
+  const lastRow =
+    sheet.getLastRow();
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+  if (
+    lastRow < 2
+  ) {
+
+    return [];
+
+  }
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+  const dateIndex =
+    headers.indexOf(
+      "Transaction Date"
+    );
+
+  const codeIndex =
+    headers.indexOf(
+      "Tax Code"
+    );
+
+  const nameIndex =
+    headers.indexOf(
+      "Tax Name"
+    );
+
+  const amountIndex =
+    headers.indexOf(
+      "Signed Tax Amount"
+    );
+
+  const resultMap = {};
+
+
+  values.forEach(
+    function(row) {
+
+      const date =
+        row[dateIndex];
+
+      if (
+        !isMairixDateInRange(
+          date,
+          startDate,
+          endDate
+        )
+      ) {
+
+        return;
+
+      }
+
+      const code =
+        mairixCleanText(
+          row[codeIndex]
+        );
+
+      const name =
+        mairixCleanText(
+          row[nameIndex]
+        );
+
+      if (!code) {
+        return;
+      }
+
+      if (!resultMap[code]) {
+
+        resultMap[code] = {
+
+          taxCode:
+            code,
+
+          taxName:
+            name,
+
+          total:
+            0
+
+        };
+
+      }
+
+      resultMap[code].total =
+        roundMairixMoney(
+          resultMap[code].total +
+          (
+            Number(
+              row[amountIndex]
+            ) || 0
+          )
+        );
+
+    }
+  );
+
+
+  return Object.keys(
+    resultMap
+  ).map(
+    function(code) {
+
+      return resultMap[code];
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * TAX TOTALS BY TRANSACTION TYPE
+ ************************************************/
+
+function getMairixTaxTotalsByTransactionType(
+  startDate,
+  endDate
+) {
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_TAX.TRANSACTION_SHEET
+    );
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (
+    lastRow < 2
+  ) {
+
+    return [];
+
+  }
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+
+  const dateIndex =
+    headers.indexOf(
+      "Transaction Date"
+    );
+
+  const typeIndex =
+    headers.indexOf(
+      "Transaction Type"
+    );
+
+  const amountIndex =
+    headers.indexOf(
+      "Signed Tax Amount"
+    );
+
+
+  const map = {};
+
+
+  values.forEach(
+    function(row) {
+
+      if (
+        !isMairixDateInRange(
+          row[dateIndex],
+          startDate,
+          endDate
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      const type =
+        mairixCleanText(
+          row[typeIndex]
+        );
+
+      if (!type) {
+        return;
+      }
+
+
+      if (!map[type]) {
+
+        map[type] = {
+
+          transactionType:
+            type,
+
+          totalTax:
+            0,
+
+          taxCount:
+            0
+
+        };
+
+      }
+
+
+      map[type].totalTax =
+        roundMairixMoney(
+          map[type].totalTax +
+          (
+            Number(
+              row[amountIndex]
+            ) || 0
+          )
+        );
+
+
+      map[type].taxCount++;
+
+    }
+  );
+
+
+  return Object.keys(
+    map
+  ).map(
+    function(type) {
+
+      return map[type];
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * FINAL TAXABLE BASE
+ *
+ * The final taxable base is the total
+ * base amount after the movement signs
+ * have been applied.
+ *
+ * This function is intentionally independent
+ * from the tax amount.
+ ************************************************/
+
+function calculateMairixFinalTaxBase(
+  movements
+) {
+
+  if (
+    !Array.isArray(
+      movements
+    )
+  ) {
+
+    throw new Error(
+      "Tax base movements must be an array."
+    );
+
+  }
+
+
+  let total =
+    0;
+
+
+  movements.forEach(
+    function(item) {
+
+      const amount =
+        Number(
+          item.amount
+        ) || 0;
+
+      const sign =
+        Number(
+          item.sign
+        ) || 0;
+
+      total +=
+        amount *
+        sign;
+
+    }
+  );
+
+
+  return roundMairixMoney(
+    total
+  );
+
+}
+
+
+/************************************************
+ * DATE RANGE HELPER
+ ************************************************/
+
+function isMairixDateInRange(
+  value,
+  startDate,
+  endDate
+) {
+
+  if (
+    !startDate &&
+    !endDate
+  ) {
+
+    return true;
+
+  }
+
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(value);
+
+
+  if (
+    isNaN(
+      date.getTime()
+    )
+  ) {
+
+    return false;
+
+  }
+
+
+  if (startDate) {
+
+    const start =
+      new Date(
+        startDate
+      );
+
+    start.setHours(
+      0,
+      0,
+      0,
+      0
+    );
+
+    if (
+      date < start
+    ) {
+
+      return false;
+
+    }
+
+  }
+
+
+  if (endDate) {
+
+    const end =
+      new Date(
+        endDate
+      );
+
+    end.setHours(
+      23,
+      59,
+      59,
+      999
+    );
+
+    if (
+      date > end
+    ) {
+
+      return false;
+
+    }
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * TAX SUMMARY
+ *
+ * One centralized object for reports.
+ ************************************************/
+
+function getMairixTaxSummary(
+  startDate,
+  endDate
+) {
+
+  const byType =
+    getMairixTaxTotalsByType(
+      startDate,
+      endDate
+    );
+
+
+  const byTransaction =
+    getMairixTaxTotalsByTransactionType(
+      startDate,
+      endDate
+    );
+
+
+  let totalTax =
+    0;
+
+
+  byType.forEach(
+    function(item) {
+
+      totalTax =
+        roundMairixMoney(
+          totalTax +
+          item.total
+        );
+
+    }
+  );
+
+
+  return {
+
+    startDate:
+      startDate || null,
+
+    endDate:
+      endDate || null,
+
+    totalTax:
+      totalTax,
+
+    taxTypes:
+      byType,
+
+    transactionTypes:
+      byTransaction
+
+  };
+
+}
+
+
+/************************************************
+ * TEST TAX ENGINE
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * This function must ALWAYS return a standardized
+ * test result object because the Central Test Suite
+ * consumes its return value.
+ ************************************************/
+
+function testMairixTaxEngine() {
+
+  const startedAt =
+    new Date();
+
+  const details =
+    [];
+
+  try {
+
+    Logger.log(
+      "=========================================="
+    );
+
+    Logger.log(
+      "MAIRIX TAX ENGINE TEST"
+    );
+
+    Logger.log(
+      "=========================================="
+    );
+
+
+    const salesSign =
+      getMairixTaxSign(
+        "SALE"
+      );
+
+
+    const returnSign =
+      getMairixTaxSign(
+        "SALES_RETURN"
+      );
+
+
+    const purchaseSign =
+      getMairixTaxSign(
+        "PURCHASE"
+      );
+
+
+    const purchaseReturnSign =
+      getMairixTaxSign(
+        "PURCHASE_RETURN"
+      );
+
+
+    Logger.log(
+      "SALE TAX SIGN: " +
+      salesSign
+    );
+
+    Logger.log(
+      "SALES RETURN TAX SIGN: " +
+      returnSign
+    );
+
+    Logger.log(
+      "PURCHASE TAX SIGN: " +
+      purchaseSign
+    );
+
+    Logger.log(
+      "PURCHASE RETURN TAX SIGN: " +
+      purchaseReturnSign
+    );
+
+
+    if (
+      salesSign !==
+      MAIRIX_TAX.SIGN_POSITIVE
+    ) {
+
+      throw new Error(
+        "SALE tax sign is incorrect."
+      );
+
+    }
+
+
+    details.push(
+      "SALE tax sign is correct."
+    );
+
+
+    if (
+      returnSign !==
+      MAIRIX_TAX.SIGN_NEGATIVE
+    ) {
+
+      throw new Error(
+        "SALES RETURN tax sign is incorrect."
+      );
+
+    }
+
+
+    details.push(
+      "SALES RETURN tax sign is correct."
+    );
+
+
+    if (
+      purchaseSign !==
+      MAIRIX_TAX.SIGN_NEGATIVE
+    ) {
+
+      throw new Error(
+        "PURCHASE tax sign is incorrect."
+      );
+
+    }
+
+
+    details.push(
+      "PURCHASE tax sign is correct."
+    );
+
+
+    if (
+      purchaseReturnSign !==
+      MAIRIX_TAX.SIGN_POSITIVE
+    ) {
+
+      throw new Error(
+        "PURCHASE RETURN tax sign is incorrect."
+      );
+
+    }
+
+
+    details.push(
+      "PURCHASE RETURN tax sign is correct."
+    );
+
+
+    /*
+     * Test tax calculation with explicit empty
+     * taxes array.
+     *
+     * This guarantees that the test does not
+     * depend on spreadsheet tax configuration.
+     */
+
+    const calculation =
+      calculateMairixTransactionTaxes({
+
+        transactionType:
+          "SALE",
+
+        baseAmount:
+          1000,
+
+        taxes:
+          []
+
+      });
+
+
+    if (
+      calculation.transactionType !==
+      "SALE"
+    ) {
+
+      throw new Error(
+        "Tax transaction type normalization failed."
+      );
+
+    }
+
+
+    details.push(
+      "Transaction type normalization is correct."
+    );
+
+
+    if (
+      calculation.baseAmount !==
+      1000
+    ) {
+
+      throw new Error(
+        "Tax base amount calculation failed."
+      );
+
+    }
+
+
+    details.push(
+      "Tax base amount is correct."
+    );
+
+
+    if (
+      calculation.taxSign !==
+      MAIRIX_TAX.SIGN_POSITIVE
+    ) {
+
+      throw new Error(
+        "SALE calculation tax sign failed."
+      );
+
+    }
+
+
+    details.push(
+      "Calculation tax sign is correct."
+    );
+
+
+    if (
+      calculation.finalTaxBase !==
+      1000
+    ) {
+
+      throw new Error(
+        "Final taxable base calculation failed."
+      );
+
+    }
+
+
+    details.push(
+      "Final taxable base calculation is correct."
+    );
+
+
+    if (
+      calculation.taxCount !==
+      0
+    ) {
+
+      throw new Error(
+        "Explicit empty tax selection should produce zero taxes."
+      );
+
+    }
+
+
+    details.push(
+      "Explicit empty tax selection works correctly."
+    );
+
+
+    if (
+      calculation.totalTax !==
+      0
+    ) {
+
+      throw new Error(
+        "Empty tax selection should produce zero tax."
+      );
+
+    }
+
+
+    details.push(
+      "Empty tax calculation returns zero tax."
+    );
+
+
+    /*
+     * Final taxable base movement test.
+     */
+
+    const finalBase =
+      calculateMairixFinalTaxBase([
+
+        {
+          amount:
+            1000,
+
+          sign:
+            1
+        },
+
+        {
+          amount:
+            200,
+
+          sign:
+            -1
+        },
+
+        {
+          amount:
+            100,
+
+          sign:
+            -1
+        }
+
+      ]);
+
+
+    if (
+      finalBase !==
+      700
+    ) {
+
+      throw new Error(
+        "Final taxable base movement calculation failed."
+      );
+
+    }
+
+
+    details.push(
+      "Signed taxable base movement calculation is correct."
+    );
+
+
+    Logger.log(
+      "TAX SIGN TEST: PASS"
+    );
+
+    Logger.log(
+      "TAX BASE TEST: PASS"
+    );
+
+    Logger.log(
+      "FINAL TAXABLE BASE TEST: PASS"
+    );
+
+    Logger.log(
+      "=========================================="
+    );
+
+
+    return {
+
+      name:
+        "TAX ENGINE",
+
+      success:
+        true,
+
+      message:
+        "All tax engine tests passed.",
+
+      details:
+        details,
+
+      startedAt:
+        startedAt.toISOString(),
+
+      finishedAt:
+        new Date().toISOString()
+
+    };
+
+  }
+  catch (
+    error
+  ) {
+
+    Logger.log(
+      "TAX ENGINE TEST FAILED: " +
+      error.message
+    );
+
+
+    return {
+
+      name:
+        "TAX ENGINE",
+
+      success:
+        false,
+
+      message:
+        error.message,
+
+      details:
+        details,
+
+      startedAt:
+        startedAt.toISOString(),
+
+      finishedAt:
+        new Date().toISOString()
+
+    };
+
+  }
+
+}
+
+
+/************************************************
+ * TEST FINAL TAX BASE
+ ************************************************/
+
+function testMairixFinalTaxBase() {
+
+  const result =
+    calculateMairixFinalTaxBase([
+
+      {
+        amount:
+          1000,
+
+        sign:
+          1
+
+      },
+
+      {
+        amount:
+          200,
+
+        sign:
+          -1
+
+      },
+
+      {
+        amount:
+          100,
+
+        sign:
+          -1
+
+      }
+
+    ]);
+
+
+  Logger.log(
+    "Final Taxable Base: " +
+    result
+  );
+
+
+  if (
+    result !== 700
+  ) {
+
+    throw new Error(
+      "Final taxable base test failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "FINAL TAXABLE BASE TEST: PASS"
+  );
+
+}

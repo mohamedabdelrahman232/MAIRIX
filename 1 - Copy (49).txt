@@ -1,0 +1,62 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 57-MAIRIX_SaleIntegration.gs
+ *
+ * SALE -> AUTHORIZATION -> EXISTING PUBLIC API
+ *
+ * This file is an integration contract only.
+ * It does not duplicate createSale().
+ ************************************************/
+
+function mairixE2ESaleCreate(data) {
+
+  if (typeof apiCreateSale !== "function") {
+    throw new Error("apiCreateSale() is not available.");
+  }
+
+  if (!data || !Array.isArray(data.items) || data.items.length === 0) {
+    throw new Error("Sale requires at least one item.");
+  }
+
+  // The public API resolves the authenticated server-side user.
+  // Client-supplied userId must never become authoritative.
+  var request = Object.assign({}, data);
+  delete request.userId;
+  delete request.serverUserId;
+  delete request.createdBy;
+  delete request.updatedBy;
+
+  var result = apiCreateSale(request);
+
+  if (!result || result.success !== true) {
+    throw new Error(
+      "Sale integration failed: " +
+      JSON.stringify(result && result.error ? result.error : result)
+    );
+  }
+
+  return result;
+}
+
+function testMairixSaleIntegrationContract() {
+
+  if (typeof apiCreateSale !== "function") {
+    throw new Error("apiCreateSale() is missing.");
+  }
+
+  if (typeof mairixApiRequirePermission !== "function") {
+    throw new Error("mairixApiRequirePermission() is missing.");
+  }
+
+  if (typeof createSale !== "function") {
+    throw new Error("createSale() is missing.");
+  }
+
+  Logger.log("57 SALE INTEGRATION CONTRACT: PASS");
+
+  return {
+    success: true,
+    module: "SALE",
+    status: "READY"
+  };
+}

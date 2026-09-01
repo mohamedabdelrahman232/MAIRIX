@@ -1,0 +1,56 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 64-MAIRIX_SupplierPaymentIntegration.gs
+ *
+ * Supplier/Vendor Payment integration.
+ ************************************************/
+
+function mairixE2ESupplierPaymentCreate(data) {
+
+  if (typeof apiCreateVendorPayment !== "function") {
+    throw new Error("apiCreateVendorPayment() is not available.");
+  }
+
+  if (!data) {
+    throw new Error("Vendor payment data is required.");
+  }
+
+  var request = Object.assign({}, data);
+
+  delete request.userId;
+  delete request.serverUserId;
+  delete request.createdBy;
+  delete request.updatedBy;
+
+  var result = apiCreateVendorPayment(request);
+
+  if (!result || result.success !== true) {
+    throw new Error(
+      "Vendor payment integration failed: " +
+      JSON.stringify(result && result.error ? result.error : result)
+    );
+  }
+
+  return result;
+}
+
+function testMairixSupplierPaymentIntegrationContract() {
+
+  [
+    "apiCreateVendorPayment",
+    "createVendorPayment",
+    "mairixApiRequirePermission"
+  ].forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Missing Vendor Payment function: " + name);
+    }
+  });
+
+  Logger.log("64 SUPPLIER PAYMENT INTEGRATION: PASS");
+
+  return {
+    success: true,
+    module: "VENDOR_PAYMENT",
+    expectedEffect: "SUPPLIER_PAYABLE_DOWN_CASH_DOWN"
+  };
+}

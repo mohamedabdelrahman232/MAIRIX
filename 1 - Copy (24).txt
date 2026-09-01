@@ -1,0 +1,5302 @@
+/************************************************
+ * MAIRIX ERP
+ * 21-MAIRIX_ReportsEngine
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Central reporting orchestration engine.
+ *
+ * IMPORTANT ARCHITECTURE
+ * ------------------------------------------------
+ *
+ * FILE 20:
+ *   FINANCIAL STATEMENTS
+ *
+ *     Responsible for:
+ *       Income Statement
+ *       Balance Sheet
+ *       Cash Position
+ *       Receivables
+ *       Payables
+ *       Inventory Position
+ *       Tax Position
+ *
+ * FILE 21:
+ *   REPORTS ENGINE
+ *
+ *     Responsible for:
+ *       Operational reports
+ *       Transaction reports
+ *       Inventory movement reports
+ *       Sales reports
+ *       Purchase reports
+ *       Return reports
+ *       Collection reports
+ *       Vendor payment reports
+ *       Expense reports
+ *       Commission reports
+ *       Loyalty reports
+ *       Tax reports
+ *       Reference drill-down
+ *       Unified dashboard
+ *
+ *
+ * CORE PRINCIPLE
+ * ------------------------------------------------
+ *
+ * REPORTS MUST READ POSTED / CENTRAL DATA.
+ *
+ * Reports must NOT recreate transaction logic.
+ *
+ * Reports must NOT:
+ *   - create transactions
+ *   - modify inventory
+ *   - modify customer balances
+ *   - modify vendor balances
+ *   - calculate tax from scratch
+ *   - calculate commission from scratch
+ *   - calculate loyalty from scratch
+ *
+ *
+ * SIGN PRINCIPLE
+ * ------------------------------------------------
+ *
+ * Inventory:
+ *
+ *   SALE              = -
+ *   SALES RETURN      = +
+ *   PURCHASE          = +
+ *   PURCHASE RETURN   = -
+ *
+ *
+ * Financial:
+ *
+ *   SALE              = +
+ *   SALES RETURN      = -
+ *   PURCHASE          = -
+ *   PURCHASE RETURN   = +
+ *
+ *
+ * Reports should SUM signed effect columns
+ * whenever those columns exist.
+ *
+ *
+ * NO DESTRUCTIVE EDITING
+ * ------------------------------------------------
+ *
+ * Reports are read-only.
+ *
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+const MAIRIX_REPORTS = {
+
+  SHEETS: {
+
+    SALES:
+      "SALES",
+
+    SALES_ITEMS:
+      "SALES_ITEMS",
+
+    SALES_RETURNS:
+      "SALES_RETURNS",
+
+    SALES_RETURN_ITEMS:
+      "SALES_RETURN_ITEMS",
+
+    PURCHASES:
+      "PURCHASES",
+
+    PURCHASE_ITEMS:
+      "PURCHASE_ITEMS",
+
+    PURCHASE_RETURNS:
+      "PURCHASE_RETURNS",
+
+    PURCHASE_RETURN_ITEMS:
+      "PURCHASE_RETURN_ITEMS",
+
+    CUSTOMER_COLLECTIONS:
+      "CUSTOMER_COLLECTIONS",
+
+    VENDOR_PAYMENTS:
+      "VENDOR_PAYMENTS",
+
+    EXPENSES:
+      "EXPENSES",
+
+    COMMISSIONS:
+      "COMMISSIONS",
+
+    LOYALTY:
+      "LOYALTY",
+
+    INVENTORY:
+      "INVENTORY",
+
+    INVENTORY_MOVEMENTS:
+      "INVENTORY_MOVEMENTS",
+
+    FINANCIAL_EFFECTS:
+      "FINANCIAL_EFFECTS",
+
+    TRANSACTIONS:
+      "TRANSACTIONS",
+
+    TRANSACTION_LINES:
+      "TRANSACTION_LINES",
+
+    TRANSACTION_EFFECTS:
+      "TRANSACTION_EFFECTS"
+
+  },
+
+
+  STATUS: {
+
+    POSTED:
+      "POSTED",
+
+    ACTIVE:
+      "ACTIVE",
+
+    VOID:
+      "VOID"
+
+  },
+
+
+  TRANSACTION_TYPES: {
+
+    SALE:
+      "SALE",
+
+    SALES_RETURN:
+      "SALES_RETURN",
+
+    PURCHASE:
+      "PURCHASE",
+
+    PURCHASE_RETURN:
+      "PURCHASE_RETURN",
+
+    CUSTOMER_COLLECTION:
+      "CUSTOMER_COLLECTION",
+
+    VENDOR_PAYMENT:
+      "VENDOR_PAYMENT",
+
+    EXPENSE:
+      "EXPENSE"
+
+  }
+
+};
+
+
+/************************************************
+ * REPORT DATE NORMALIZATION
+ ************************************************/
+
+function mairixReportsNormalizeDate(
+  value
+) {
+
+  if (
+    value instanceof Date &&
+    !isNaN(value.getTime())
+  ) {
+
+    return new Date(
+      value.getFullYear(),
+      value.getMonth(),
+      value.getDate()
+    );
+
+  }
+
+
+  if (
+    value === null ||
+    value === undefined ||
+    String(value).trim() === ""
+  ) {
+
+    return null;
+
+  }
+
+
+  const parsed =
+    new Date(value);
+
+
+  if (
+    isNaN(parsed.getTime())
+  ) {
+
+    return null;
+
+  }
+
+
+  return new Date(
+    parsed.getFullYear(),
+    parsed.getMonth(),
+    parsed.getDate()
+  );
+
+}
+
+
+/************************************************
+ * REPORT PERIOD
+ ************************************************/
+
+function mairixReportsBuildPeriod(
+  startDate,
+  endDate
+) {
+
+  const start =
+    mairixReportsNormalizeDate(
+      startDate
+    );
+
+  const end =
+    mairixReportsNormalizeDate(
+      endDate
+    );
+
+
+  if (!start || !end) {
+
+    throw new Error(
+      "Valid report start date and end date are required."
+    );
+
+  }
+
+
+  if (
+    start.getTime() >
+    end.getTime()
+  ) {
+
+    throw new Error(
+      "Report start date cannot be after end date."
+    );
+
+  }
+
+
+  const endInclusive =
+    new Date(end);
+
+
+  endInclusive.setHours(
+    23,
+    59,
+    59,
+    999
+  );
+
+
+  return {
+
+    start:
+      start,
+
+    end:
+      endInclusive
+
+  };
+
+}
+
+
+/************************************************
+ * READ SHEET
+ ************************************************/
+
+function mairixReportsGetSheet(
+  name
+) {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    ss.getSheetByName(
+      name
+    );
+
+
+  if (!sheet) {
+
+    return null;
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * READ SHEET OBJECTS
+ ************************************************/
+
+function mairixReportsReadSheet(
+  sheetName
+) {
+
+  const sheet =
+    mairixReportsGetSheet(
+      sheetName
+    );
+
+
+  if (!sheet) {
+
+    return [];
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0]
+      .map(
+        function(header) {
+
+          return mairixReportsClean(
+            header
+          );
+
+        }
+      );
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  return values.map(
+    function(row) {
+
+      const object = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          object[header] =
+            row[index];
+
+        }
+      );
+
+
+      return object;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * CLEAN
+ ************************************************/
+
+function mairixReportsClean(
+  value
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(
+    value
+  ).trim();
+
+}
+
+
+/************************************************
+ * UPPER
+ ************************************************/
+
+function mairixReportsUpper(
+  value
+) {
+
+  return mairixReportsClean(
+    value
+  ).toUpperCase();
+
+}
+
+
+/************************************************
+ * NUMBER
+ ************************************************/
+
+function mairixReportsNumber(
+  value
+) {
+
+  const number =
+    Number(value);
+
+
+  if (
+    isNaN(number)
+  ) {
+
+    return 0;
+
+  }
+
+
+  return number;
+
+}
+
+
+/************************************************
+ * ROUND
+ ************************************************/
+
+function mairixReportsRound(
+  value
+) {
+
+  return Math.round(
+    mairixReportsNumber(value) *
+    100
+  ) / 100;
+
+}
+
+
+/************************************************
+ * TRUE VALUE
+ ************************************************/
+
+function mairixReportsIsTrue(
+  value
+) {
+
+  if (
+    value === true
+  ) {
+
+    return true;
+
+  }
+
+
+  const normalized =
+    mairixReportsUpper(
+      value
+    );
+
+
+  return (
+    normalized === "TRUE" ||
+    normalized === "YES" ||
+    normalized === "Y" ||
+    normalized === "1" ||
+    normalized === "ACTIVE"
+  );
+
+}
+
+
+/************************************************
+ * DATE IN RANGE
+ ************************************************/
+
+function mairixReportsDateInRange(
+  value,
+  startDate,
+  endDate
+) {
+
+  const date =
+    mairixReportsNormalizeDate(
+      value
+    );
+
+
+  if (!date) {
+
+    return false;
+
+  }
+
+
+  const start =
+    mairixReportsNormalizeDate(
+      startDate
+    );
+
+  const end =
+    mairixReportsNormalizeDate(
+      endDate
+    );
+
+
+  if (!start || !end) {
+
+    return false;
+
+  }
+
+
+  end.setHours(
+    23,
+    59,
+    59,
+    999
+  );
+
+
+  return (
+    date.getTime() >=
+      start.getTime() &&
+    date.getTime() <=
+      end.getTime()
+  );
+
+}
+
+
+/************************************************
+ * HEADER FINDER
+ ************************************************/
+
+function mairixReportsFindHeader(
+  object,
+  names
+) {
+
+  for (
+    let i = 0;
+    i < names.length;
+    i++
+  ) {
+
+    const name =
+      names[i];
+
+
+    if (
+      object[name] !== undefined
+    ) {
+
+      return name;
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * FIELD VALUE
+ ************************************************/
+
+function mairixReportsField(
+  object,
+  names,
+  defaultValue
+) {
+
+  const header =
+    mairixReportsFindHeader(
+      object,
+      names
+    );
+
+
+  if (!header) {
+
+    return (
+      defaultValue === undefined
+        ? ""
+        : defaultValue
+    );
+
+  }
+
+
+  return object[header];
+
+}
+
+
+/************************************************
+ * DATE FIELD
+ ************************************************/
+
+function mairixReportsDateField(
+  object
+) {
+
+  return mairixReportsField(
+    object,
+    [
+      "Date",
+      "Transaction Date",
+      "Sale Date",
+      "Purchase Date",
+      "Return Date",
+      "Collection Date",
+      "Payment Date",
+      "Expense Date",
+      "Created At"
+    ],
+    null
+  );
+
+}
+
+
+/************************************************
+ * REFERENCE FIELD
+ ************************************************/
+
+function mairixReportsReferenceField(
+  object
+) {
+
+  return mairixReportsField(
+    object,
+    [
+      "Transaction Reference",
+      "Sale Reference",
+      "Purchase Reference",
+      "Return Reference",
+      "Collection Reference",
+      "Payment Reference",
+      "Expense Reference",
+      "Reference",
+      "Reference ID",
+      "Central Reference"
+    ],
+    ""
+  );
+
+}
+
+
+/************************************************
+ * STATUS FIELD
+ ************************************************/
+
+function mairixReportsStatusField(
+  object
+) {
+
+  return mairixReportsUpper(
+    mairixReportsField(
+      object,
+      [
+        "Status",
+        "Transaction Status"
+      ],
+      ""
+    )
+  );
+
+}
+
+
+/************************************************
+ * ACTIVE RECORD
+ ************************************************/
+
+function mairixReportsIsPosted(
+  object
+) {
+
+  const status =
+    mairixReportsStatusField(
+      object
+    );
+
+
+  if (!status) {
+
+    return true;
+
+  }
+
+
+  return (
+    status === "POSTED" ||
+    status === "ACTIVE"
+  );
+
+}
+
+
+/************************************************
+ * FILTER COMMON RECORDS
+ ************************************************/
+
+function mairixReportsFilterRecords(
+  records,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  return records.filter(
+    function(record) {
+
+      if (
+        options.postedOnly !== false &&
+        !mairixReportsIsPosted(record)
+      ) {
+
+        return false;
+
+      }
+
+
+      if (
+        options.startDate ||
+        options.endDate
+      ) {
+
+        if (
+          !mairixReportsDateInRange(
+            mairixReportsDateField(record),
+            options.startDate,
+            options.endDate
+          )
+        ) {
+
+          return false;
+
+        }
+
+      }
+
+
+      const filters = [
+
+        [
+          options.customerCode,
+          [
+            "Customer Code",
+            "Customer ID"
+          ]
+        ],
+
+        [
+          options.vendorCode,
+          [
+            "Vendor Code",
+            "Vendor ID",
+            "Supplier Code"
+          ]
+        ],
+
+        [
+          options.salesmanCode,
+          [
+            "Salesman Code",
+            "Salesman ID",
+            "Representative Code"
+          ]
+        ],
+
+        [
+          options.warehouseCode,
+          [
+            "Warehouse Code",
+            "Warehouse ID"
+          ]
+        ],
+
+        [
+          options.itemCode,
+          [
+            "Item Code",
+            "Product Code",
+            "SKU"
+          ]
+        ],
+
+        [
+          options.userId,
+          [
+            "User ID",
+            "Created By",
+            "Posted By"
+          ]
+        ]
+
+      ];
+
+
+      for (
+        let i = 0;
+        i < filters.length;
+        i++
+      ) {
+
+        const filter =
+          filters[i];
+
+
+        if (
+          filter[0] === undefined ||
+          filter[0] === null ||
+          mairixReportsClean(
+            filter[0]
+          ) === ""
+        ) {
+
+          continue;
+
+        }
+
+
+        const actual =
+          mairixReportsClean(
+            mairixReportsField(
+              record,
+              filter[1],
+              ""
+            )
+          );
+
+
+        if (
+          actual !==
+          mairixReportsClean(
+            filter[0]
+          )
+        ) {
+
+          return false;
+
+        }
+
+      }
+
+
+      return true;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * GENERIC SIGNED SUM
+ ************************************************/
+
+function mairixReportsSumSigned(
+  records,
+  fieldNames
+) {
+
+  let total = 0;
+
+
+  records.forEach(
+    function(record) {
+
+      total +=
+        mairixReportsNumber(
+          mairixReportsField(
+            record,
+            fieldNames,
+            0
+          )
+        );
+
+    }
+  );
+
+
+  return mairixReportsRound(
+    total
+  );
+
+}
+
+
+/************************************************
+ * GENERIC QUANTITY SUM
+ ************************************************/
+
+function mairixReportsSumQuantity(
+  records
+) {
+
+  return mairixReportsSumSigned(
+    records,
+    [
+      "Quantity Effect",
+      "Signed Quantity",
+      "Inventory Effect",
+      "Quantity"
+    ]
+  );
+
+}
+
+
+/************************************************
+ * INVENTORY MOVEMENT REPORT
+ ************************************************/
+
+function getMAIRIXInventoryMovementReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  let movements =
+    mairixReportsReadSheet(
+      MAIRIX_REPORTS.SHEETS.INVENTORY_MOVEMENTS
+    );
+
+
+  if (
+    movements.length === 0
+  ) {
+
+    movements =
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.INVENTORY
+      );
+
+  }
+
+
+  movements =
+    mairixReportsFilterRecords(
+      movements,
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        warehouseCode:
+          options.warehouseCode,
+
+        itemCode:
+          options.itemCode,
+
+        userId:
+          options.userId,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  const result = {
+
+    report:
+      "INVENTORY_MOVEMENT",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    totalQuantityEffect:
+      mairixReportsSumSigned(
+        movements,
+        [
+          "Quantity Effect",
+          "Signed Quantity"
+        ]
+      ),
+
+    totalInventoryEffect:
+      mairixReportsSumSigned(
+        movements,
+        [
+          "Inventory Effect",
+          "Signed Inventory Value"
+        ]
+      ),
+
+    rows:
+      movements
+
+  };
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * INVENTORY MOVEMENT BY ITEM
+ ************************************************/
+
+function getMAIRIXInventoryMovementByItem(
+  startDate,
+  endDate,
+  options
+) {
+
+  const report =
+    getMAIRIXInventoryMovementReport(
+      startDate,
+      endDate,
+      options
+    );
+
+
+  const grouped = {};
+
+
+  report.rows.forEach(
+    function(row) {
+
+      const itemCode =
+        mairixReportsClean(
+          mairixReportsField(
+            row,
+            [
+              "Item Code",
+              "Product Code",
+              "SKU"
+            ],
+            "UNKNOWN"
+          )
+        );
+
+
+      if (!grouped[itemCode]) {
+
+        grouped[itemCode] = {
+
+          itemCode:
+            itemCode,
+
+          itemName:
+            mairixReportsField(
+              row,
+              [
+                "Item Name",
+                "Product Name"
+              ],
+              ""
+            ),
+
+          quantityEffect:
+            0,
+
+          inventoryEffect:
+            0
+
+        };
+
+      }
+
+
+      grouped[itemCode]
+        .quantityEffect +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Quantity Effect",
+              "Signed Quantity"
+            ],
+            0
+          )
+        );
+
+
+      grouped[itemCode]
+        .inventoryEffect +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Inventory Effect",
+              "Signed Inventory Value"
+            ],
+            0
+          )
+        );
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "INVENTORY_MOVEMENT_BY_ITEM",
+
+    period:
+      report.period,
+
+    filters:
+      options || {},
+
+    rows:
+      Object.keys(grouped)
+        .map(
+          function(code) {
+
+            grouped[code]
+              .quantityEffect =
+              mairixReportsRound(
+                grouped[code]
+                  .quantityEffect
+              );
+
+            grouped[code]
+              .inventoryEffect =
+              mairixReportsRound(
+                grouped[code]
+                  .inventoryEffect
+              );
+
+            return grouped[code];
+
+          }
+        )
+
+  };
+
+}
+
+
+/************************************************
+ * SALES REPORT
+ ************************************************/
+
+function getMAIRIXSalesReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  let sales =
+    mairixReportsReadSheet(
+      MAIRIX_REPORTS.SHEETS.SALES
+    );
+
+
+  sales =
+    mairixReportsFilterRecords(
+      sales,
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        customerCode:
+          options.customerCode,
+
+        salesmanCode:
+          options.salesmanCode,
+
+        warehouseCode:
+          options.warehouseCode,
+
+        userId:
+          options.userId,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  const result = {
+
+    report:
+      "SALES",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      sales.length,
+
+    grossSales:
+      mairixReportsSumSigned(
+        sales,
+        [
+          "Gross Amount",
+          "Gross Total"
+        ]
+      ),
+
+    discounts:
+      mairixReportsSumSigned(
+        sales,
+        [
+          "Discount Amount",
+          "Total Discount"
+        ]
+      ),
+
+    netSales:
+      mairixReportsSumSigned(
+        sales,
+        [
+          "Net Amount",
+          "Net Total"
+        ]
+      ),
+
+    tax:
+      mairixReportsSumSigned(
+        sales,
+        [
+          "Total Tax",
+          "Tax Amount"
+        ]
+      ),
+
+    cashEffect:
+      mairixReportsSumSigned(
+        sales,
+        [
+          "Cash Effect"
+        ]
+      ),
+
+    creditEffect:
+      mairixReportsSumSigned(
+        sales,
+        [
+          "Credit Effect",
+          "Receivable Effect"
+        ]
+      ),
+
+    rows:
+      sales
+
+  };
+
+
+  result.totalWithTax =
+    mairixReportsRound(
+      result.netSales +
+      result.tax
+    );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * SALES BY SALESMAN
+ ************************************************/
+
+function getMAIRIXSalesBySalesman(
+  startDate,
+  endDate,
+  options
+) {
+
+  const report =
+    getMAIRIXSalesReport(
+      startDate,
+      endDate,
+      options
+    );
+
+
+  const grouped = {};
+
+
+  report.rows.forEach(
+    function(row) {
+
+      const code =
+        mairixReportsClean(
+          mairixReportsField(
+            row,
+            [
+              "Salesman Code",
+              "Salesman ID"
+            ],
+            "UNASSIGNED"
+          )
+        );
+
+
+      if (!grouped[code]) {
+
+        grouped[code] = {
+
+          salesmanCode:
+            code,
+
+          salesmanName:
+            mairixReportsField(
+              row,
+              [
+                "Salesman Name",
+                "Representative Name"
+              ],
+              ""
+            ),
+
+          transactionCount:
+            0,
+
+          netSales:
+            0,
+
+          cashEffect:
+            0,
+
+          creditEffect:
+            0
+
+        };
+
+      }
+
+
+      const group =
+        grouped[code];
+
+
+      group.transactionCount++;
+
+
+      group.netSales +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Net Amount",
+              "Net Total"
+            ],
+            0
+          )
+        );
+
+
+      group.cashEffect +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Cash Effect"
+            ],
+            0
+          )
+        );
+
+
+      group.creditEffect +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Credit Effect",
+              "Receivable Effect"
+            ],
+            0
+          )
+        );
+
+    }
+  );
+
+
+  Object.keys(grouped)
+    .forEach(
+      function(code) {
+
+        grouped[code].netSales =
+          mairixReportsRound(
+            grouped[code].netSales
+          );
+
+        grouped[code].cashEffect =
+          mairixReportsRound(
+            grouped[code].cashEffect
+          );
+
+        grouped[code].creditEffect =
+          mairixReportsRound(
+            grouped[code].creditEffect
+          );
+
+      }
+    );
+
+
+  return {
+
+    report:
+      "SALES_BY_SALESMAN",
+
+    period:
+      report.period,
+
+    filters:
+      options || {},
+
+    rows:
+      Object.keys(grouped)
+        .map(
+          function(code) {
+
+            return grouped[code];
+
+          }
+        )
+
+  };
+
+}
+
+
+/************************************************
+ * SALES BY CUSTOMER
+ ************************************************/
+
+function getMAIRIXSalesByCustomer(
+  startDate,
+  endDate,
+  options
+) {
+
+  const report =
+    getMAIRIXSalesReport(
+      startDate,
+      endDate,
+      options
+    );
+
+
+  const grouped = {};
+
+
+  report.rows.forEach(
+    function(row) {
+
+      const code =
+        mairixReportsClean(
+          mairixReportsField(
+            row,
+            [
+              "Customer Code",
+              "Customer ID"
+            ],
+            "CASH_CUSTOMER"
+          )
+        );
+
+
+      if (!grouped[code]) {
+
+        grouped[code] = {
+
+          customerCode:
+            code,
+
+          customerName:
+            mairixReportsField(
+              row,
+              [
+                "Customer Name"
+              ],
+              ""
+            ),
+
+          transactionCount:
+            0,
+
+          netSales:
+            0,
+
+          cashEffect:
+            0,
+
+          creditEffect:
+            0
+
+        };
+
+      }
+
+
+      grouped[code]
+        .transactionCount++;
+
+
+      grouped[code]
+        .netSales +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Net Amount",
+              "Net Total"
+            ],
+            0
+          )
+        );
+
+
+      grouped[code]
+        .cashEffect +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Cash Effect"
+            ],
+            0
+          )
+        );
+
+
+      grouped[code]
+        .creditEffect +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Credit Effect",
+              "Receivable Effect"
+            ],
+            0
+          )
+        );
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "SALES_BY_CUSTOMER",
+
+    period:
+      report.period,
+
+    filters:
+      options || {},
+
+    rows:
+      Object.keys(grouped)
+        .map(
+          function(code) {
+
+            const row =
+              grouped[code];
+
+
+            row.netSales =
+              mairixReportsRound(
+                row.netSales
+              );
+
+            row.cashEffect =
+              mairixReportsRound(
+                row.cashEffect
+              );
+
+            row.creditEffect =
+              mairixReportsRound(
+                row.creditEffect
+              );
+
+
+            return row;
+
+          }
+        )
+
+  };
+
+}
+
+
+/************************************************
+ * SALES RETURNS REPORT
+ ************************************************/
+
+function getMAIRIXSalesReturnsReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const returns =
+    mairixReportsFilterRecords(
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.SALES_RETURNS
+      ),
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        customerCode:
+          options.customerCode,
+
+        salesmanCode:
+          options.salesmanCode,
+
+        warehouseCode:
+          options.warehouseCode,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  const net =
+    mairixReportsSumSigned(
+      returns,
+      [
+        "Financial Effect",
+        "Net Effect",
+        "Net Amount"
+      ]
+    );
+
+
+  const cash =
+    mairixReportsSumSigned(
+      returns,
+      [
+        "Cash Effect"
+      ]
+    );
+
+
+  const credit =
+    mairixReportsSumSigned(
+      returns,
+      [
+        "Credit Effect"
+      ]
+    );
+
+
+  return {
+
+    report:
+      "SALES_RETURNS",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      returns.length,
+
+    netEffect:
+      net,
+
+    cashEffect:
+      cash,
+
+    creditEffect:
+      credit,
+
+    inventoryEffect:
+      mairixReportsSumSigned(
+        returns,
+        [
+          "Inventory Effect"
+        ]
+      ),
+
+    loyaltyPointsEffect:
+      mairixReportsSumSigned(
+        returns,
+        [
+          "Loyalty Points Effect"
+        ]
+      ),
+
+    taxEffect:
+      mairixReportsSumSigned(
+        returns,
+        [
+          "Tax Effect"
+        ]
+      ),
+
+    rows:
+      returns
+
+  };
+
+}
+
+
+/************************************************
+ * PURCHASE REPORT
+ ************************************************/
+
+function getMAIRIXPurchasesReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const purchases =
+    mairixReportsFilterRecords(
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.PURCHASES
+      ),
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        vendorCode:
+          options.vendorCode,
+
+        warehouseCode:
+          options.warehouseCode,
+
+        userId:
+          options.userId,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  return {
+
+    report:
+      "PURCHASES",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      purchases.length,
+
+    grossPurchases:
+      mairixReportsSumSigned(
+        purchases,
+        [
+          "Gross Amount",
+          "Gross Total"
+        ]
+      ),
+
+    discounts:
+      mairixReportsSumSigned(
+        purchases,
+        [
+          "Discount Amount",
+          "Total Discount"
+        ]
+      ),
+
+    netPurchases:
+      mairixReportsSumSigned(
+        purchases,
+        [
+          "Net Amount",
+          "Net Total"
+        ]
+      ),
+
+    tax:
+      mairixReportsSumSigned(
+        purchases,
+        [
+          "Total Tax",
+          "Tax Amount"
+        ]
+      ),
+
+    cashEffect:
+      mairixReportsSumSigned(
+        purchases,
+        [
+          "Cash Effect"
+        ]
+      ),
+
+    creditEffect:
+      mairixReportsSumSigned(
+        purchases,
+        [
+          "Credit Effect",
+          "Payable Effect"
+        ]
+      ),
+
+    inventoryEffect:
+      mairixReportsSumSigned(
+        purchases,
+        [
+          "Inventory Effect"
+        ]
+      ),
+
+    rows:
+      purchases
+
+  };
+
+}
+
+
+/************************************************
+ * PURCHASE RETURNS REPORT
+ ************************************************/
+
+function getMAIRIXPurchaseReturnsReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const returns =
+    mairixReportsFilterRecords(
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.PURCHASE_RETURNS
+      ),
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        vendorCode:
+          options.vendorCode,
+
+        warehouseCode:
+          options.warehouseCode,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  return {
+
+    report:
+      "PURCHASE_RETURNS",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      returns.length,
+
+    financialEffect:
+      mairixReportsSumSigned(
+        returns,
+        [
+          "Financial Effect",
+          "Net Effect",
+          "Net Amount"
+        ]
+      ),
+
+    cashEffect:
+      mairixReportsSumSigned(
+        returns,
+        [
+          "Cash Effect"
+        ]
+      ),
+
+    creditEffect:
+      mairixReportsSumSigned(
+        returns,
+        [
+          "Credit Effect"
+        ]
+      ),
+
+    inventoryEffect:
+      mairixReportsSumSigned(
+        returns,
+        [
+          "Inventory Effect"
+        ]
+      ),
+
+    taxEffect:
+      mairixReportsSumSigned(
+        returns,
+        [
+          "Tax Effect"
+        ]
+      ),
+
+    rows:
+      returns
+
+  };
+
+}
+
+
+/************************************************
+ * CUSTOMER COLLECTION REPORT
+ ************************************************/
+
+function getMAIRIXCustomerCollectionsReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const collections =
+    mairixReportsFilterRecords(
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.CUSTOMER_COLLECTIONS
+      ),
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        customerCode:
+          options.customerCode,
+
+        salesmanCode:
+          options.salesmanCode,
+
+        warehouseCode:
+          options.warehouseCode,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  return {
+
+    report:
+      "CUSTOMER_COLLECTIONS",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      collections.length,
+
+    cashEffect:
+      mairixReportsSumSigned(
+        collections,
+        [
+          "Cash Effect",
+          "Signed Amount"
+        ]
+      ),
+
+    receivableEffect:
+      mairixReportsSumSigned(
+        collections,
+        [
+          "Receivable Effect",
+          "Credit Effect"
+        ]
+      ),
+
+    totalCollected:
+      mairixReportsSumSigned(
+        collections,
+        [
+          "Amount",
+          "Collection Amount",
+          "Total Amount"
+        ]
+      ),
+
+    rows:
+      collections
+
+  };
+
+}
+
+
+/************************************************
+ * VENDOR PAYMENT REPORT
+ ************************************************/
+
+function getMAIRIXVendorPaymentsReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const payments =
+    mairixReportsFilterRecords(
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.VENDOR_PAYMENTS
+      ),
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        vendorCode:
+          options.vendorCode,
+
+        warehouseCode:
+          options.warehouseCode,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  return {
+
+    report:
+      "VENDOR_PAYMENTS",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      payments.length,
+
+    cashEffect:
+      mairixReportsSumSigned(
+        payments,
+        [
+          "Cash Effect",
+          "Signed Amount"
+        ]
+      ),
+
+    payableEffect:
+      mairixReportsSumSigned(
+        payments,
+        [
+          "Payable Effect",
+          "Credit Effect"
+        ]
+      ),
+
+    totalPaid:
+      mairixReportsSumSigned(
+        payments,
+        [
+          "Amount",
+          "Payment Amount",
+          "Total Amount"
+        ]
+      ),
+
+    rows:
+      payments
+
+  };
+
+}
+
+
+/************************************************
+ * EXPENSE REPORT
+ ************************************************/
+
+function getMAIRIXExpensesReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const expenses =
+    mairixReportsFilterRecords(
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.EXPENSES
+      ),
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        userId:
+          options.userId,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  if (
+    options.category
+  ) {
+
+    expenses =
+      expenses.filter(
+        function(row) {
+
+          return (
+            mairixReportsUpper(
+              mairixReportsField(
+                row,
+                [
+                  "Classification",
+                  "Category",
+                  "Expense Category"
+                ],
+                ""
+              )
+            ) ===
+            mairixReportsUpper(
+              options.category
+            )
+          );
+
+        }
+      );
+
+  }
+
+
+  return {
+
+    report:
+      "EXPENSES",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      expenses.length,
+
+    totalExpense:
+      mairixReportsSumSigned(
+        expenses,
+        [
+          "Signed Amount",
+          "Expense Effect",
+          "Amount"
+        ]
+      ),
+
+    cashEffect:
+      mairixReportsSumSigned(
+        expenses,
+        [
+          "Cash Effect"
+        ]
+      ),
+
+    rows:
+      expenses
+
+  };
+
+}
+
+
+/************************************************
+ * EXPENSES BY CATEGORY
+ ************************************************/
+
+function getMAIRIXExpensesByCategory(
+  startDate,
+  endDate,
+  options
+) {
+
+  const report =
+    getMAIRIXExpensesReport(
+      startDate,
+      endDate,
+      options
+    );
+
+
+  const grouped = {};
+
+
+  report.rows.forEach(
+    function(row) {
+
+      const category =
+        mairixReportsClean(
+          mairixReportsField(
+            row,
+            [
+              "Classification",
+              "Category",
+              "Expense Category"
+            ],
+            "OTHER"
+          )
+        ) ||
+        "OTHER";
+
+
+      if (!grouped[category]) {
+
+        grouped[category] = {
+
+          category:
+            category,
+
+          amount:
+            0,
+
+          cashEffect:
+            0,
+
+          count:
+            0
+
+        };
+
+      }
+
+
+      grouped[category].count++;
+
+
+      grouped[category].amount +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Signed Amount",
+              "Expense Effect",
+              "Amount"
+            ],
+            0
+          )
+        );
+
+
+      grouped[category].cashEffect +=
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Cash Effect"
+            ],
+            0
+          )
+        );
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "EXPENSES_BY_CATEGORY",
+
+    period:
+      report.period,
+
+    rows:
+      Object.keys(grouped)
+        .map(
+          function(category) {
+
+            const row =
+              grouped[category];
+
+
+            row.amount =
+              mairixReportsRound(
+                row.amount
+              );
+
+
+            row.cashEffect =
+              mairixReportsRound(
+                row.cashEffect
+              );
+
+
+            return row;
+
+          }
+        )
+
+  };
+
+}
+
+
+/************************************************
+ * COMMISSION REPORT
+ ************************************************/
+
+function getMAIRIXCommissionReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  let commissions =
+    mairixReportsFilterRecords(
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.COMMISSIONS
+      ),
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        salesmanCode:
+          options.salesmanCode,
+
+        userId:
+          options.userId,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  if (
+    options.salesmanCode
+  ) {
+
+    commissions =
+      commissions.filter(
+        function(row) {
+
+          return (
+            mairixReportsClean(
+              mairixReportsField(
+                row,
+                [
+                  "Salesman Code",
+                  "Salesman ID",
+                  "Representative Code"
+                ],
+                ""
+              )
+            ) ===
+            mairixReportsClean(
+              options.salesmanCode
+            )
+          );
+
+        }
+      );
+
+  }
+
+
+  return {
+
+    report:
+      "COMMISSIONS",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      commissions.length,
+
+    commissionEffect:
+      mairixReportsSumSigned(
+        commissions,
+        [
+          "Commission Effect",
+          "Signed Amount",
+          "Amount"
+        ]
+      ),
+
+    rows:
+      commissions
+
+  };
+
+}
+
+
+/************************************************
+ * COMMISSION BY SALESMAN
+ ************************************************/
+
+function getMAIRIXCommissionBySalesman(
+  startDate,
+  endDate,
+  options
+) {
+
+  const report =
+    getMAIRIXCommissionReport(
+      startDate,
+      endDate,
+      options
+    );
+
+
+  const grouped = {};
+
+
+  report.rows.forEach(
+    function(row) {
+
+      const code =
+        mairixReportsClean(
+          mairixReportsField(
+            row,
+            [
+              "Salesman Code",
+              "Salesman ID",
+              "Representative Code"
+            ],
+            "UNASSIGNED"
+          )
+        );
+
+
+      if (!grouped[code]) {
+
+        grouped[code] = {
+
+          salesmanCode:
+            code,
+
+          salesmanName:
+            mairixReportsField(
+              row,
+              [
+                "Salesman Name",
+                "Representative Name"
+              ],
+              ""
+            ),
+
+          accrued:
+            0,
+
+          paid:
+            0,
+
+          remaining:
+            0
+
+        };
+
+      }
+
+
+      const amount =
+        mairixReportsNumber(
+          mairixReportsField(
+            row,
+            [
+              "Commission Effect",
+              "Signed Amount",
+              "Amount"
+            ],
+            0
+          )
+        );
+
+
+      const type =
+        mairixReportsUpper(
+          mairixReportsField(
+            row,
+            [
+              "Transaction Type",
+              "Type",
+              "Commission Type"
+            ],
+            ""
+          )
+        );
+
+
+      if (
+        type.indexOf("PAY") >= 0 ||
+        type.indexOf("SETTLE") >= 0
+      ) {
+
+        grouped[code].paid +=
+          Math.abs(amount);
+
+      } else {
+
+        grouped[code].accrued +=
+          amount;
+
+      }
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "COMMISSION_BY_SALESMAN",
+
+    period:
+      report.period,
+
+    rows:
+      Object.keys(grouped)
+        .map(
+          function(code) {
+
+            const row =
+              grouped[code];
+
+
+            row.accrued =
+              mairixReportsRound(
+                row.accrued
+              );
+
+
+            row.paid =
+              mairixReportsRound(
+                row.paid
+              );
+
+
+            row.remaining =
+              mairixReportsRound(
+                row.accrued -
+                row.paid
+              );
+
+
+            return row;
+
+          }
+        )
+
+  };
+
+}
+
+
+/************************************************
+ * LOYALTY REPORT
+ ************************************************/
+
+function getMAIRIXLoyaltyReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const loyalty =
+    mairixReportsFilterRecords(
+      mairixReportsReadSheet(
+        MAIRIX_REPORTS.SHEETS.LOYALTY
+      ),
+      {
+
+        startDate:
+          period.start,
+
+        endDate:
+          period.end,
+
+        customerCode:
+          options.customerCode,
+
+        userId:
+          options.userId,
+
+        postedOnly:
+          options.postedOnly
+
+      }
+    );
+
+
+  return {
+
+    report:
+      "LOYALTY",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      loyalty.length,
+
+    pointsEffect:
+      mairixReportsSumSigned(
+        loyalty,
+        [
+          "Points Effect",
+          "Signed Points",
+          "Loyalty Points Effect"
+        ]
+      ),
+
+    rows:
+      loyalty
+
+  };
+
+}
+
+
+/************************************************
+ * TAX REPORT
+ *
+ * FinancialStatements also exposes tax
+ * reporting. This operational report gives
+ * transaction-level tax detail.
+ ************************************************/
+
+function getMAIRIXTaxReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  let effects =
+    mairixReportsReadSheet(
+      MAIRIX_REPORTS.SHEETS.FINANCIAL_EFFECTS
+    );
+
+
+  effects =
+    effects.filter(
+      function(effect) {
+
+        if (
+          !mairixReportsIsPosted(
+            effect
+          )
+        ) {
+
+          return false;
+
+        }
+
+
+        if (
+          !mairixReportsDateInRange(
+            effect["Date"],
+            period.start,
+            period.end
+          )
+        ) {
+
+          return false;
+
+        }
+
+
+        if (
+          options.taxCode &&
+          mairixReportsClean(
+            effect["Tax Code"]
+          ) !==
+          mairixReportsClean(
+            options.taxCode
+          )
+        ) {
+
+          return false;
+
+        }
+
+
+        if (
+          options.warehouseCode &&
+          mairixReportsClean(
+            effect["Warehouse ID"]
+          ) !==
+          mairixReportsClean(
+            options.warehouseCode
+          )
+        ) {
+
+          return false;
+
+        }
+
+
+        return true;
+
+      }
+    );
+
+
+  const grouped = {};
+
+
+  effects.forEach(
+    function(effect) {
+
+      const taxCode =
+        mairixReportsClean(
+          effect["Tax Code"]
+        ) ||
+        "UNSPECIFIED";
+
+
+      if (!grouped[taxCode]) {
+
+        grouped[taxCode] = {
+
+          taxCode:
+            taxCode,
+
+          amount:
+            0,
+
+          signedAmount:
+            0,
+
+          taxEffect:
+            0,
+
+          transactionCount:
+            0
+
+        };
+
+      }
+
+
+      grouped[taxCode].amount +=
+        mairixReportsNumber(
+          effect["Amount"]
+        );
+
+
+      grouped[taxCode].signedAmount +=
+        mairixReportsNumber(
+          effect["Signed Amount"]
+        );
+
+
+      grouped[taxCode].taxEffect +=
+        mairixReportsNumber(
+          effect["Tax Effect"]
+        );
+
+
+      grouped[taxCode]
+        .transactionCount++;
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "TAX",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    rows:
+      Object.keys(grouped)
+        .map(
+          function(code) {
+
+            const row =
+              grouped[code];
+
+
+            row.amount =
+              mairixReportsRound(
+                row.amount
+              );
+
+            row.signedAmount =
+              mairixReportsRound(
+                row.signedAmount
+              );
+
+            row.taxEffect =
+              mairixReportsRound(
+                row.taxEffect
+              );
+
+
+            return row;
+
+          }
+        ),
+
+    totalTaxEffect:
+      mairixReportsRound(
+        Object.keys(grouped)
+          .reduce(
+            function(total, code) {
+
+              return (
+                total +
+                grouped[code].taxEffect
+              );
+
+            },
+            0
+          )
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * CUSTOMER BALANCE REPORT
+ *
+ * Uses FinancialStatements' centralized
+ * receivable effects.
+ ************************************************/
+
+function getMAIRIXCustomerBalanceReport(
+  asOfDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const date =
+    mairixReportsNormalizeDate(
+      asOfDate
+    );
+
+
+  if (!date) {
+
+    throw new Error(
+      "Valid customer balance date is required."
+    );
+
+  }
+
+
+  const effects =
+    mairixReportsReadSheet(
+      MAIRIX_REPORTS.SHEETS.FINANCIAL_EFFECTS
+    );
+
+
+  const grouped = {};
+
+
+  effects.forEach(
+    function(effect) {
+
+      if (
+        !mairixReportsIsPosted(
+          effect
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      const effectDate =
+        mairixReportsNormalizeDate(
+          effect["Date"]
+        );
+
+
+      if (
+        !effectDate ||
+        effectDate.getTime() >
+        date.getTime()
+      ) {
+
+        return;
+
+      }
+
+
+      const customerCode =
+        mairixReportsClean(
+          effect["Customer Code"] ||
+          effect["Customer ID"] ||
+          ""
+        );
+
+
+      /*
+       * Some FinancialEngine versions may
+       * not store customer code directly.
+       *
+       * In that case Reference ID remains
+       * available for drill-down.
+       */
+
+      const code =
+        customerCode ||
+        "UNSPECIFIED";
+
+
+      if (!grouped[code]) {
+
+        grouped[code] = {
+
+          customerCode:
+            code,
+
+          receivable:
+            0
+
+        };
+
+      }
+
+
+      grouped[code].receivable +=
+        mairixReportsNumber(
+          effect["Receivable Effect"]
+        );
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "CUSTOMER_BALANCES",
+
+    asOfDate:
+      date,
+
+    filters:
+      options,
+
+    rows:
+      Object.keys(grouped)
+        .map(
+          function(code) {
+
+            grouped[code].receivable =
+              mairixReportsRound(
+                grouped[code].receivable
+              );
+
+            return grouped[code];
+
+          }
+        )
+
+  };
+
+}
+
+
+/************************************************
+ * VENDOR BALANCE REPORT
+ ************************************************/
+
+function getMAIRIXVendorBalanceReport(
+  asOfDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const date =
+    mairixReportsNormalizeDate(
+      asOfDate
+    );
+
+
+  if (!date) {
+
+    throw new Error(
+      "Valid vendor balance date is required."
+    );
+
+  }
+
+
+  const effects =
+    mairixReportsReadSheet(
+      MAIRIX_REPORTS.SHEETS.FINANCIAL_EFFECTS
+    );
+
+
+  const grouped = {};
+
+
+  effects.forEach(
+    function(effect) {
+
+      if (
+        !mairixReportsIsPosted(
+          effect
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      const effectDate =
+        mairixReportsNormalizeDate(
+          effect["Date"]
+        );
+
+
+      if (
+        !effectDate ||
+        effectDate.getTime() >
+        date.getTime()
+      ) {
+
+        return;
+
+      }
+
+
+      const vendorCode =
+        mairixReportsClean(
+          effect["Vendor Code"] ||
+          effect["Vendor ID"] ||
+          ""
+        ) ||
+        "UNSPECIFIED";
+
+
+      if (!grouped[vendorCode]) {
+
+        grouped[vendorCode] = {
+
+          vendorCode:
+            vendorCode,
+
+          payable:
+            0
+
+        };
+
+      }
+
+
+      grouped[vendorCode].payable +=
+        mairixReportsNumber(
+          effect["Payable Effect"]
+        );
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "VENDOR_BALANCES",
+
+    asOfDate:
+      date,
+
+    filters:
+      options,
+
+    rows:
+      Object.keys(grouped)
+        .map(
+          function(code) {
+
+            grouped[code].payable =
+              mairixReportsRound(
+                grouped[code].payable
+              );
+
+
+            return grouped[code];
+
+          }
+        )
+
+  };
+
+}
+
+
+/************************************************
+ * TRANSACTION REFERENCE REPORT
+ ************************************************/
+
+function getMAIRIXTransactionReferenceReport(
+  reference
+) {
+
+  const normalized =
+    mairixReportsClean(
+      reference
+    );
+
+
+  if (!normalized) {
+
+    throw new Error(
+      "Transaction reference is required."
+    );
+
+  }
+
+
+  /*
+   * First try FinancialStatements'
+   * centralized drill-down.
+   */
+
+  if (
+    typeof getMAIRIXFinancialReferenceDetails ===
+    "function"
+  ) {
+
+    const details =
+      getMAIRIXFinancialReferenceDetails(
+        normalized
+      );
+
+
+    if (
+      details &&
+      details.length
+    ) {
+
+      return {
+
+        report:
+          "TRANSACTION_REFERENCE",
+
+        reference:
+          normalized,
+
+        effects:
+          details
+
+      };
+
+    }
+
+  }
+
+
+  /*
+   * Fallback:
+   * search all operational sheets.
+   */
+
+  const sheets = [
+
+    MAIRIX_REPORTS.SHEETS.SALES,
+
+    MAIRIX_REPORTS.SHEETS.SALES_RETURNS,
+
+    MAIRIX_REPORTS.SHEETS.PURCHASES,
+
+    MAIRIX_REPORTS.SHEETS.PURCHASE_RETURNS,
+
+    MAIRIX_REPORTS.SHEETS.CUSTOMER_COLLECTIONS,
+
+    MAIRIX_REPORTS.SHEETS.VENDOR_PAYMENTS,
+
+    MAIRIX_REPORTS.SHEETS.EXPENSES,
+
+    MAIRIX_REPORTS.SHEETS.COMMISSIONS,
+
+    MAIRIX_REPORTS.SHEETS.LOYALTY
+
+  ];
+
+
+  const result = [];
+
+
+  sheets.forEach(
+    function(sheetName) {
+
+      const rows =
+        mairixReportsReadSheet(
+          sheetName
+        );
+
+
+      rows.forEach(
+        function(row) {
+
+          const referenceValue =
+            mairixReportsClean(
+              mairixReportsReferenceField(
+                row
+              )
+            );
+
+
+          const central =
+            mairixReportsClean(
+              mairixReportsField(
+                row,
+                [
+                  "Central Reference"
+                ],
+                ""
+              )
+            );
+
+
+          if (
+            referenceValue === normalized ||
+            central === normalized
+          ) {
+
+            result.push({
+
+              sheet:
+                sheetName,
+
+              row:
+                row
+
+            });
+
+          }
+
+        }
+      );
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "TRANSACTION_REFERENCE",
+
+    reference:
+      normalized,
+
+    records:
+      result
+
+  };
+
+}
+
+
+/************************************************
+ * TRANSACTION ACTIVITY REPORT
+ ************************************************/
+
+function getMAIRIXTransactionActivityReport(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const sources = [
+
+    {
+      type:
+        "SALE",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.SALES
+    },
+
+    {
+      type:
+        "SALES_RETURN",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.SALES_RETURNS
+    },
+
+    {
+      type:
+        "PURCHASE",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.PURCHASES
+    },
+
+    {
+      type:
+        "PURCHASE_RETURN",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.PURCHASE_RETURNS
+    },
+
+    {
+      type:
+        "CUSTOMER_COLLECTION",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.CUSTOMER_COLLECTIONS
+    },
+
+    {
+      type:
+        "VENDOR_PAYMENT",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.VENDOR_PAYMENTS
+    },
+
+    {
+      type:
+        "EXPENSE",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.EXPENSES
+    },
+
+    {
+      type:
+        "COMMISSION",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.COMMISSIONS
+    },
+
+    {
+      type:
+        "LOYALTY",
+
+      sheet:
+        MAIRIX_REPORTS.SHEETS.LOYALTY
+    }
+
+  ];
+
+
+  const rows = [];
+
+
+  sources.forEach(
+    function(source) {
+
+      const records =
+        mairixReportsReadSheet(
+          source.sheet
+        );
+
+
+      records.forEach(
+        function(record) {
+
+          if (
+            !mairixReportsIsPosted(
+              record
+            )
+          ) {
+
+            return;
+
+          }
+
+
+          if (
+            !mairixReportsDateInRange(
+              mairixReportsDateField(
+                record
+              ),
+              period.start,
+              period.end
+            )
+          ) {
+
+            return;
+
+          }
+
+
+          rows.push({
+
+            transactionType:
+              source.type,
+
+            reference:
+              mairixReportsReferenceField(
+                record
+              ),
+
+            date:
+              mairixReportsDateField(
+                record
+              ),
+
+            customerCode:
+              mairixReportsField(
+                record,
+                [
+                  "Customer Code"
+                ],
+                ""
+              ),
+
+            vendorCode:
+              mairixReportsField(
+                record,
+                [
+                  "Vendor Code"
+                ],
+                ""
+              ),
+
+            salesmanCode:
+              mairixReportsField(
+                record,
+                [
+                  "Salesman Code"
+                ],
+                ""
+              ),
+
+            warehouseCode:
+              mairixReportsField(
+                record,
+                [
+                  "Warehouse Code",
+                  "Warehouse ID"
+                ],
+                ""
+              ),
+
+            amount:
+              mairixReportsField(
+                record,
+                [
+                  "Net Amount",
+                  "Amount",
+                  "Total Amount"
+                ],
+                0
+              ),
+
+            record:
+              record
+
+          });
+
+        }
+      );
+
+    }
+  );
+
+
+  rows.sort(
+    function(a, b) {
+
+      const aDate =
+        new Date(a.date || 0)
+          .getTime();
+
+      const bDate =
+        new Date(b.date || 0)
+          .getTime();
+
+
+      return (
+        aDate -
+        bDate
+      );
+
+    }
+  );
+
+
+  return {
+
+    report:
+      "TRANSACTION_ACTIVITY",
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    transactionCount:
+      rows.length,
+
+    rows:
+      rows
+
+  };
+
+}
+
+
+/************************************************
+ * CENTRAL FINANCIAL REPORT
+ *
+ * This is a bridge to FILE 20.
+ ************************************************/
+
+function getMAIRIXFinancialReport(
+  startDate,
+  endDate
+) {
+
+  if (
+    typeof getMAIRIXFinancialStatementsDashboard !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  return getMAIRIXFinancialStatementsDashboard(
+    startDate,
+    endDate
+  );
+
+}
+
+
+/************************************************
+ * INCOME STATEMENT REPORT
+ ************************************************/
+
+function getMAIRIXIncomeStatementReport(
+  startDate,
+  endDate
+) {
+
+  if (
+    typeof getMAIRIXIncomeStatement !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  return getMAIRIXIncomeStatement(
+    startDate,
+    endDate
+  );
+
+}
+
+
+/************************************************
+ * BALANCE SHEET REPORT
+ ************************************************/
+
+function getMAIRIXBalanceSheetReport(
+  asOfDate
+) {
+
+  if (
+    typeof getMAIRIXBalanceSheet !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  return getMAIRIXBalanceSheet(
+    asOfDate
+  );
+
+}
+
+
+/************************************************
+ * CASH REPORT
+ ************************************************/
+
+function getMAIRIXCashReport(
+  startDate,
+  endDate
+) {
+
+  if (
+    typeof getMAIRIXCashPosition !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  return getMAIRIXCashPosition(
+    startDate,
+    endDate
+  );
+
+}
+
+
+/************************************************
+ * RECEIVABLE REPORT
+ ************************************************/
+
+function getMAIRIXReceivableReport(
+  startDate,
+  endDate
+) {
+
+  if (
+    typeof getMAIRIXReceivablesPosition !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  return getMAIRIXReceivablesPosition(
+    startDate,
+    endDate
+  );
+
+}
+
+
+/************************************************
+ * PAYABLE REPORT
+ ************************************************/
+
+function getMAIRIXPayableReport(
+  startDate,
+  endDate
+) {
+
+  if (
+    typeof getMAIRIXPayablesPosition !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  return getMAIRIXPayablesPosition(
+    startDate,
+    endDate
+  );
+
+}
+
+
+/************************************************
+ * INVENTORY VALUE REPORT
+ ************************************************/
+
+function getMAIRIXInventoryValueReport(
+  startDate,
+  endDate
+) {
+
+  if (
+    typeof getMAIRIXInventoryPosition !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  return getMAIRIXInventoryPosition(
+    startDate,
+    endDate
+  );
+
+}
+
+
+/************************************************
+ * TAX POSITION REPORT
+ ************************************************/
+
+function getMAIRIXTaxPositionReport(
+  startDate,
+  endDate
+) {
+
+  if (
+    typeof getMAIRIXTaxPosition !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  return getMAIRIXTaxPosition(
+    startDate,
+    endDate
+  );
+
+}
+
+
+/************************************************
+ * UNIFIED REPORTS DASHBOARD
+ ************************************************/
+
+function getMAIRIXReportsDashboard(
+  startDate,
+  endDate,
+  options
+) {
+
+  options =
+    options || {};
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      startDate,
+      endDate
+    );
+
+
+  const financial =
+    getMAIRIXFinancialReport(
+      period.start,
+      period.end
+    );
+
+
+  const sales =
+    getMAIRIXSalesReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const salesReturns =
+    getMAIRIXSalesReturnsReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const purchases =
+    getMAIRIXPurchasesReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const purchaseReturns =
+    getMAIRIXPurchaseReturnsReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const collections =
+    getMAIRIXCustomerCollectionsReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const vendorPayments =
+    getMAIRIXVendorPaymentsReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const expenses =
+    getMAIRIXExpensesReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const commissions =
+    getMAIRIXCommissionReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const loyalty =
+    getMAIRIXLoyaltyReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const inventory =
+    getMAIRIXInventoryMovementReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  const tax =
+    getMAIRIXTaxReport(
+      period.start,
+      period.end,
+      options
+    );
+
+
+  return {
+
+    report:
+      "MAIRIX_REPORTS_DASHBOARD",
+
+    generatedAt:
+      new Date(),
+
+    period: {
+
+      startDate:
+        period.start,
+
+      endDate:
+        period.end
+
+    },
+
+    filters:
+      options,
+
+    financialStatements:
+      financial,
+
+    operational: {
+
+      sales:
+        sales,
+
+      salesReturns:
+        salesReturns,
+
+      purchases:
+        purchases,
+
+      purchaseReturns:
+        purchaseReturns,
+
+      customerCollections:
+        collections,
+
+      vendorPayments:
+        vendorPayments,
+
+      expenses:
+        expenses,
+
+      commissions:
+        commissions,
+
+      loyalty:
+        loyalty,
+
+      inventory:
+        inventory,
+
+      tax:
+        tax
+
+    }
+
+  };
+
+}
+
+
+/************************************************
+ * KPI DASHBOARD
+ *
+ * Small payload for UI.
+ ************************************************/
+
+function getMAIRIXReportsKPIs(
+  startDate,
+  endDate,
+  options
+) {
+
+  const dashboard =
+    getMAIRIXReportsDashboard(
+      startDate,
+      endDate,
+      options
+    );
+
+
+  const income =
+    dashboard
+      .financialStatements
+      .incomeStatement
+      .totals;
+
+
+  const balance =
+    dashboard
+      .financialStatements
+      .balanceSheet
+      .totals;
+
+
+  const cash =
+    dashboard
+      .financialStatements
+      .cash;
+
+
+  const receivables =
+    dashboard
+      .financialStatements
+      .receivables;
+
+
+  const payables =
+    dashboard
+      .financialStatements
+      .payables;
+
+
+  const inventory =
+    dashboard
+      .financialStatements
+      .inventory;
+
+
+  return {
+
+    period:
+      dashboard.period,
+
+    sales:
+      dashboard
+        .operational
+        .sales
+        .netSales,
+
+    salesReturns:
+      dashboard
+        .operational
+        .salesReturns
+        .netEffect,
+
+    purchases:
+      dashboard
+        .operational
+        .purchases
+        .netPurchases,
+
+    purchaseReturns:
+      dashboard
+        .operational
+        .purchaseReturns
+        .financialEffect,
+
+    collections:
+      dashboard
+        .operational
+        .customerCollections
+        .totalCollected,
+
+    vendorPayments:
+      dashboard
+        .operational
+        .vendorPayments
+        .totalPaid,
+
+    expenses:
+      dashboard
+        .operational
+        .expenses
+        .totalExpense,
+
+    commissions:
+      dashboard
+        .operational
+        .commissions
+        .commissionEffect,
+
+    loyaltyPoints:
+      dashboard
+        .operational
+        .loyalty
+        .pointsEffect,
+
+    inventoryMovement:
+      inventory
+        .inventoryMovement,
+
+    cashMovement:
+      cash
+        .cashMovement,
+
+    receivableMovement:
+      receivables
+        .receivableMovement,
+
+    payableMovement:
+      payables
+        .payableMovement,
+
+    grossProfit:
+      income
+        .grossProfit,
+
+    operatingProfit:
+      income
+        .operatingProfit,
+
+    netProfit:
+      income
+        .netProfit,
+
+    assets:
+      balance
+        .assets,
+
+    liabilities:
+      balance
+        .liabilities,
+
+    equity:
+      balance
+        .equity,
+
+    balanceDifference:
+      balance
+        .balanceDifference
+
+  };
+
+}
+
+
+/************************************************
+ * REPORT LIST
+ ************************************************/
+
+function getMAIRIXAvailableReports() {
+
+  return [
+
+    "SALES",
+
+    "SALES_BY_CUSTOMER",
+
+    "SALES_BY_SALESMAN",
+
+    "SALES_RETURNS",
+
+    "PURCHASES",
+
+    "PURCHASE_RETURNS",
+
+    "CUSTOMER_COLLECTIONS",
+
+    "VENDOR_PAYMENTS",
+
+    "EXPENSES",
+
+    "EXPENSES_BY_CATEGORY",
+
+    "COMMISSIONS",
+
+    "COMMISSION_BY_SALESMAN",
+
+    "LOYALTY",
+
+    "INVENTORY_MOVEMENT",
+
+    "INVENTORY_MOVEMENT_BY_ITEM",
+
+    "TAX",
+
+    "CUSTOMER_BALANCES",
+
+    "VENDOR_BALANCES",
+
+    "TRANSACTION_ACTIVITY",
+
+    "TRANSACTION_REFERENCE",
+
+    "INCOME_STATEMENT",
+
+    "BALANCE_SHEET",
+
+    "CASH",
+
+    "RECEIVABLES",
+
+    "PAYABLES",
+
+    "INVENTORY_VALUE",
+
+    "TAX_POSITION",
+
+    "FINANCIAL_DASHBOARD",
+
+    "REPORTS_DASHBOARD",
+
+    "REPORTS_KPI"
+
+  ];
+
+}
+
+
+/************************************************
+ * GENERIC REPORT ROUTER
+ *
+ * UI can call one function.
+ ************************************************/
+
+function getMAIRIXReport(
+  reportName,
+  startDate,
+  endDate,
+  options
+) {
+
+  const report =
+    mairixReportsUpper(
+      reportName
+    );
+
+
+  options =
+    options || {};
+
+
+  switch (report) {
+
+    case "SALES":
+
+      return getMAIRIXSalesReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "SALES_BY_CUSTOMER":
+
+      return getMAIRIXSalesByCustomer(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "SALES_BY_SALESMAN":
+
+      return getMAIRIXSalesBySalesman(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "SALES_RETURNS":
+
+      return getMAIRIXSalesReturnsReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "PURCHASES":
+
+      return getMAIRIXPurchasesReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "PURCHASE_RETURNS":
+
+      return getMAIRIXPurchaseReturnsReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "CUSTOMER_COLLECTIONS":
+
+      return getMAIRIXCustomerCollectionsReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "VENDOR_PAYMENTS":
+
+      return getMAIRIXVendorPaymentsReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "EXPENSES":
+
+      return getMAIRIXExpensesReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "EXPENSES_BY_CATEGORY":
+
+      return getMAIRIXExpensesByCategory(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "COMMISSIONS":
+
+      return getMAIRIXCommissionReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "COMMISSION_BY_SALESMAN":
+
+      return getMAIRIXCommissionBySalesman(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "LOYALTY":
+
+      return getMAIRIXLoyaltyReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "INVENTORY_MOVEMENT":
+
+      return getMAIRIXInventoryMovementReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "INVENTORY_MOVEMENT_BY_ITEM":
+
+      return getMAIRIXInventoryMovementByItem(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "TAX":
+
+      return getMAIRIXTaxReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "CUSTOMER_BALANCES":
+
+      return getMAIRIXCustomerBalanceReport(
+        endDate,
+        options
+      );
+
+
+    case "VENDOR_BALANCES":
+
+      return getMAIRIXVendorBalanceReport(
+        endDate,
+        options
+      );
+
+
+    case "TRANSACTION_ACTIVITY":
+
+      return getMAIRIXTransactionActivityReport(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "TRANSACTION_REFERENCE":
+
+      return getMAIRIXTransactionReferenceReport(
+        options.reference
+      );
+
+
+    case "INCOME_STATEMENT":
+
+      return getMAIRIXIncomeStatementReport(
+        startDate,
+        endDate
+      );
+
+
+    case "BALANCE_SHEET":
+
+      return getMAIRIXBalanceSheetReport(
+        endDate
+      );
+
+
+    case "CASH":
+
+      return getMAIRIXCashReport(
+        startDate,
+        endDate
+      );
+
+
+    case "RECEIVABLES":
+
+      return getMAIRIXReceivableReport(
+        startDate,
+        endDate
+      );
+
+
+    case "PAYABLES":
+
+      return getMAIRIXPayableReport(
+        startDate,
+        endDate
+      );
+
+
+    case "INVENTORY_VALUE":
+
+      return getMAIRIXInventoryValueReport(
+        startDate,
+        endDate
+      );
+
+
+    case "TAX_POSITION":
+
+      return getMAIRIXTaxPositionReport(
+        startDate,
+        endDate
+      );
+
+
+    case "FINANCIAL_DASHBOARD":
+
+      return getMAIRIXFinancialReport(
+        startDate,
+        endDate
+      );
+
+
+    case "REPORTS_DASHBOARD":
+
+      return getMAIRIXReportsDashboard(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    case "REPORTS_KPI":
+
+      return getMAIRIXReportsKPIs(
+        startDate,
+        endDate,
+        options
+      );
+
+
+    default:
+
+      throw new Error(
+        "Unknown MAIRIX report: " +
+        reportName
+      );
+
+  }
+
+}
+
+
+/************************************************
+ * REPORT ENGINE HEALTH CHECK
+ ************************************************/
+
+function testMAIRIXReportsEngineHealth() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX REPORTS ENGINE HEALTH CHECK"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const reports =
+    getMAIRIXAvailableReports();
+
+
+  if (
+    !reports ||
+    !reports.length
+  ) {
+
+    throw new Error(
+      "Reports registry is empty."
+    );
+
+  }
+
+
+  Logger.log(
+    "Available reports: " +
+    reports.length
+  );
+
+
+  if (
+    typeof getMAIRIXFinancialStatementsDashboard !==
+    "function"
+  ) {
+
+    throw new Error(
+      "Financial Statements Engine (20) is not connected."
+    );
+
+  }
+
+
+  Logger.log(
+    "Financial Statements Engine: CONNECTED"
+  );
+
+
+  Logger.log(
+    "Reports Engine Health: PASS"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * REPORT ENGINE BASIC TEST
+ ************************************************/
+
+function testMAIRIXReportsEngine() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX REPORTS ENGINE TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const today =
+    new Date();
+
+
+  const start =
+    new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      1
+    );
+
+
+  const kpis =
+    getMAIRIXReportsKPIs(
+      start,
+      today,
+      {}
+    );
+
+
+  if (!kpis) {
+
+    throw new Error(
+      "Reports KPI result is empty."
+    );
+
+  }
+
+
+  Logger.log(
+    JSON.stringify(
+      kpis,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "REPORTS ENGINE TEST: PASS"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * REPORT REFERENCE TEST
+ ************************************************/
+
+function testMAIRIXReportReferenceLookup() {
+
+  /*
+   * This test intentionally uses a fake
+   * reference to validate the lookup path
+   * without creating transactions.
+   */
+
+  const result =
+    getMAIRIXTransactionReferenceReport(
+      "TEST-REFERENCE"
+    );
+
+
+  if (!result) {
+
+    throw new Error(
+      "Reference report returned no result object."
+    );
+
+  }
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "REPORT REFERENCE LOOKUP TEST: PASS"
+  );
+
+}
+
+
+/************************************************
+ * REPORT DATE TEST
+ ************************************************/
+
+function testMAIRIXReportsDateRange() {
+
+  const start =
+    new Date(
+      2026,
+      0,
+      1
+    );
+
+
+  const end =
+    new Date(
+      2026,
+      0,
+      31
+    );
+
+
+  const period =
+    mairixReportsBuildPeriod(
+      start,
+      end
+    );
+
+
+  if (
+    period.start.getTime() >
+    period.end.getTime()
+  ) {
+
+    throw new Error(
+      "Report date range normalization failed."
+    );
+
+  }
+
+
+  let failed =
+    false;
+
+
+  try {
+
+    mairixReportsBuildPeriod(
+      end,
+      start
+    );
+
+  } catch (error) {
+
+    failed = true;
+
+  }
+
+
+  if (!failed) {
+
+    throw new Error(
+      "Invalid report date range was accepted."
+    );
+
+  }
+
+
+  Logger.log(
+    "REPORT DATE RANGE TEST: PASS"
+  );
+
+}
+
+
+/************************************************
+ * REPORT SIGN TEST
+ *
+ * This verifies the report layer is capable
+ * of consuming signed effect columns.
+ ************************************************/
+
+function testMAIRIXReportSignedEffects() {
+
+  const records = [
+
+    {
+      "Quantity Effect":
+        -5,
+
+      "Inventory Effect":
+        -100
+
+    },
+
+    {
+      "Quantity Effect":
+        2,
+
+      "Inventory Effect":
+        40
+
+    }
+
+  ];
+
+
+  const quantity =
+    mairixReportsSumSigned(
+      records,
+      [
+        "Quantity Effect"
+      ]
+    );
+
+
+  const inventory =
+    mairixReportsSumSigned(
+      records,
+      [
+        "Inventory Effect"
+      ]
+    );
+
+
+  if (
+    quantity !== -3
+  ) {
+
+    throw new Error(
+      "Signed quantity aggregation failed."
+    );
+
+  }
+
+
+  if (
+    inventory !== -60
+  ) {
+
+    throw new Error(
+      "Signed inventory aggregation failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "REPORT SIGNED EFFECT TEST: PASS"
+  );
+
+}
+
+
+/************************************************
+ * FULL REPORT ENGINE TEST
+ ************************************************/
+
+function testMAIRIXReportsEngineFull() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX REPORTS ENGINE FULL TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  testMAIRIXReportsEngineHealth();
+
+
+  testMAIRIXReportsDateRange();
+
+
+  testMAIRIXReportSignedEffects();
+
+
+  testMAIRIXReportReferenceLookup();
+
+
+  /*
+   * Financial dashboard test.
+   *
+   * It will require FILE 20 and its
+   * FINANCIAL_EFFECTS source.
+   */
+
+  const today =
+    new Date();
+
+
+  const start =
+    new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      1
+    );
+
+
+  const result =
+    getMAIRIXReportsDashboard(
+      start,
+      today,
+      {}
+    );
+
+
+  if (!result) {
+
+    throw new Error(
+      "Full Reports Dashboard returned no result."
+    );
+
+  }
+
+
+  if (
+    !result.financialStatements
+  ) {
+
+    throw new Error(
+      "Financial Statements section is missing."
+    );
+
+  }
+
+
+  if (
+    !result.operational
+  ) {
+
+    throw new Error(
+      "Operational reports section is missing."
+    );
+
+  }
+
+
+  Logger.log(
+    JSON.stringify(
+      getMAIRIXReportsKPIs(
+        start,
+        today,
+        {}
+      ),
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX REPORTS ENGINE FULL TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

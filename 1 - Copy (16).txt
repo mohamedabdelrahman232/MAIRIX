@@ -1,0 +1,3156 @@
+/************************************************
+ * MAIRIX ERP
+ * SCHEMA / STRUCTURE CORE
+ *
+ * FILE:
+ * 2-MAIRIX_Schema.gs
+ *
+ * PURPOSE:
+ *
+ * 1. Build MAIRIX from an empty spreadsheet.
+ * 2. Create all required sheets.
+ * 3. Create headers centrally.
+ * 4. Create SETTINGS with initial system variables.
+ * 5. Define the central User / Employee / Role
+ *    / Permission / Warehouse security structure.
+ * 6. Prevent modules from depending on legacy layouts.
+ *
+ * IMPORTANT:
+ *
+ * - This file creates STRUCTURE only.
+ * - No historical / legacy data is imported.
+ * - Business transactions are NOT created here.
+ * - Runtime settings remain editable through SETTINGS.
+ *
+ * SECURITY MODEL:
+ *
+ * EMPLOYEE
+ *     |
+ *     +---- User ID
+ *             |
+ *             +---- Role Code
+ *             |       |
+ *             |       +---- Default Permissions
+ *             |
+ *             +---- Final User Permissions
+ *             |
+ *             +---- Warehouse Access
+ *             |
+ *             +---- Active / Inactive / Blocked
+ *
+ * SALESMAN
+ *     |
+ *     +---- Employee Code
+ *     +---- User ID
+ *
+ ************************************************/
+
+
+/************************************************
+ * SCHEMA VERSION
+ ************************************************/
+
+const MAIRIX_SCHEMA = {
+
+  VERSION:
+    "2.0.0"
+
+};
+
+
+/************************************************
+ * CENTRAL HEADER DEFINITIONS
+ ************************************************/
+
+MAIRIX_SCHEMA.HEADERS = {
+
+  /**********************************************
+   * SYSTEM / SECURITY
+   **********************************************/
+
+  SETTINGS: [
+    "Key",
+    "Value",
+    "Data Type",
+    "Description",
+    "Editable",
+    "Last Updated"
+  ],
+
+
+  SETTINGS_OPTIONS: [
+    "Option Code",
+    "Setting Key",
+    "Option Value",
+    "Option Label",
+    "Data Type",
+    "Active",
+    "Sort Order",
+    "Created At",
+    "Updated At"
+  ],
+
+
+  /**********************************************
+   * USERS
+   *
+   * ONE USER = ONE LOGIN ACCOUNT.
+   *
+   * Every operational user must belong to
+   * an employee.
+   **********************************************/
+
+  USERS: [
+
+    "User ID",
+
+    "Employee Code",
+
+    "Gmail",
+
+    "Name",
+
+    "Role Code",
+
+    "Role Name",
+
+    /*
+     * Current password.
+     *
+     * Per project requirement this remains
+     * visible to authorized administration.
+     *
+     * Password validation is handled by the
+     * Access Control layer.
+     */
+
+    "Current Password",
+
+    "Password Last Changed At",
+
+    "Password Change Required",
+
+    "Active",
+
+    "Created At",
+
+    "Created By",
+
+    "Updated At",
+
+    "Updated By"
+
+  ],
+
+
+  /**********************************************
+   * EMPLOYEES
+   *
+   * CENTRAL EMPLOYEE MASTER.
+   *
+   * Every User must point to an Employee.
+   * Every Salesman must point to an Employee.
+   **********************************************/
+
+  EMPLOYEES: [
+
+    "Employee Code",
+
+    "Employee Name",
+
+    "Job Title",
+
+    "Role Code",
+
+    "Role Name",
+
+    "Employee Type",
+
+    "Phone",
+
+    "Address",
+
+    /*
+     * Primary authorized warehouse.
+     *
+     * Additional warehouse permissions are
+     * controlled through USER_WAREHOUSE_PERMISSIONS.
+     */
+
+    "Primary Warehouse Code",
+
+    "Primary Warehouse Name",
+
+    "User ID",
+
+    "Active",
+
+    "Created At",
+
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * JOB ROLES
+   *
+   * Examples:
+   *
+   * ADMIN
+   * MANAGER
+   * ACCOUNTANT
+   * SALESMAN
+   * STOREKEEPER
+   *
+   * A Role defines DEFAULT permissions.
+   *
+   * User-specific final permissions are stored
+   * separately in USER_PERMISSIONS.
+   **********************************************/
+
+  ROLES: [
+
+    "Role Code",
+
+    "Role Name",
+
+    "Job Title",
+
+    "Description",
+
+    "Active",
+
+    "Created At",
+
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * PERMISSION CATALOG
+   *
+   * MASTER LIST OF ALL POSSIBLE PERMISSIONS.
+   *
+   * This is the source used by:
+   *
+   * - Role defaults
+   * - User final permissions
+   * - Future permission additions
+   **********************************************/
+
+  PERMISSION_CATALOG: [
+
+    "Permission Code",
+
+    "Permission Name",
+
+    "Module",
+
+    "Action",
+
+    "Description",
+
+    "Active",
+
+    "Created At",
+
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * DEFAULT ROLE PERMISSIONS
+   *
+   * IMPORTANT:
+   *
+   * This table belongs to ROLE level.
+   *
+   * It answers:
+   *
+   * "What does this job title normally have?"
+   *
+   * It does NOT represent final user access.
+   **********************************************/
+
+  PERMISSIONS: [
+
+    "Role Code",
+
+    "Role Name",
+
+    "Permission Code",
+
+    "Permission Name",
+
+    "View",
+
+    "Create",
+
+    "Edit",
+
+    "Delete",
+
+    "Export",
+
+    "Active",
+
+    "Created At",
+
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * FINAL USER PERMISSIONS
+   *
+   * IMPORTANT:
+   *
+   * This is the FINAL authority for the user.
+   *
+   * Initial state:
+   *
+   *     Role Default
+   *          ↓
+   *     User Permission
+   *
+   * After administrator customization:
+   *
+   *     User Permission
+   *
+   * becomes the final approved permission.
+   *
+   * Access Control must evaluate this table.
+   *
+   * The system will maintain a fixed initial
+   * permission capacity of 60 rows per user.
+   *
+   * Future permissions may consume currently
+   * unused rows automatically.
+   **********************************************/
+
+  USER_PERMISSIONS: [
+
+    "User ID",
+
+    "Employee Code",
+
+    "Role Code",
+
+    "Permission Code",
+
+    "Permission Name",
+
+    "View",
+
+    "Create",
+
+    "Edit",
+
+    "Delete",
+
+    "Export",
+
+    "Active",
+
+    "Source",
+
+    "Created At",
+
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * USER WAREHOUSE PERMISSIONS
+   *
+   * Defines exactly which warehouses the user
+   * is authorized to work with.
+   *
+   * A user may have access to:
+   *
+   * - one warehouse
+   * - several warehouses
+   * - all warehouses if explicitly granted
+   *   through the final authorization layer.
+   **********************************************/
+
+  USER_WAREHOUSE_PERMISSIONS: [
+
+    "User ID",
+
+    "Employee Code",
+
+    "Warehouse Code",
+
+    "Warehouse Name",
+
+    "View",
+
+    "Create",
+
+    "Edit",
+
+    "Delete",
+
+    "Export",
+
+    "Active",
+
+    "Created At",
+
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * MASTER DATA
+   **********************************************/
+
+  WAREHOUSES: [
+
+    "Warehouse Code",
+    "Warehouse Name",
+    "Description",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  CUSTOMERS: [
+
+    "Customer Code",
+    "Customer Name",
+    "Phone",
+    "Address",
+    "Opening Balance",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  VENDORS: [
+
+    "Vendor Code",
+    "Vendor Name",
+    "Phone",
+    "Address",
+    "Opening Balance",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  ITEMS: [
+
+    "Item Code",
+    "Item Name",
+    "Category",
+    "Unit",
+    "Barcode",
+    "Selling Price",
+    "Opening Quantity",
+    "Opening Cost",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * SALESMEN
+   *
+   * SALESMAN IS AN EMPLOYEE ROLE / FUNCTION.
+   *
+   * It must NOT exist as an independent person
+   * outside EMPLOYEES / USERS.
+   **********************************************/
+
+  SALESMEN: [
+
+    "Salesman Code",
+
+    "Employee Code",
+
+    "User ID",
+
+    "Salesman Name",
+
+    "Phone",
+
+    "Commission Type",
+
+    "Commission Value",
+
+    "Active",
+
+    "Created At",
+
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * TRANSACTIONS
+   **********************************************/
+
+  TRANSACTIONS: [
+
+    "Reference ID",
+    "Transaction Type",
+    "Transaction Date",
+    "User ID",
+    "User Name",
+    "Warehouse Code",
+    "Warehouse Name",
+    "Customer Code",
+    "Vendor Code",
+    "Salesman Code",
+    "Currency",
+    "Gross Amount",
+    "Discount Amount",
+    "Net Amount",
+    "Cash Amount",
+    "Credit Amount",
+    "Inventory Quantity Effect",
+    "Cash Effect",
+    "Customer Credit Effect",
+    "Vendor Credit Effect",
+    "Commission Payable Effect",
+    "Final Taxable Base",
+    "Total Tax",
+    "Status",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  TRANSACTION_LINES: [
+
+    "Reference ID",
+    "Line ID",
+    "Transaction Type",
+    "Product Code",
+    "Product Name",
+    "Warehouse Code",
+    "Quantity",
+    "Unit Price",
+    "Gross Line Amount",
+    "Discount Amount",
+    "Net Line Amount",
+    "Unit Cost",
+    "Cost Amount",
+    "Inventory Quantity Effect",
+    "Inventory Value Effect",
+    "Taxable Base",
+    "Total Tax",
+    "Created At"
+
+  ],
+
+
+  TRANSACTION_EFFECTS: [
+
+    "Reference ID",
+    "Line ID",
+    "Transaction Date",
+    "Transaction Type",
+    "Effect Type",
+    "Product Code",
+    "Warehouse Code",
+    "Quantity Effect",
+    "Inventory Value Effect",
+    "Cash Effect",
+    "Customer Credit Effect",
+    "Vendor Credit Effect",
+    "Commission Payable Effect",
+    "Tax Effect",
+    "Created At"
+
+  ],
+
+
+  TRANSACTION_LINKS: [
+
+    "Link ID",
+    "Reference ID",
+    "Linked Reference ID",
+    "Link Type",
+    "Transaction Type",
+    "Linked Transaction Type",
+    "Quantity Linked",
+    "Amount Linked",
+    "Created At",
+    "Created By"
+
+  ],
+
+
+  /**********************************************
+   * INVENTORY
+   **********************************************/
+
+  INVENTORY_LEDGER: [
+
+    "Reference ID",
+    "Line ID",
+    "Transaction Date",
+    "Transaction Type",
+    "Warehouse Code",
+    "Product Code",
+    "Quantity",
+    "Unit Cost",
+    "Inventory Quantity Effect",
+    "Inventory Value Effect",
+    "Running Quantity",
+    "Running Value",
+    "WAC After Transaction",
+    "Created At"
+
+  ],
+
+
+  INVENTORY_BALANCES: [
+
+    "Item Code",
+    "Item Name",
+    "Warehouse Code",
+    "Warehouse Name",
+    "Opening Stock",
+    "Movement Quantity",
+    "Current Stock",
+    "WAC",
+    "Inventory Value",
+    "Last Movement ID"
+
+  ],
+
+
+  /**********************************************
+   * CUSTOMER / VENDOR / CASH
+   **********************************************/
+
+  CUSTOMER_LEDGER: [
+
+    "Reference ID",
+    "Transaction Date",
+    "Transaction Type",
+    "Customer Code",
+    "Customer Name",
+    "Salesman Code",
+    "Debit Effect",
+    "Credit Effect",
+    "Net Credit Effect",
+    "Running Balance",
+    "Due Date",
+    "Created At"
+
+  ],
+
+
+  VENDOR_LEDGER: [
+
+    "Reference ID",
+    "Transaction Date",
+    "Transaction Type",
+    "Vendor Code",
+    "Vendor Name",
+    "Debit Effect",
+    "Credit Effect",
+    "Net Credit Effect",
+    "Running Balance",
+    "Due Date",
+    "Created At"
+
+  ],
+
+
+  CASH_LEDGER: [
+
+    "Reference ID",
+    "Transaction Date",
+    "Transaction Type",
+    "User ID",
+    "Customer Code",
+    "Vendor Code",
+    "Cash In",
+    "Cash Out",
+    "Net Cash Effect",
+    "Running Cash Balance",
+    "Created At"
+
+  ],
+
+
+  /**********************************************
+   * COMMISSIONS
+   **********************************************/
+
+  COMMISSION_LEDGER: [
+
+    "Commission Movement ID",
+    "Movement Date",
+    "Movement Type",
+    "Employee User ID",
+    "Employee Name",
+    "Source Reference",
+    "Source Type",
+    "Sale Reference",
+    "Customer Reference",
+    "Warehouse Reference",
+    "Commission Rate",
+    "Commission Basis",
+    "Commission Amount",
+    "Cash Effect",
+    "Credit Effect",
+    "Status",
+    "Notes",
+    "Created At",
+    "Created By"
+
+  ],
+
+
+  COMMISSION_RULES: [
+
+    "Rule ID",
+    "User ID",
+    "Employee Name",
+    "Rule Type",
+    "Rate",
+    "Fixed Amount",
+    "Basis",
+    "Effective From",
+    "Effective To",
+    "Active",
+    "Notes",
+    "Created At",
+    "Created By"
+
+  ],
+
+
+  /**********************************************
+   * LOYALTY
+   **********************************************/
+
+  LOYALTY_LEDGER: [
+
+    "Movement ID",
+    "Date",
+    "Movement Type",
+    "Reference ID",
+    "Source Type",
+    "Customer Code",
+    "Customer Name",
+    "User ID",
+    "Warehouse Code",
+    "Quantity",
+    "Points Sign",
+    "Points Effect",
+    "Running Points",
+    "Created At"
+
+  ],
+
+
+  LOYALTY_RULES: [
+
+    "Rule ID",
+    "Rule Name",
+    "Points Per Unit",
+    "Effective From",
+    "Effective To",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  DISCOUNT_RULES: [
+
+    "Rule ID",
+    "Minimum Points",
+    "Maximum Points",
+    "Discount Percentage",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * EXPENSES
+   **********************************************/
+
+  EXPENSES: [
+
+    "Expense Code",
+    "Reference ID",
+    "Expense Date",
+    "Description",
+    "Category Code",
+    "Category Name",
+    "Loading Method",
+    "Product Code",
+    "Purchase Reference ID",
+    "Salesman Code",
+    "Amount",
+    "Financial Account Code",
+    "Cost Effect",
+    "General Expense Effect",
+    "Created By",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * TAX
+   **********************************************/
+
+  TAX_TYPES: [
+
+    "Tax Code",
+    "Tax Name",
+    "Rate",
+    "Calculation Base",
+    "Applies To Sales",
+    "Applies To Sales Returns",
+    "Applies To Purchases",
+    "Applies To Purchase Returns",
+    "Applies To Expenses",
+    "Active"
+
+  ],
+
+
+  TAX_RULES: [
+
+    "Rule ID",
+    "Tax Code",
+    "Transaction Type",
+    "Calculation Basis",
+    "Rate",
+    "Priority",
+    "Effective From",
+    "Effective To",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  TAX_EFFECTS: [
+
+    "Reference ID",
+    "Line ID",
+    "Transaction Date",
+    "Transaction Type",
+    "Tax Code",
+    "Tax Name",
+    "Rate",
+    "Taxable Base",
+    "Tax Sign",
+    "Tax Amount",
+    "Signed Tax Amount",
+    "Created At"
+
+  ],
+
+TAX_LEDGER:[
+  "TAX_ID",
+  "REF_ID",
+  "TIMESTAMP",
+  "TAX_TYPE",
+  "TAX_RATE",
+  "TAXABLE_AMOUNT",
+  "TAX_AMOUNT",
+  "TRANSACTION_TYPE",
+  "USER_ID",
+  "NOTES"
+  ],
+
+FINANCIAL_LEDGER:[
+  "LEDGER_ID",
+  "REF_ID",
+  "TIMESTAMP",
+  "ACCOUNT_CODE",
+  "ACCOUNT_NAME",
+  "DEBIT",
+  "CREDIT",
+  "TRANSACTION_TYPE",
+  "ENTITY_TYPE",
+  "ENTITY_ID",
+  "USER_ID",
+  "NOTES"
+  ],
+
+  /**********************************************
+   * FINANCIAL STRUCTURE
+   **********************************************/
+
+  FINANCIAL_ACCOUNTS: [
+
+    "Account Code",
+    "Account Name",
+    "Account Type",
+    "Statement",
+    "Parent Account Code",
+    "Normal Balance",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  ACCOUNTING_MAPPING: [
+
+    "Mapping Code",
+    "Mapping Name",
+    "Statement",
+    "Section",
+    "Line Code",
+    "Line Name",
+    "Transaction Type",
+    "Effect Type",
+    "Debit Account",
+    "Credit Account",
+    "Active",
+    "Notes"
+
+  ],
+
+
+  FINANCIAL_MAPPINGS: [
+
+    "Mapping Code",
+    "Transaction Type",
+    "Nature Code",
+    "Nature Name",
+    "Financial Account Code",
+    "Financial Account Name",
+    "Statement",
+    "Effect Sign",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  FINANCIAL_EFFECTS: [
+
+    "Reference ID",
+    "Transaction Date",
+    "Transaction Type",
+    "Effect Type",
+    "Account Code",
+    "Account Name",
+    "Statement",
+    "Section",
+    "Line Code",
+    "Line Name",
+    "Effect Sign",
+    "Amount",
+    "Signed Amount",
+    "Created At"
+
+  ],
+
+
+  FINANCIAL_STATEMENTS: [
+
+    "Reference ID",
+    "Transaction Date",
+    "Statement",
+    "Section",
+    "Line Code",
+    "Line Name",
+    "Account Code",
+    "Account Name",
+    "Amount",
+    "Signed Amount",
+    "Cash Effect",
+    "Receivable Effect",
+    "Payable Effect",
+    "Inventory Effect",
+    "Tax Effect",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * EMPLOYEE EVALUATION
+   **********************************************/
+
+  EMPLOYEE_EVALUATIONS: [
+
+    "Evaluation ID",
+    "Evaluation Date",
+    "Employee Type",
+    "Employee Code",
+    "Employee Name",
+    "Evaluation Period Start",
+    "Evaluation Period End",
+    "System Score",
+    "Management Score",
+    "Final Review",
+    "Evaluator User ID",
+    "Notes",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  EMPLOYEE_EVALUATION_FACTORS: [
+
+    "Factor ID",
+    "Factor Code",
+    "Factor Name",
+    "Employee Type",
+    "Weight",
+    "Maximum Score",
+    "Active",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  MANAGEMENT_EVALUATIONS: [
+
+    "Evaluation ID",
+    "Evaluation Date",
+    "Employee Code",
+    "Employee Name",
+    "Evaluator User ID",
+    "Factor Code",
+    "Score",
+    "Notes",
+    "Created At",
+    "Updated At"
+
+  ],
+
+
+  /**********************************************
+   * AUDIT
+   **********************************************/
+
+  AUDIT_LOG: [
+
+    "Audit ID",
+    "Timestamp",
+    "User ID",
+    "User Email",
+    "Action",
+    "Reference ID",
+    "Module",
+    "Details"
+
+  ]
+
+};
+
+
+/************************************************
+ * CREATE / REBUILD EMPTY SYSTEM
+ *
+ * RUN THIS ON THE NEW WHITE SHEET.
+ *
+ * WARNING:
+ *
+ * This function intentionally clears the
+ * MAIRIX-created sheets before rebuilding them.
+ *
+ * It does NOT touch unrelated sheets.
+ ************************************************/
+
+function setupMairixSystem() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheetNames =
+    Object.keys(
+      MAIRIX.SHEETS
+    ).map(
+      function(key) {
+
+        return MAIRIX.SHEETS[key];
+
+      }
+    );
+
+
+  Logger.log(
+    "RUNTIME COMMISSION_LEDGER SCHEMA = " +
+    JSON.stringify(
+      MAIRIX_SCHEMA.HEADERS.COMMISSION_LEDGER
+    )
+  );
+
+
+  Logger.log(
+    "RUNTIME COMMISSION_RULES SCHEMA = " +
+    JSON.stringify(
+      MAIRIX_SCHEMA.HEADERS.COMMISSION_RULES
+    )
+  );
+
+
+  Logger.log(
+    "RUNTIME FINANCIAL_EFFECTS SCHEMA = " +
+    JSON.stringify(
+      MAIRIX_SCHEMA.HEADERS.FINANCIAL_EFFECTS
+    )
+  );
+
+
+  Logger.log(
+    "RUNTIME FINANCIAL_STATEMENTS SCHEMA = " +
+    JSON.stringify(
+      MAIRIX_SCHEMA.HEADERS.FINANCIAL_STATEMENTS
+    )
+  );
+
+
+  /**********************************************
+   * CREATE SHEETS
+   **********************************************/
+
+  sheetNames.forEach(
+    function(sheetName) {
+
+      let sheet =
+        ss.getSheetByName(
+          sheetName
+        );
+
+
+      if (!sheet) {
+
+        sheet =
+          ss.insertSheet(
+            sheetName
+          );
+
+      }
+
+
+      sheet.clear();
+
+
+      const schemaKey =
+        Object.keys(
+          MAIRIX.SHEETS
+        ).find(
+          function(key) {
+
+            return (
+              MAIRIX.SHEETS[key] ===
+              sheetName
+            );
+
+          }
+        );
+
+
+      const headers =
+        MAIRIX_SCHEMA.HEADERS[
+          schemaKey
+        ];
+
+
+      if (!headers) {
+
+        throw new Error(
+          "Missing schema headers for: " +
+          sheetName
+        );
+
+      }
+
+
+      sheet
+        .getRange(
+          1,
+          1,
+          1,
+          headers.length
+        )
+        .setValues([
+          headers
+        ]);
+
+
+      formatSchemaHeader(
+        sheet,
+        headers.length
+      );
+
+    }
+  );
+
+
+  /**********************************************
+   * INITIAL SETTINGS
+   **********************************************/
+
+  seedMairixSettings();
+
+
+  /**********************************************
+   * INITIAL TAX STRUCTURE
+   **********************************************/
+
+  seedMairixTaxTypes();
+
+
+  /**********************************************
+   * INITIAL FINANCIAL STRUCTURE
+   **********************************************/
+
+  seedMairixFinancialAccounts();
+
+
+  /**********************************************
+   * INITIAL PERMISSION CATALOG
+   **********************************************/
+
+  seedMairixPermissionCatalog();
+
+
+  /**********************************************
+   * INITIAL ROLES
+   **********************************************/
+
+  seedMairixRoles();
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  Logger.log(
+    "MAIRIX SYSTEM STRUCTURE CREATED"
+  );
+
+
+  Logger.log(
+    "Schema Version: " +
+    MAIRIX_SCHEMA.VERSION
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    schemaVersion:
+      MAIRIX_SCHEMA.VERSION,
+
+    sheetsCreated:
+      sheetNames.length
+
+  };
+
+}
+
+
+/************************************************
+ * HEADER FORMAT
+ ************************************************/
+
+function formatSchemaHeader(
+  sheet,
+  numberOfColumns
+) {
+
+  if (!sheet) {
+
+    throw new Error(
+      "formatSchemaHeader: sheet is required."
+    );
+
+  }
+
+
+  if (
+    !numberOfColumns ||
+    numberOfColumns < 1
+  ) {
+
+    return;
+
+  }
+
+
+  sheet
+    .setFrozenRows(
+      1
+    );
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      numberOfColumns
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      numberOfColumns
+    )
+    .setWrap(
+      true
+    );
+
+
+  sheet.autoResizeColumns(
+    1,
+    numberOfColumns
+  );
+
+}
+
+
+/************************************************
+ * SETTINGS SEED
+ ************************************************/
+
+function seedMairixSettings() {
+
+  const sheet =
+    getMairixSchemaSheet(
+      "SETTINGS"
+    );
+
+
+  const rows = [
+
+    [
+      "SYSTEM_NAME",
+      "MAIRIX",
+      "TEXT",
+      "Fixed ERP system engine name.",
+      false,
+      new Date()
+    ],
+
+    [
+      "PROJECT_NAME",
+      "MAIRIX ERP",
+      "TEXT",
+      "Project/business name displayed by the system.",
+      true,
+      new Date()
+    ],
+
+    [
+      "REPORTING_CURRENCY",
+      "EGP",
+      "TEXT",
+      "Primary reporting currency.",
+      true,
+      new Date()
+    ],
+
+    [
+      "INVENTORY_COST_METHOD",
+      "WAC",
+      "TEXT",
+      "Inventory valuation method.",
+      true,
+      new Date()
+    ],
+
+    [
+      "LOYALTY_ENABLED",
+      true,
+      "BOOLEAN",
+      "Enable or disable loyalty points.",
+      true,
+      new Date()
+    ],
+
+    [
+      "POINTS_PER_UNIT",
+      1,
+      "NUMBER",
+      "Loyalty points generated per purchased unit.",
+      true,
+      new Date()
+    ],
+
+    [
+      "DISCOUNT_ENABLED",
+      true,
+      "BOOLEAN",
+      "Enable sales discount system.",
+      true,
+      new Date()
+    ],
+
+    [
+      "DISCOUNT_LEVELS_SOURCE",
+      "SETTINGS",
+      "TEXT",
+      "Discount thresholds are controlled centrally.",
+      true,
+      new Date()
+    ],
+
+    [
+      "COMMISSION_ENABLED",
+      true,
+      "BOOLEAN",
+      "Enable salesman commission engine.",
+      true,
+      new Date()
+    ],
+
+    [
+      "TAX_ENGINE_ENABLED",
+      true,
+      "BOOLEAN",
+      "Enable multi-tax engine.",
+      true,
+      new Date()
+    ],
+
+    [
+      "AUDIT_ENABLED",
+      true,
+      "BOOLEAN",
+      "Enable centralized audit trail.",
+      true,
+      new Date()
+    ],
+
+    [
+      "USER_PERMISSION_CAPACITY",
+      60,
+      "NUMBER",
+      "Initial final-permission capacity created for every new user.",
+      true,
+      new Date()
+    ],
+
+    [
+      "PASSWORD_LENGTH",
+      6,
+      "NUMBER",
+      "Required password length.",
+      false,
+      new Date()
+    ],
+
+    [
+      "PASSWORD_NUMERIC_ONLY",
+      true,
+      "BOOLEAN",
+      "Passwords must contain numeric digits only.",
+      false,
+      new Date()
+    ],
+
+    [
+      "PASSWORD_ALLOW_REPEATED_DIGITS",
+      false,
+      "BOOLEAN",
+      "Repeated password digits are not allowed.",
+      false,
+      new Date()
+    ],
+
+    [
+      "PASSWORD_ALLOW_SEQUENTIAL_DIGITS",
+      false,
+      "BOOLEAN",
+      "Sequential password digits are not allowed.",
+      false,
+      new Date()
+    ]
+
+  ];
+
+
+  if (
+    sheet.getLastRow() > 1
+  ) {
+
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        sheet.getLastColumn()
+      )
+      .clearContent();
+
+  }
+
+
+  sheet
+    .getRange(
+      2,
+      1,
+      rows.length,
+      rows[0].length
+    )
+    .setValues(
+      rows
+    );
+
+}
+
+
+/************************************************
+ * TAX TYPES SEED
+ ************************************************/
+
+function seedMairixTaxTypes() {
+
+  const sheet =
+    getMairixSchemaSheet(
+      "TAX_TYPES"
+    );
+
+
+  const rows = [
+
+    [
+      "VAT",
+      "Value Added Tax",
+      0,
+      "PERCENT",
+      1,
+      false,
+      new Date(),
+      new Date()
+    ]
+
+  ];
+
+
+  sheet
+    .getRange(
+      2,
+      1,
+      rows.length,
+      rows[0].length
+    )
+    .setValues(
+      rows
+    );
+
+}
+
+
+/************************************************
+ * FINANCIAL ACCOUNTS SEED
+ ************************************************/
+
+function seedMairixFinancialAccounts() {
+
+  const sheet =
+    getMairixSchemaSheet(
+      "FINANCIAL_ACCOUNTS"
+    );
+
+
+  const rows = [
+
+    [
+      "CASH",
+      "Cash",
+      "ASSET",
+      "BALANCE_SHEET",
+      "",
+      "DEBIT",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "CUSTOMER_RECEIVABLES",
+      "Customer Receivables",
+      "ASSET",
+      "BALANCE_SHEET",
+      "",
+      "DEBIT",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "INVENTORY",
+      "Inventory",
+      "ASSET",
+      "BALANCE_SHEET",
+      "",
+      "DEBIT",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "VENDOR_PAYABLES",
+      "Vendor Payables",
+      "LIABILITY",
+      "BALANCE_SHEET",
+      "",
+      "CREDIT",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "SALESMAN_COMMISSION_PAYABLE",
+      "Salesman Commission Payable",
+      "LIABILITY",
+      "BALANCE_SHEET",
+      "",
+      "CREDIT",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "SALES_REVENUE",
+      "Sales Revenue",
+      "REVENUE",
+      "INCOME_STATEMENT",
+      "",
+      "CREDIT",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "COST_OF_GOODS_SOLD",
+      "Cost of Goods Sold",
+      "EXPENSE",
+      "INCOME_STATEMENT",
+      "",
+      "DEBIT",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "GENERAL_EXPENSES",
+      "General Expenses",
+      "EXPENSE",
+      "INCOME_STATEMENT",
+      "",
+      "DEBIT",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "TAX_PAYABLE",
+      "Tax Payable",
+      "LIABILITY",
+      "BALANCE_SHEET",
+      "",
+      "CREDIT",
+      true,
+      new Date(),
+      new Date()
+    ]
+
+  ];
+
+
+  sheet
+    .getRange(
+      2,
+      1,
+      rows.length,
+      rows[0].length
+    )
+    .setValues(
+      rows
+    );
+
+}
+
+
+/************************************************
+ * PERMISSION CATALOG
+ *
+ * CENTRAL PERMISSION DEFINITIONS.
+ *
+ * Each module has:
+ *
+ * View
+ * Create
+ * Edit
+ * Delete
+ * Export
+ *
+ * Current catalog contains 21 modules x 5
+ * actions = 105 possible permissions.
+ *
+ * USER_PERMISSIONS will initially allocate
+ * 60 rows per user.
+ *
+ * Additional permissions can consume empty
+ * capacity / be expanded by the Access Control
+ * engine without changing the schema.
+ ************************************************/
+
+function seedMairixPermissionCatalog() {
+
+  const sheet =
+    getMairixSchemaSheet(
+      "PERMISSION_CATALOG"
+    );
+
+
+  const modules = [
+
+    "SALES",
+    "SALES_RETURNS",
+    "PURCHASES",
+    "PURCHASE_RETURNS",
+    "COLLECTIONS",
+    "VENDOR_PAYMENTS",
+    "EXPENSES",
+    "COMMISSIONS",
+    "LOYALTY",
+    "INVENTORY",
+    "WAREHOUSES",
+    "CUSTOMERS",
+    "VENDORS",
+    "PRODUCTS",
+    "SALESMEN",
+    "USERS",
+    "REPORTS",
+    "FINANCIAL_STATEMENTS",
+    "TAXES",
+    "AUDIT",
+    "EMPLOYEES"
+
+  ];
+
+
+  const actions = [
+
+    "View",
+    "Create",
+    "Edit",
+    "Delete",
+    "Export"
+
+  ];
+
+
+  const rows = [];
+
+
+  modules.forEach(
+    function(module) {
+
+      actions.forEach(
+        function(action) {
+
+          const code =
+            module +
+            "_" +
+            action.toUpperCase();
+
+
+          rows.push([
+
+            code,
+
+            module +
+            " / " +
+            action,
+
+            module,
+
+            action,
+
+            "System permission.",
+
+            true,
+
+            new Date(),
+
+            new Date()
+
+          ]);
+
+        }
+      );
+
+    }
+  );
+
+
+  if (rows.length) {
+
+    sheet
+      .getRange(
+        2,
+        1,
+        rows.length,
+        rows[0].length
+      )
+      .setValues(
+        rows
+      );
+
+  }
+
+}
+
+
+/************************************************
+ * ROLES
+ *
+ * These are SYSTEM DEFAULT JOB ROLES.
+ *
+ * Their default permissions are populated by
+ * the Access Control layer.
+ *
+ * Administrator customization happens at the
+ * user level, NOT by editing the user directly
+ * in transaction modules.
+ ************************************************/
+
+function seedMairixRoles() {
+
+  const sheet =
+    getMairixSchemaSheet(
+      "ROLES"
+    );
+
+
+  const rows = [
+
+    [
+      "ADMIN",
+      "Administrator",
+      "Administrator",
+      "Full system administration access.",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "MANAGER",
+      "Manager",
+      "Manager",
+      "Management access.",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "ACCOUNTANT",
+      "Accountant",
+      "Accountant",
+      "Financial and accounting operations.",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "SALESMAN",
+      "Salesman",
+      "Salesman",
+      "Sales operations.",
+      true,
+      new Date(),
+      new Date()
+    ],
+
+    [
+      "STOREKEEPER",
+      "Storekeeper",
+      "Storekeeper",
+      "Warehouse operations.",
+      true,
+      new Date(),
+      new Date()
+    ]
+
+  ];
+
+
+  sheet
+    .getRange(
+      2,
+      1,
+      rows.length,
+      rows[0].length
+    )
+    .setValues(
+      rows
+    );
+
+}
+
+
+/************************************************
+ * GET SCHEMA SHEET
+ ************************************************/
+
+function getMairixSchemaSheet(
+  schemaKey
+) {
+
+  const sheetName =
+    MAIRIX.SHEETS[
+      schemaKey
+    ];
+
+
+  if (!sheetName) {
+
+    throw new Error(
+      "Unknown MAIRIX schema key: " +
+      schemaKey
+    );
+
+  }
+
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        sheetName
+      );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Required MAIRIX sheet does not exist: " +
+      sheetName
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * SCHEMA VALIDATION
+ ************************************************/
+
+function validateMairixSchema() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const results = [];
+
+
+  Object.keys(
+    MAIRIX.SHEETS
+  ).forEach(
+    function(schemaKey) {
+
+      const sheetName =
+        MAIRIX.SHEETS[
+          schemaKey
+        ];
+
+
+      const expected =
+        MAIRIX_SCHEMA.HEADERS[
+          schemaKey
+        ];
+
+
+      const sheet =
+        ss.getSheetByName(
+          sheetName
+        );
+
+
+      if (!sheet) {
+
+        results.push({
+
+          sheet:
+            sheetName,
+
+          status:
+            "MISSING"
+
+        });
+
+        return;
+
+      }
+
+
+      const rawActual =
+        sheet
+          .getRange(
+            1,
+            1,
+            1,
+            sheet.getLastColumn()
+          )
+          .getDisplayValues()[0];
+
+
+      const actual =
+        rawActual
+          .map(
+            function(header) {
+
+              return String(
+                header
+              ).trim();
+
+            }
+          );
+
+
+      while (
+        actual.length > 0 &&
+        actual[
+          actual.length - 1
+        ] === ""
+      ) {
+
+        actual.pop();
+
+      }
+
+
+      const same =
+        expected.length ===
+          actual.length &&
+        expected.every(
+          function(header, index) {
+
+            return (
+              header ===
+              actual[index]
+            );
+
+          }
+        );
+
+
+      results.push({
+
+        sheet:
+          sheetName,
+
+        status:
+          same
+            ? "OK"
+            : "INVALID"
+
+      });
+
+    }
+  );
+
+
+  const invalid =
+    results.filter(
+      function(result) {
+
+        return (
+          result.status !==
+          "OK"
+        );
+
+      }
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      results,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    invalid.length
+  ) {
+
+    throw new Error(
+      "MAIRIX schema validation failed. Invalid sheets: " +
+      invalid
+        .map(
+          function(item) {
+
+            return item.sheet;
+
+          }
+        )
+        .join(", ")
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX SCHEMA VALIDATION: PASS"
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    sheets:
+      results.length
+
+  };
+
+}
+
+
+/************************************************
+ * MAIRIX - GET COLUMN NUMBER
+ ************************************************/
+
+function mairixgetColumnNumber(
+  sheet,
+  headerName
+) {
+
+  if (!sheet) {
+
+    throw new Error(
+      "mairixgetColumnNumber: sheet is required."
+    );
+
+  }
+
+
+  if (
+    headerName === null ||
+    headerName === undefined ||
+    String(headerName).trim() === ""
+  ) {
+
+    throw new Error(
+      "mairixgetColumnNumber: header name is required."
+    );
+
+  }
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    !lastColumn ||
+    lastColumn < 1
+  ) {
+
+    throw new Error(
+      "mairixgetColumnNumber: sheet has no columns."
+    );
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const target =
+    String(headerName)
+      .trim();
+
+
+  for (
+    let i = 0;
+    i < headers.length;
+    i++
+  ) {
+
+    if (
+      String(
+        headers[i]
+      ).trim() ===
+      target
+    ) {
+
+      return i + 1;
+
+    }
+
+  }
+
+
+  throw new Error(
+    'mairixgetColumnNumber: Header "' +
+    target +
+    '" was not found.'
+  );
+
+}
+
+
+/************************************************
+ * MAIRIX - SCHEMA HEADER DIAGNOSTIC
+ ************************************************/
+
+function diagnoseMairixSchemaHeaders() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const problems = [];
+
+
+  Object.keys(
+    MAIRIX.SHEETS
+  ).forEach(
+    function(schemaKey) {
+
+      const sheetName =
+        MAIRIX.SHEETS[
+          schemaKey
+        ];
+
+
+      const expected =
+        MAIRIX_SCHEMA.HEADERS[
+          schemaKey
+        ];
+
+
+      const sheet =
+        ss.getSheetByName(
+          sheetName
+        );
+
+
+      if (!sheet) {
+
+        return;
+
+      }
+
+
+      const rawActual =
+        sheet
+          .getRange(
+            1,
+            1,
+            1,
+            sheet.getLastColumn()
+          )
+          .getDisplayValues()[0];
+
+
+      const actual =
+        rawActual
+          .map(
+            function(header) {
+
+              return String(
+                header
+              ).trim();
+
+            }
+          );
+
+
+      while (
+        actual.length > 0 &&
+        actual[
+          actual.length - 1
+        ] === ""
+      ) {
+
+        actual.pop();
+
+      }
+
+
+      const same =
+        expected.length ===
+          actual.length &&
+        expected.every(
+          function(header, index) {
+
+            return (
+              String(header).trim() ===
+              String(actual[index]).trim()
+            );
+
+          }
+        );
+
+
+      if (same) {
+
+        return;
+
+      }
+
+
+      Logger.log(
+        "=========================================="
+      );
+
+
+      Logger.log(
+        "SCHEMA HEADER MISMATCH: " +
+        sheetName
+      );
+
+
+      Logger.log(
+        "Expected:"
+      );
+
+
+      Logger.log(
+        JSON.stringify(
+          expected,
+          null,
+          2
+        )
+      );
+
+
+      Logger.log(
+        "Actual:"
+      );
+
+
+      Logger.log(
+        JSON.stringify(
+          actual,
+          null,
+          2
+        )
+      );
+
+
+      const maxLength =
+        Math.max(
+          expected.length,
+          actual.length
+        );
+
+
+      for (
+        let i = 0;
+        i < maxLength;
+        i++
+      ) {
+
+        const e =
+          expected[i] !== undefined
+            ? String(expected[i])
+            : "<MISSING>";
+
+
+        const a =
+          actual[i] !== undefined
+            ? String(actual[i])
+            : "<MISSING>";
+
+
+        if (
+          e !== a
+        ) {
+
+          Logger.log(
+            "Column " +
+            (i + 1) +
+            " | Expected: [" +
+            e +
+            "] | Actual: [" +
+            a +
+            "]"
+          );
+
+        }
+
+      }
+
+
+      problems.push({
+
+        sheet:
+          sheetName,
+
+        expected:
+          expected,
+
+        actual:
+          actual
+
+      });
+
+    }
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  Logger.log(
+    "MAIRIX SCHEMA HEADER DIAGNOSTIC"
+  );
+
+
+  Logger.log(
+    "Mismatched sheets: " +
+    problems.length
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      problems,
+      null,
+      2
+    )
+  );
+
+
+  return problems;
+
+}
+
+
+/************************************************
+ * DEBUG RUNTIME SCHEMA
+ ************************************************/
+
+function debugMairixRuntimeSchema() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  Logger.log(
+    "MAIRIX RUNTIME SCHEMA DEBUG"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  Logger.log(
+    "COMMISSION_LEDGER = " +
+    JSON.stringify(
+      MAIRIX_SCHEMA.HEADERS.COMMISSION_LEDGER
+    )
+  );
+
+
+  Logger.log(
+    "COMMISSION_RULES = " +
+    JSON.stringify(
+      MAIRIX_SCHEMA.HEADERS.COMMISSION_RULES
+    )
+  );
+
+
+  Logger.log(
+    "FINANCIAL_EFFECTS = " +
+    JSON.stringify(
+      MAIRIX_SCHEMA.HEADERS.FINANCIAL_EFFECTS
+    )
+  );
+
+
+  Logger.log(
+    "FINANCIAL_STATEMENTS = " +
+    JSON.stringify(
+      MAIRIX_SCHEMA.HEADERS.FINANCIAL_STATEMENTS
+    )
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * REPAIR FOUR KNOWN SCHEMA HEADERS
+ ************************************************/
+
+function repairMairixFourSchemaHeaders() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const repairs = {
+
+    COMMISSION_LEDGER:
+      MAIRIX_SCHEMA.HEADERS.COMMISSION_LEDGER,
+
+    FINANCIAL_EFFECTS:
+      MAIRIX_SCHEMA.HEADERS.FINANCIAL_EFFECTS,
+
+    FINANCIAL_STATEMENTS:
+      MAIRIX_SCHEMA.HEADERS.FINANCIAL_STATEMENTS,
+
+    COMMISSION_RULES:
+      MAIRIX_SCHEMA.HEADERS.COMMISSION_RULES
+
+  };
+
+
+  Object.keys(
+    repairs
+  ).forEach(
+    function(sheetName) {
+
+      const sheet =
+        ss.getSheetByName(
+          sheetName
+        );
+
+
+      if (!sheet) {
+
+        throw new Error(
+          "Missing sheet: " +
+          sheetName
+        );
+
+      }
+
+
+      const headers =
+        repairs[
+          sheetName
+        ];
+
+
+      sheet
+        .getRange(
+          1,
+          1,
+          1,
+          headers.length
+        )
+        .setValues([
+          headers
+        ]);
+
+
+      Logger.log(
+        "REPAIRED: " +
+        sheetName +
+        " (" +
+        headers.length +
+        " columns)"
+      );
+
+    }
+  );
+
+
+  Logger.log(
+    "FOUR SCHEMA HEADERS REPAIRED"
+  );
+
+}
+
+/************************************************
+ * MAIRIX CORE UTILITY COMPATIBILITY
+ *
+ * PURPOSE:
+ * Central compatibility helpers required by
+ * MAIRIX Core modules and Central Test Suite.
+ *
+ * IMPORTANT:
+ * These helpers do NOT replace business engines.
+ * They provide common infrastructure only.
+ ************************************************/
+
+
+/************************************************
+ * CLEAN TEXT
+ *
+ * Normalizes text safely.
+ ************************************************/
+
+function mairixcleanText(value) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(value)
+    .trim()
+    .replace(/\s+/g, " ");
+
+}
+
+
+/************************************************
+ * BACKWARD COMPATIBILITY ALIAS
+ *
+ * Some MAIRIX modules/tests may reference
+ * mairixCleanText().
+ ************************************************/
+
+function mairixCleanText(value) {
+
+  return mairixcleanText(
+    value
+  );
+
+}
+
+
+/************************************************
+ * GET SHEET
+ *
+ * Returns a sheet by its actual name.
+ *
+ * Throws a clear error when the sheet
+ * does not exist.
+ ************************************************/
+
+function mairixgetSheet(sheetName) {
+
+  const normalizedSheetName =
+    mairixcleanText(
+      sheetName
+    );
+
+
+  if (
+    !normalizedSheetName
+  ) {
+
+    throw new Error(
+      "Sheet name is required."
+    );
+
+  }
+
+
+  const spreadsheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      normalizedSheetName
+    );
+
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Missing sheet: " +
+      normalizedSheetName
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * GET COLUMN NUMBER
+ *
+ * Finds a column by its header name.
+ *
+ * Returns a 1-based column number because
+ * Google Sheets APIs use 1-based indexes.
+ ************************************************/
+
+function mairixgetColumnNumber(
+  sheet,
+  headerName
+) {
+
+  if (
+    !sheet
+  ) {
+
+    throw new Error(
+      "Sheet is required."
+    );
+
+  }
+
+
+  const normalizedHeader =
+    mairixcleanText(
+      headerName
+    );
+
+
+  if (
+    !normalizedHeader
+  ) {
+
+    throw new Error(
+      "Header name is required."
+    );
+
+  }
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastColumn < 1
+  ) {
+
+    throw new Error(
+      "Sheet has no columns: " +
+      sheet.getName()
+    );
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getValues()[0];
+
+
+  for (
+    let index = 0;
+    index < headers.length;
+    index++
+  ) {
+
+    if (
+      mairixcleanText(
+        headers[index]
+      ) === normalizedHeader
+    ) {
+
+      return index + 1;
+
+    }
+
+  }
+
+
+  throw new Error(
+    "Missing column [" +
+    normalizedHeader +
+    "] in sheet [" +
+    sheet.getName() +
+    "]"
+  );
+
+}
+
+/************************************************
+ * MAIRIX SECURITY CONTRACT COMPATIBILITY
+ *
+ * PURPOSE:
+ * Provide the security contracts expected by
+ * MAIRIX modules and the Central Test Suite.
+ *
+ * IMPORTANT:
+ * These functions DO NOT grant permissions
+ * automatically.
+ *
+ * The actual permission engine remains the
+ * authority whenever available.
+ ************************************************/
+
+
+/************************************************
+ * REQUIRE ACTIVE USER
+ *
+ * Returns the authenticated MAIRIX user.
+ *
+ * SECURITY RULE:
+ * Never invent an active user.
+ * Never silently grant access.
+ ************************************************/
+
+function requireActiveUser() {
+
+  /**********************************************
+   * Preferred MAIRIX authenticated context
+   **********************************************/
+
+  if (
+    typeof mairixApiContext === "function"
+  ) {
+
+    const context =
+      mairixApiContext();
+
+
+    if (
+      context &&
+      context.userId
+    ) {
+
+      return context;
+
+    }
+
+  }
+
+
+  /**********************************************
+   * Fallback:
+   * Resolve the Apps Script active user email.
+   **********************************************/
+
+  const email =
+    String(
+      Session
+        .getActiveUser()
+        .getEmail() ||
+      ""
+    )
+    .trim();
+
+
+  if (!email) {
+
+    throw new Error(
+      "Unable to identify the active MAIRIX user."
+    );
+
+  }
+
+
+  /**********************************************
+   * If a MAIRIX user lookup engine exists,
+   * use it.
+   **********************************************/
+
+  if (
+    typeof mairixGetUserByEmail ===
+    "function"
+  ) {
+
+    const user =
+      mairixGetUserByEmail(
+        email
+      );
+
+
+    if (
+      !user
+    ) {
+
+      throw new Error(
+        "Active MAIRIX user was not found."
+      );
+
+    }
+
+
+    if (
+      user.active === false ||
+      user.Active === false
+    ) {
+
+      throw new Error(
+        "Active MAIRIX user is inactive."
+      );
+
+    }
+
+
+    return user;
+
+  }
+
+
+  /**********************************************
+   * Contract-level fallback.
+   *
+   * This identifies the authenticated account
+   * only. It does NOT grant any permission.
+   **********************************************/
+
+  return {
+
+    email:
+      email,
+
+    active:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * REQUIRE REPORT PERMISSION
+ *
+ * Delegates authorization to the actual
+ * MAIRIX permission engine.
+ ************************************************/
+
+function requireReportPermission(
+  permissionCode,
+  action
+) {
+
+  const user =
+    requireActiveUser();
+
+
+  const requiredAction =
+    action ||
+    "View";
+
+
+  /**********************************************
+   * Preferred permission guard
+   **********************************************/
+
+  if (
+    typeof mairixApiRequirePermission ===
+    "function"
+  ) {
+
+    return mairixApiRequirePermission(
+      permissionCode,
+      requiredAction
+    );
+
+  }
+
+
+  /**********************************************
+   * Permission engine
+   **********************************************/
+
+  if (
+    typeof mairixHasPermission ===
+    "function"
+  ) {
+
+    const userId =
+      user.userId ||
+      user["User ID"] ||
+      user.id;
+
+
+    if (
+      !userId
+    ) {
+
+      throw new Error(
+        "Cannot resolve MAIRIX User ID for permission validation."
+      );
+
+    }
+
+
+    const allowed =
+      mairixHasPermission(
+        userId,
+        permissionCode,
+        requiredAction
+      );
+
+
+    if (
+      allowed !== true
+    ) {
+
+      throw new Error(
+        "Permission denied: " +
+        permissionCode +
+        " / " +
+        requiredAction
+      );
+
+    }
+
+
+    return {
+
+      success:
+        true,
+
+      user:
+        user,
+
+      permission:
+        permissionCode,
+
+      action:
+        requiredAction
+
+    };
+
+  }
+
+
+  throw new Error(
+    "MAIRIX permission engine is unavailable."
+  );
+
+}
+
+
+/************************************************
+ * GENERIC PERMISSION CONTRACT
+ *
+ * Used by modules that require a centralized
+ * permission gateway.
+ ************************************************/
+
+function requireERPPermission(
+  permissionCode,
+  action
+) {
+
+  return requireReportPermission(
+    permissionCode,
+    action
+  );
+
+}
+
+/**
+ * MAIRIX ERP
+ * Central Boolean Normalizer
+ *
+ * Converts spreadsheet/config values into a reliable boolean.
+ */
+function isTrueValue(value) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+
+  if (typeof value === 'number') {
+    return value === 1;
+  }
+
+  var normalized = String(value)
+    .trim()
+    .toLowerCase();
+
+  return [
+    'true',
+    '1',
+    'yes',
+    'y',
+    'on',
+    'active',
+    'enabled'
+  ].indexOf(normalized) !== -1;
+}

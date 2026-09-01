@@ -1,0 +1,56 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 63-MAIRIX_CustomerCollectionIntegration.gs
+ *
+ * Customer Collection integration.
+ ************************************************/
+
+function mairixE2ECustomerCollectionCreate(data) {
+
+  if (typeof apiCreateCollection !== "function") {
+    throw new Error("apiCreateCollection() is not available.");
+  }
+
+  if (!data) {
+    throw new Error("Collection data is required.");
+  }
+
+  var request = Object.assign({}, data);
+
+  delete request.userId;
+  delete request.serverUserId;
+  delete request.createdBy;
+  delete request.updatedBy;
+
+  var result = apiCreateCollection(request);
+
+  if (!result || result.success !== true) {
+    throw new Error(
+      "Collection integration failed: " +
+      JSON.stringify(result && result.error ? result.error : result)
+    );
+  }
+
+  return result;
+}
+
+function testMairixCollectionIntegrationContract() {
+
+  [
+    "apiCreateCollection",
+    "createCollection",
+    "mairixApiRequirePermission"
+  ].forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Missing Collection function: " + name);
+    }
+  });
+
+  Logger.log("63 CUSTOMER COLLECTION INTEGRATION: PASS");
+
+  return {
+    success: true,
+    module: "COLLECTION",
+    expectedEffect: "CUSTOMER_BALANCE_DOWN_CASH_UP"
+  };
+}

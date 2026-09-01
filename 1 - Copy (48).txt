@@ -1,0 +1,55 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 75-MAIRIX_OnlineBookingIntegration.gs
+ *
+ * Online Booking integration contract.
+ *
+ * Booking must reserve/hold stock through the authoritative
+ * inventory layer and never maintain a parallel quantity.
+ ************************************************/
+
+const MAIRIX_BOOKING_STATUS = {
+  HOLD: "HOLD",
+  CONFIRMED: "CONFIRMED",
+  EXPIRED: "EXPIRED",
+  CANCELLED: "CANCELLED",
+  CONVERTED: "CONVERTED"
+};
+
+function mairixBuildBookingRequest(data) {
+  data = data || {};
+
+  if (!data.items || !Array.isArray(data.items) || data.items.length === 0) {
+    throw new Error("Booking requires items.");
+  }
+
+  var request = Object.assign({}, data);
+
+  delete request.userId;
+  delete request.serverUserId;
+  delete request.createdBy;
+  delete request.updatedBy;
+
+  request.status = MAIRIX_BOOKING_STATUS.HOLD;
+
+  return request;
+}
+
+function testMairixOnlineBookingContract() {
+  var request = mairixBuildBookingRequest({
+    bookingId: "BK-TEST",
+    items: [{ itemCode: "ITEM-1", quantity: 1 }],
+    userId: "FORGED"
+  });
+
+  if (request.userId !== undefined) {
+    throw new Error("Booking trusted client userId.");
+  }
+
+  if (request.status !== "HOLD") {
+    throw new Error("Booking initial status failed.");
+  }
+
+  Logger.log("75 ONLINE BOOKING CONTRACT: PASS");
+  return { success: true, stockAuthority: "INVENTORY_CORE" };
+}

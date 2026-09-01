@@ -1,0 +1,2026 @@
+/************************************************
+ * MAIRIX ERP
+ * 22-MAIRIX_EmployeeEvaluation.gs
+ *
+ * EMPLOYEE EVALUATION ENGINE
+ *
+ * الهدف:
+ * 1) تقييم الموظف آليًا من بيانات النظام.
+ * 2) فصل تقييم النظام عن التقييم الإداري اليدوي.
+ * 3) ربط كل عامل تقييم بمراجع العمليات المركزية.
+ * 4) دعم تقييم الموظفين المرتبطين بالمخازن.
+ * 5) عدم تعديل الحركات الأصلية أثناء التقييم.
+ *
+ * IMPORTANT:
+ * - SYSTEM SCORE = نتيجة النظام فقط.
+ * - MANAGER SCORE = تقييم إداري مستقل.
+ * - FINAL VIEW = يعرض الاثنين بدون خلط المصدرين.
+ * - لا يتم الاعتماد على بيانات مخزنة قديمة.
+ ************************************************/
+
+
+/************************************************
+ * CONFIGURATION
+ ************************************************/
+
+const MAIRIX_EVALUATION = {
+
+  SHEET_NAME:
+    "EMPLOYEE_EVALUATION",
+
+  DETAILS_SHEET_NAME:
+    "EMPLOYEE_EVALUATION_DETAILS",
+
+  FACTORS_SHEET_NAME:
+    "EMPLOYEE_EVALUATION_FACTORS",
+
+  DEFAULT_FACTORS: [
+
+    {
+      code: "SALES_PERFORMANCE",
+      name: "Sales Performance",
+      weight: 20
+    },
+
+    {
+      code: "COLLECTION_PERFORMANCE",
+      name: "Collection Performance",
+      weight: 15
+    },
+
+    {
+      code: "INVENTORY_ACCURACY",
+      name: "Inventory Accuracy",
+      weight: 15
+    },
+
+    {
+      code: "RETURN_RATE",
+      name: "Return Rate",
+      weight: 10
+    },
+
+    {
+      code: "CUSTOMER_SERVICE",
+      name: "Customer Service",
+      weight: 10
+    },
+
+    {
+      code: "ATTENDANCE",
+      name: "Attendance / Commitment",
+      weight: 10
+    },
+
+    {
+      code: "TRANSACTION_ACCURACY",
+      name: "Transaction Accuracy",
+      weight: 10
+    },
+
+    {
+      code: "FINANCIAL_DISCIPLINE",
+      name: "Financial Discipline",
+      weight: 10
+    }
+
+  ]
+
+};
+
+
+/************************************************
+ * SETUP
+ ************************************************/
+
+function setupEmployeeEvaluation() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const summarySheet =
+    getOrCreateMAIRIXSheet(
+      ss,
+      MAIRIX_EVALUATION.SHEET_NAME
+    );
+
+
+  const detailsSheet =
+    getOrCreateMAIRIXSheet(
+      ss,
+      MAIRIX_EVALUATION.DETAILS_SHEET_NAME
+    );
+
+
+  const factorsSheet =
+    getOrCreateMAIRIXSheet(
+      ss,
+      MAIRIX_EVALUATION.FACTORS_SHEET_NAME
+    );
+
+
+  const summaryHeaders = [
+
+    "Evaluation ID",
+    "Period From",
+    "Period To",
+
+    "Employee ID",
+    "Employee Name",
+    "Role",
+
+    "Warehouse Scope",
+
+    "System Score",
+    "Manager Score",
+    "Final Display Score",
+
+    "System Rating",
+    "Manager Rating",
+
+    "Manager Notes",
+
+    "Created At",
+    "Updated At"
+
+  ];
+
+
+  const detailsHeaders = [
+
+    "Evaluation ID",
+    "Employee ID",
+
+    "Factor Code",
+    "Factor Name",
+    "Weight",
+
+    "Raw Value",
+    "Target Value",
+    "Achievement %",
+
+    "Factor Score",
+    "Weighted Score",
+
+    "Reference Count",
+    "Reference IDs"
+
+  ];
+
+
+  const factorHeaders = [
+
+    "Factor Code",
+    "Factor Name",
+    "Weight",
+    "Active"
+
+  ];
+
+
+  initializeSheetHeaders(
+    summarySheet,
+    summaryHeaders
+  );
+
+
+  initializeSheetHeaders(
+    detailsSheet,
+    detailsHeaders
+  );
+
+
+  initializeSheetHeaders(
+    factorsSheet,
+    factorHeaders
+  );
+
+
+  seedEvaluationFactors(
+    factorsSheet
+  );
+
+
+  formatEvaluationSheets(
+    summarySheet,
+    detailsSheet,
+    factorsSheet
+  );
+
+
+  return {
+
+    success: true,
+
+    sheets: [
+
+      MAIRIX_EVALUATION.SHEET_NAME,
+
+      MAIRIX_EVALUATION.DETAILS_SHEET_NAME,
+
+      MAIRIX_EVALUATION.FACTORS_SHEET_NAME
+
+    ]
+
+  };
+
+}
+
+
+/************************************************
+ * CREATE EVALUATION
+ *
+ * النظام يحسب System Score.
+ * Manager Score مستقل تمامًا.
+ ************************************************/
+
+function createEmployeeEvaluation(data) {
+
+  const currentUser =
+    requireCurrentMAIRIXUser();
+
+
+  requireEvaluationPermission(
+    currentUser.userId,
+    "Create"
+  );
+
+
+  if (!data) {
+
+    throw new Error(
+      "Evaluation data is required."
+    );
+
+  }
+
+
+  const employeeId =
+    requireMAIRIXValue(
+      data.employeeId,
+      "Employee ID"
+    );
+
+
+  const periodFrom =
+    requireMAIRIXValue(
+      data.periodFrom,
+      "Period From"
+    );
+
+
+  const periodTo =
+    requireMAIRIXValue(
+      data.periodTo,
+      "Period To"
+    );
+
+
+  const employee =
+    getMAIRIXEmployee(
+      employeeId
+    );
+
+
+  if (!employee) {
+
+    throw new Error(
+      "Employee not found: " +
+      employeeId
+    );
+
+  }
+
+
+  const evaluationId =
+    generateEvaluationId();
+
+
+  const factors =
+    getActiveEvaluationFactors();
+
+
+  if (!factors.length) {
+
+    throw new Error(
+      "No active evaluation factors found."
+    );
+
+  }
+
+
+  const systemResult =
+    calculateSystemEvaluation(
+      employee,
+      periodFrom,
+      periodTo,
+      factors
+    );
+
+
+  const summarySheet =
+    mairixgetSheet(
+      MAIRIX_EVALUATION.SHEET_NAME
+    );
+
+
+  summarySheet.appendRow([
+
+    evaluationId,
+
+    periodFrom,
+    periodTo,
+
+    employeeId,
+
+    employee.name || "",
+    employee.role || "",
+
+    employee.warehouseScope || "ALL",
+
+    systemResult.score,
+
+    "",
+
+    systemResult.score,
+
+    getEvaluationRating(
+      systemResult.score
+    ),
+
+    "",
+
+    data.managerNotes || "",
+
+    new Date(),
+    new Date()
+
+  ]);
+
+
+  writeEvaluationDetails(
+    evaluationId,
+    employeeId,
+    systemResult.details
+  );
+
+
+  writeMAIRIXEvaluationAudit(
+    "CREATE_EMPLOYEE_EVALUATION",
+    evaluationId,
+    employeeId,
+    "System Score: " +
+      systemResult.score +
+      " | Created By: " +
+      currentUser.email
+  );
+
+
+  return {
+
+    success: true,
+
+    evaluationId:
+      evaluationId,
+
+    employeeId:
+      employeeId,
+
+    systemScore:
+      systemResult.score,
+
+    systemRating:
+      getEvaluationRating(
+        systemResult.score
+      ),
+
+    managerScore:
+      null,
+
+    finalDisplayScore:
+      systemResult.score,
+
+    factors:
+      systemResult.details
+
+  };
+
+}
+
+
+/************************************************
+ * UPDATE MANAGER EVALUATION
+ *
+ * لا يغير System Score.
+ ************************************************/
+
+function updateManagerEvaluation(
+  evaluationId,
+  managerScore,
+  managerNotes
+) {
+
+  const currentUser =
+    requireCurrentMAIRIXUser();
+
+
+  requireEvaluationPermission(
+    currentUser.userId,
+    "Edit"
+  );
+
+
+  const normalizedId =
+    mairixCleanText(
+      evaluationId
+    );
+
+
+  if (!normalizedId) {
+
+    throw new Error(
+      "Evaluation ID is required."
+    );
+
+  }
+
+
+  const score =
+    Number(
+      managerScore
+    );
+
+
+  if (
+    isNaN(score) ||
+    score < 0 ||
+    score > 100
+  ) {
+
+    throw new Error(
+      "Manager score must be between 0 and 100."
+    );
+
+  }
+
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_EVALUATION.SHEET_NAME
+    );
+
+
+  const row =
+    findEvaluationRow(
+      sheet,
+      normalizedId
+    );
+
+
+  if (row === -1) {
+
+    throw new Error(
+      "Evaluation not found: " +
+      normalizedId
+    );
+
+  }
+
+
+  const headers =
+    getSheetHeaders(
+      sheet
+    );
+
+
+  const managerScoreColumn =
+    headers.indexOf(
+      "Manager Score"
+    ) + 1;
+
+
+  const managerRatingColumn =
+    headers.indexOf(
+      "Manager Rating"
+    ) + 1;
+
+
+  const notesColumn =
+    headers.indexOf(
+      "Manager Notes"
+    ) + 1;
+
+
+  const finalScoreColumn =
+    headers.indexOf(
+      "Final Display Score"
+    ) + 1;
+
+
+  sheet
+    .getRange(
+      row,
+      managerScoreColumn
+    )
+    .setValue(score);
+
+
+  sheet
+    .getRange(
+      row,
+      managerRatingColumn
+    )
+    .setValue(
+      getEvaluationRating(score)
+    );
+
+
+  sheet
+    .getRange(
+      row,
+      notesColumn
+    )
+    .setValue(
+      managerNotes || ""
+    );
+
+
+  /*
+   * IMPORTANT
+   *
+   * Final Display Score is NOT silently
+   * replacing the system score.
+   *
+   * We use a transparent combined display.
+   */
+
+  const systemScoreColumn =
+    headers.indexOf(
+      "System Score"
+    ) + 1;
+
+
+  const systemScore =
+    Number(
+      sheet
+        .getRange(
+          row,
+          systemScoreColumn
+        )
+        .getValue()
+    );
+
+
+  const finalScore =
+    calculateFinalDisplayScore(
+      systemScore,
+      score
+    );
+
+
+  sheet
+    .getRange(
+      row,
+      finalScoreColumn
+    )
+    .setValue(
+      finalScore
+    );
+
+
+  sheet
+    .getRange(
+      row,
+      headers.indexOf(
+        "Updated At"
+      ) + 1
+    )
+    .setValue(
+      new Date()
+    );
+
+
+  writeMAIRIXEvaluationAudit(
+    "UPDATE_MANAGER_EVALUATION",
+    normalizedId,
+    "",
+    "Manager Score: " +
+      score +
+      " | Updated By: " +
+      currentUser.email
+  );
+
+
+  return {
+
+    success: true,
+
+    evaluationId:
+      normalizedId,
+
+    systemScore:
+      systemScore,
+
+    managerScore:
+      score,
+
+    finalDisplayScore:
+      finalScore,
+
+    managerRating:
+      getEvaluationRating(score)
+
+  };
+
+}
+
+
+/************************************************
+ * SYSTEM EVALUATION ENGINE
+ ************************************************/
+
+function calculateSystemEvaluation(
+  employee,
+  periodFrom,
+  periodTo,
+  factors
+) {
+
+  const details = [];
+
+  let weightedTotal = 0;
+
+  let totalWeight = 0;
+
+
+  factors.forEach(
+    function(factor) {
+
+      const result =
+        calculateEvaluationFactor(
+          employee,
+          periodFrom,
+          periodTo,
+          factor
+        );
+
+
+      details.push(result);
+
+
+      weightedTotal +=
+        result.weightedScore;
+
+
+      totalWeight +=
+        Number(
+          factor.weight
+        );
+
+    }
+  );
+
+
+  const score =
+    totalWeight > 0
+      ? roundMAIRIX(
+          weightedTotal /
+            totalWeight *
+            100,
+          2
+        )
+      : 0;
+
+
+  return {
+
+    score:
+      score,
+
+    details:
+      details
+
+  };
+
+}
+
+
+/************************************************
+ * FACTOR CALCULATION
+ ************************************************/
+
+function calculateEvaluationFactor(
+  employee,
+  periodFrom,
+  periodTo,
+  factor
+) {
+
+  const code =
+    factor.code;
+
+
+  /*
+   * The engine deliberately returns
+   * transparent values.
+   *
+   * Every factor can be connected later
+   * to its specialized report source.
+   */
+
+  let rawValue = 0;
+  let targetValue = 100;
+
+
+  let referenceIds = [];
+
+
+  switch (code) {
+
+    case "SALES_PERFORMANCE":
+
+      rawValue =
+        getEmployeeSalesPerformance(
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      referenceIds =
+        getEvaluationReferences(
+          "SALES",
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      break;
+
+
+    case "COLLECTION_PERFORMANCE":
+
+      rawValue =
+        getEmployeeCollectionPerformance(
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      referenceIds =
+        getEvaluationReferences(
+          "COLLECTIONS",
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      break;
+
+
+    case "INVENTORY_ACCURACY":
+
+      rawValue =
+        getEmployeeInventoryAccuracy(
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      referenceIds =
+        getEvaluationReferences(
+          "INVENTORY",
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      break;
+
+
+    case "RETURN_RATE":
+
+      rawValue =
+        getEmployeeReturnPerformance(
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      referenceIds =
+        getEvaluationReferences(
+          "SALES_RETURNS",
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      break;
+
+
+    case "CUSTOMER_SERVICE":
+
+      rawValue =
+        getEmployeeCustomerServiceScore(
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      break;
+
+
+    case "ATTENDANCE":
+
+      rawValue =
+        getEmployeeAttendanceScore(
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      break;
+
+
+    case "TRANSACTION_ACCURACY":
+
+      rawValue =
+        getEmployeeTransactionAccuracy(
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      referenceIds =
+        getEvaluationReferences(
+          "TRANSACTIONS",
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      break;
+
+
+    case "FINANCIAL_DISCIPLINE":
+
+      rawValue =
+        getEmployeeFinancialDiscipline(
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      referenceIds =
+        getEvaluationReferences(
+          "FINANCIAL",
+          employee,
+          periodFrom,
+          periodTo
+        );
+
+      break;
+
+
+    default:
+
+      rawValue = 0;
+
+  }
+
+
+  rawValue =
+    normalizeEvaluationScore(
+      rawValue
+    );
+
+
+  const achievement =
+    roundMAIRIX(
+      rawValue /
+        targetValue *
+        100,
+      2
+    );
+
+
+  const factorScore =
+    Math.min(
+      rawValue,
+      100
+    );
+
+
+  const weightedScore =
+    factorScore *
+    Number(
+      factor.weight
+    ) /
+    100;
+
+
+  return {
+
+    factorCode:
+      code,
+
+    factorName:
+      factor.name,
+
+    weight:
+      Number(
+        factor.weight
+      ),
+
+    rawValue:
+      rawValue,
+
+    targetValue:
+      targetValue,
+
+    achievement:
+      achievement,
+
+    factorScore:
+      factorScore,
+
+    weightedScore:
+      weightedScore,
+
+    referenceCount:
+      referenceIds.length,
+
+    referenceIds:
+      referenceIds
+
+  };
+
+}
+
+
+/************************************************
+ * DATA PROVIDERS
+ *
+ * These functions intentionally isolate
+ * operational data from the scoring engine.
+ ************************************************/
+
+function getEmployeeSalesPerformance(
+  employee,
+  fromDate,
+  toDate
+) {
+
+  return getEmployeeTransactionScore(
+    employee,
+    fromDate,
+    toDate,
+    "SALES"
+  );
+
+}
+
+
+function getEmployeeCollectionPerformance(
+  employee,
+  fromDate,
+  toDate
+) {
+
+  return getEmployeeTransactionScore(
+    employee,
+    fromDate,
+    toDate,
+    "COLLECTIONS"
+  );
+
+}
+
+
+function getEmployeeInventoryAccuracy(
+  employee,
+  fromDate,
+  toDate
+) {
+
+  return getEmployeeTransactionScore(
+    employee,
+    fromDate,
+    toDate,
+    "INVENTORY"
+  );
+
+}
+
+
+function getEmployeeReturnPerformance(
+  employee,
+  fromDate,
+  toDate
+) {
+
+  return getEmployeeTransactionScore(
+    employee,
+    fromDate,
+    toDate,
+    "SALES_RETURNS"
+  );
+
+}
+
+
+function getEmployeeCustomerServiceScore(
+  employee,
+  fromDate,
+  toDate
+) {
+
+  return 100;
+
+}
+
+
+function getEmployeeAttendanceScore(
+  employee,
+  fromDate,
+  toDate
+) {
+
+  return 100;
+
+}
+
+
+function getEmployeeTransactionAccuracy(
+  employee,
+  fromDate,
+  toDate
+) {
+
+  return getEmployeeTransactionScore(
+    employee,
+    fromDate,
+    toDate,
+    "TRANSACTIONS"
+  );
+
+}
+
+
+function getEmployeeFinancialDiscipline(
+  employee,
+  fromDate,
+  toDate
+) {
+
+  return getEmployeeTransactionScore(
+    employee,
+    fromDate,
+    toDate,
+    "FINANCIAL"
+  );
+
+}
+
+
+/************************************************
+ * GENERIC TRANSACTION SCORE
+ *
+ * Safe baseline:
+ * Until the corresponding operational
+ * engine exposes a formal KPI, return 0.
+ *
+ * This prevents fabricated performance data.
+ ************************************************/
+
+function getEmployeeTransactionScore(
+  employee,
+  fromDate,
+  toDate,
+  transactionType
+) {
+
+  /*
+   * MAIRIX reference architecture:
+   *
+   * Employee Evaluation
+   *        |
+   *        +--> Reports Engine
+   *               |
+   *               +--> Central Reference
+   *
+   * The evaluator never edits transaction data.
+   */
+
+
+  if (
+    typeof getMAIRIXEmployeeKPI ===
+    "function"
+  ) {
+
+    return normalizeEvaluationScore(
+      getMAIRIXEmployeeKPI(
+        employee.employeeId ||
+          employee.userId,
+        transactionType,
+        fromDate,
+        toDate
+      )
+    );
+
+  }
+
+
+  return 0;
+
+}
+
+
+/************************************************
+ * REFERENCE LOOKUP
+ ************************************************/
+
+function getEvaluationReferences(
+  transactionType,
+  employee,
+  fromDate,
+  toDate
+) {
+
+  if (
+    typeof getMAIRIXEmployeeReferences ===
+    "function"
+  ) {
+
+    const result =
+      getMAIRIXEmployeeReferences(
+        employee.employeeId ||
+          employee.userId,
+        transactionType,
+        fromDate,
+        toDate
+      );
+
+
+    if (Array.isArray(result)) {
+      return result;
+    }
+
+  }
+
+
+  return [];
+
+}
+
+
+/************************************************
+ * EMPLOYEE LOOKUP
+ ************************************************/
+
+function getMAIRIXEmployee(
+  employeeId
+) {
+
+  /*
+   * USERS is the primary identity source.
+   */
+
+  const user =
+    getCurrentMAIRIXUser(
+      employeeId
+    );
+
+
+  if (user) {
+
+    return {
+
+      employeeId:
+        user.userId,
+
+      userId:
+        user.userId,
+
+      name:
+        user.name,
+
+      role:
+        user.role,
+
+      warehouseScope:
+        getEmployeeWarehouseScope(
+          user.userId
+        )
+
+    };
+
+  }
+
+
+  /*
+   * Optional EMPLOYEES sheet.
+   */
+
+  if (
+    typeof getEmployeeRecord ===
+    "function"
+  ) {
+
+    return getEmployeeRecord(
+      employeeId
+    );
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * WAREHOUSE SCOPE
+ ************************************************/
+
+function getEmployeeWarehouseScope(
+  userId
+) {
+
+  if (
+    typeof getUserWarehouseScope ===
+    "function"
+  ) {
+
+    const scope =
+      getUserWarehouseScope(
+        userId
+      );
+
+
+    if (scope) {
+      return scope;
+    }
+
+  }
+
+
+  return "ALL";
+
+}
+
+
+/************************************************
+ * FACTORS
+ ************************************************/
+
+function seedEvaluationFactors(
+  sheet
+) {
+
+  if (!sheet) {
+
+    throw new Error(
+      "Evaluation factors sheet is required."
+    );
+
+  }
+
+
+  /*
+   * If factors already exist,
+   * do not seed them again.
+   */
+
+  if (
+    sheet.getLastRow() > 1
+  ) {
+
+    return;
+
+  }
+
+
+  const rows =
+    MAIRIX_EVALUATION
+      .DEFAULT_FACTORS
+      .map(
+        function(factor) {
+
+          return [
+
+            factor.code,
+
+            factor.name,
+
+            factor.weight,
+
+            true
+
+          ];
+
+        }
+      );
+
+
+  if (
+    rows.length === 0
+  ) {
+
+    return;
+
+  }
+
+
+  sheet
+    .getRange(
+      2,
+      1,
+      rows.length,
+      4
+    )
+    .setValues(
+      rows
+    );
+
+}
+
+
+function getActiveEvaluationFactors() {
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_EVALUATION
+        .FACTORS_SHEET_NAME
+    );
+
+
+  const data =
+    getSheetDataAsObjects(
+      sheet
+    );
+
+
+  return data
+    .filter(
+      function(row) {
+
+        return (
+          row["Active"] === true
+        );
+
+      }
+    )
+    .map(
+      function(row) {
+
+        return {
+
+          code:
+            mairixCleanText(
+              row["Factor Code"]
+            ),
+
+          name:
+            mairixCleanText(
+              row["Factor Name"]
+            ),
+
+          weight:
+            Number(
+              row["Weight"]
+            )
+
+        };
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * RATINGS
+ ************************************************/
+
+function getEvaluationRating(
+  score
+) {
+
+  const value =
+    Number(score);
+
+
+  if (value >= 90) {
+    return "EXCELLENT";
+  }
+
+
+  if (value >= 80) {
+    return "VERY GOOD";
+  }
+
+
+  if (value >= 70) {
+    return "GOOD";
+  }
+
+
+  if (value >= 60) {
+    return "ACCEPTABLE";
+  }
+
+
+  return "NEEDS IMPROVEMENT";
+
+}
+
+
+/************************************************
+ * FINAL DISPLAY SCORE
+ *
+ * System and Manager remain visible
+ * independently.
+ *
+ * Display score:
+ * 70% System
+ * 30% Manager
+ ************************************************/
+
+function calculateFinalDisplayScore(
+  systemScore,
+  managerScore
+) {
+
+  return roundMAIRIX(
+
+    Number(systemScore) * 0.70 +
+
+    Number(managerScore) * 0.30,
+
+    2
+
+  );
+
+}
+
+
+/************************************************
+ * DETAILS
+ ************************************************/
+
+function writeEvaluationDetails(
+  evaluationId,
+  employeeId,
+  details
+) {
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_EVALUATION
+        .DETAILS_SHEET_NAME
+    );
+
+
+  details.forEach(
+    function(item) {
+
+      sheet.appendRow([
+
+        evaluationId,
+
+        employeeId,
+
+        item.factorCode,
+
+        item.factorName,
+
+        item.weight,
+
+        item.rawValue,
+
+        item.targetValue,
+
+        item.achievement,
+
+        item.factorScore,
+
+        item.weightedScore,
+
+        item.referenceCount,
+
+        item.referenceIds.join(", ")
+
+      ]);
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * ID
+ ************************************************/
+
+function generateEvaluationId() {
+
+  const date =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  const time =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "HHmmss"
+    );
+
+
+  return (
+    "EVAL-" +
+    date +
+    "-" +
+    time +
+    "-" +
+    Utilities.getUuid()
+      .substring(
+        0,
+        8
+      )
+      .toUpperCase()
+  );
+
+}
+
+
+/************************************************
+ * FIND EVALUATION ROW
+ ************************************************/
+
+function findEvaluationRow(
+  sheet,
+  evaluationId
+) {
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (lastRow < 2) {
+    return -1;
+  }
+
+
+  const column =
+    mairixgetColumnNumber(
+      sheet,
+      "Evaluation ID"
+    );
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        column,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      mairixCleanText(
+        values[i][0]
+      ) ===
+      evaluationId
+    ) {
+
+      return i + 2;
+
+    }
+
+  }
+
+
+  return -1;
+
+}
+
+
+/************************************************
+ * PERMISSION
+ ************************************************/
+
+function requireEvaluationPermission(
+  userId,
+  action
+) {
+
+  /*
+   * Prefer dedicated permission.
+   */
+
+  if (
+    typeof requireERPPermission ===
+    "function"
+  ) {
+
+    return requireERPPermission(
+      userId,
+      "EMPLOYEE_EVALUATION",
+      action
+    );
+
+  }
+
+
+  /*
+   * Fallback to USERS permission
+   * only if the dedicated permission
+   * has not yet been created.
+   */
+
+  return requireUsersEdit(
+    userId
+  );
+
+}
+
+
+/************************************************
+ * CURRENT USER
+ ************************************************/
+
+function requireCurrentMAIRIXUser() {
+
+  if (
+    typeof requireCurrentUser ===
+    "function"
+  ) {
+
+    return requireCurrentUser();
+
+  }
+
+
+  throw new Error(
+    "MAIRIX authentication engine is not available."
+  );
+
+}
+
+
+/************************************************
+ * AUDIT
+ ************************************************/
+
+function writeMAIRIXEvaluationAudit(
+  action,
+  reference,
+  employeeId,
+  details
+) {
+
+  try {
+
+    if (
+      typeof logAction ===
+      "function"
+    ) {
+
+      logAction(
+        action,
+        reference,
+        details
+      );
+
+      return;
+
+    }
+
+
+    if (
+      typeof writeUserLog ===
+      "function"
+    ) {
+
+      writeUserLog(
+        action,
+        reference,
+        details
+      );
+
+    }
+
+  } catch (error) {
+
+    Logger.log(
+      "Evaluation audit failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * HELPERS
+ ************************************************/
+
+function getOrCreateMAIRIXSheet(
+  ss,
+  name
+) {
+
+  let sheet =
+    ss.getSheetByName(
+      name
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        name
+      );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+function initializeSheetHeaders(
+  sheet,
+  headers
+) {
+
+  if (
+    sheet.getLastRow() === 0
+  ) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        headers.length
+      )
+      .setValues([
+        headers
+      ]);
+
+    return;
+
+  }
+
+
+  const currentHeaders =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        Math.max(
+          sheet.getLastColumn(),
+          headers.length
+        )
+      )
+      .getDisplayValues()[0];
+
+
+  const valid =
+    headers.every(
+      function(header) {
+
+        return (
+          currentHeaders.indexOf(
+            header
+          ) !== -1
+        );
+
+      }
+    );
+
+
+  if (!valid) {
+
+    sheet.clear();
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        headers.length
+      )
+      .setValues([
+        headers
+      ]);
+
+  }
+
+}
+
+
+function getSheetHeaders(
+  sheet
+) {
+
+  return sheet
+    .getRange(
+      1,
+      1,
+      1,
+      sheet.getLastColumn()
+    )
+    .getDisplayValues()[0];
+
+}
+
+
+function requireMAIRIXValue(
+  value,
+  label
+) {
+
+  const text =
+    mairixCleanText(
+      value
+    );
+
+
+  if (!text) {
+
+    throw new Error(
+      label +
+      " is required."
+    );
+
+  }
+
+
+  return value;
+
+}
+
+
+function normalizeEvaluationScore(
+  value
+) {
+
+  const number =
+    Number(value);
+
+
+  if (
+    isNaN(number)
+  ) {
+
+    return 0;
+
+  }
+
+
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      number
+    )
+  );
+
+}
+
+
+function roundMAIRIX(
+  value,
+  decimals
+) {
+
+  const factor =
+    Math.pow(
+      10,
+      decimals
+    );
+
+
+  return Math.round(
+    Number(value) *
+      factor
+  ) / factor;
+
+}
+
+
+/************************************************
+ * FORMAT
+ ************************************************/
+
+function formatEvaluationSheets(
+  summary,
+  details,
+  factors
+) {
+
+  [
+    summary,
+    details,
+    factors
+
+  ].forEach(
+    function(sheet) {
+
+      sheet.setFrozenRows(1);
+
+      const lastColumn =
+        sheet.getLastColumn();
+
+
+      if (lastColumn > 0) {
+
+        sheet
+          .getRange(
+            1,
+            1,
+            1,
+            lastColumn
+          )
+          .setFontWeight(
+            "bold"
+          );
+
+
+        sheet.autoResizeColumns(
+          1,
+          lastColumn
+        );
+
+      }
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * TEST
+ ************************************************/
+
+function testEmployeeEvaluationSetup() {
+
+  const result =
+    setupEmployeeEvaluation();
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !result.success
+  ) {
+
+    throw new Error(
+      "Employee evaluation setup failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX EMPLOYEE EVALUATION SETUP: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

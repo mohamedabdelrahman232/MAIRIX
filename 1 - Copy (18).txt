@@ -1,0 +1,4836 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE 28 — MAIRIX FULL CYCLE CHECKS
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Full integration / end-to-end verification.
+ *
+ * THIS TEST:
+ *
+ * 1. Prepares required MAIRIX setup.
+ * 2. Registers the current test administrator if needed.
+ * 3. Creates isolated test master data.
+ * 4. Creates a dedicated test operator.
+ * 5. Creates test role + permissions.
+ * 6. Grants test warehouse access.
+ * 7. Creates test commission rule when possible.
+ * 8. Creates purchase.
+ * 9. Verifies inventory increase.
+ * 10. Creates vendor payment.
+ * 11. Creates purchase return.
+ * 12. Creates credit sale.
+ * 13. Verifies inventory decrease.
+ * 14. Verifies customer receivable.
+ * 15. Verifies loyalty.
+ * 16. Verifies commission.
+ * 17. Creates customer collection.
+ * 18. Creates sales return.
+ * 19. Creates general expense.
+ * 20. Creates item-loaded expense.
+ * 21. Runs operational reports.
+ * 22. Runs financial statements.
+ * 23. Verifies signed effects.
+ * 24. Verifies central references.
+ * 25. Verifies no destructive report behavior.
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * Test data is intentionally NOT deleted automatically.
+ *
+ * Use:
+ *
+ *   cleanupMAIRIXFullCycleTest()
+ *
+ * only after reviewing the generated test records.
+ *
+ ************************************************/
+
+
+/************************************************
+ * TEST CONFIGURATION
+ ************************************************/
+
+const MAIRIX_FULL_CYCLE_TEST = {
+
+  PREFIX:
+    "TST",
+
+  VERSION:
+    "1.0.0",
+
+  CUSTOMER_NAME:
+    "MAIRIX FULL CYCLE TEST CUSTOMER",
+
+  VENDOR_NAME:
+    "MAIRIX FULL CYCLE TEST VENDOR",
+
+  ITEM_NAME:
+    "MAIRIX FULL CYCLE TEST ITEM",
+
+  WAREHOUSE_NAME:
+    "MAIRIX FULL CYCLE TEST WAREHOUSE",
+
+  SALESMAN_NAME:
+    "MAIRIX FULL CYCLE TEST SALESMAN",
+
+  OPERATOR_NAME:
+    "MAIRIX FULL CYCLE TEST OPERATOR",
+
+  PURCHASE_QTY:
+    100,
+
+  PURCHASE_UNIT_COST:
+    100,
+
+  PURCHASE_RETURN_QTY:
+    5,
+
+  CREDIT_SALE_QTY:
+    10,
+
+  CREDIT_SALE_UNIT_PRICE:
+    150,
+
+  SALES_RETURN_QTY:
+    2,
+
+  COLLECTION_AMOUNT:
+    500,
+
+  VENDOR_PAYMENT_AMOUNT:
+    500,
+
+  GENERAL_EXPENSE_AMOUNT:
+    250,
+
+  ITEM_EXPENSE_AMOUNT:
+    100,
+
+  SALE_DISCOUNT:
+    5,
+
+  COMMISSION_RATE:
+    2
+
+};
+
+
+/************************************************
+ * MAIN ENTRY
+ ************************************************/
+
+function testMAIRIXFullCycle() {
+
+  const startedAt =
+    new Date();
+
+  const runId =
+    mairixFullCycleRunId();
+
+  const context = {
+
+    runId:
+      runId,
+
+    startedAt:
+      startedAt,
+
+    currentUser:
+      null,
+
+    testOperator:
+      null,
+
+    customer:
+      null,
+
+    vendor:
+      null,
+
+    item:
+      null,
+
+    warehouse:
+      null,
+
+    salesman:
+      null,
+
+    purchase:
+      null,
+
+    purchaseReturn:
+      null,
+
+    vendorPayment:
+      null,
+
+    sale:
+      null,
+
+    collection:
+      null,
+
+    salesReturn:
+      null,
+
+    expenses:
+      [],
+
+    results:
+      [],
+
+    errors:
+      []
+
+  };
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FULL CYCLE CHECKS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "Run ID: " +
+    runId
+  );
+
+
+  /**********************************************
+   * 1. ENVIRONMENT
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "01_ENVIRONMENT_SETUP",
+    function() {
+
+      mairixFullCycleSetupEnvironment();
+
+      return {
+        success:
+          true
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 2. CURRENT USER
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "02_CURRENT_USER_SECURITY",
+    function() {
+
+      context.currentUser =
+        mairixFullCycleEnsureCurrentUser();
+
+      return {
+        success:
+          true,
+
+        userId:
+          context.currentUser.userId,
+
+        email:
+          context.currentUser.email,
+
+        role:
+          context.currentUser.role
+
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 3. TEST MASTER DATA
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "03_TEST_MASTER_DATA",
+    function() {
+
+      const data =
+        mairixFullCycleCreateMasterData(
+          runId
+        );
+
+      context.customer =
+        data.customer;
+
+      context.vendor =
+        data.vendor;
+
+      context.item =
+        data.item;
+
+      context.warehouse =
+        data.warehouse;
+
+      context.salesman =
+        data.salesman;
+
+      return data;
+
+    }
+  );
+
+  Logger.log(
+    "FULL CYCLE CONTEXT BEFORE OPERATOR: " +
+    JSON.stringify(
+      mairixFullCycleSafeJson(context)
+    )
+  );
+
+  if (
+    !context ||
+    !context.runId ||
+    !context.warehouse ||
+    !context.warehouse.code
+  ) {
+
+    throw new Error(
+      "FULL CYCLE CONTEXT INVALID BEFORE OPERATOR"
+    );
+
+  }
+
+  /**********************************************
+   * 4. TEST OPERATOR + PERMISSIONS
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "04_TEST_OPERATOR_PERMISSIONS",
+    function() {
+
+      context.testOperator =
+        mairixFullCyclePrepareTestOperator(
+          context
+        );
+
+      return context.testOperator;
+
+    }
+  );
+
+
+  /**********************************************
+   * 5. COMMISSION SETUP
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "05_COMMISSION_SETUP",
+    function() {
+
+      return mairixFullCyclePrepareCommission(
+        context
+      );
+
+    }
+  );
+
+
+  /**********************************************
+   * 6. PURCHASE
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "06_PURCHASE_CREDIT",
+    function() {
+
+      const result =
+        createPurchase({
+
+          referenceNo:
+            "TST-PUR-" +
+            runId,
+
+          date:
+            new Date(),
+
+          supplierCode:
+            context.vendor.code,
+
+          warehouseCode:
+            context.warehouse.code,
+
+          paymentType:
+            "CREDIT",
+
+          dueDate:
+            new Date(
+              Date.now() +
+              30 *
+              24 *
+              60 *
+              60 *
+              1000
+            ),
+
+          currency:
+            "EGP",
+
+          discount:
+            0,
+
+          lines: [
+
+            {
+
+              itemCode:
+                context.item.code,
+
+              quantity:
+                MAIRIX_FULL_CYCLE_TEST.PURCHASE_QTY,
+
+              unitCost:
+                MAIRIX_FULL_CYCLE_TEST
+                  .PURCHASE_UNIT_COST,
+
+              discount:
+                0
+
+            }
+
+          ]
+
+        });
+
+
+      context.purchase =
+        result;
+
+
+      mairixFullCycleAssert(
+        result &&
+        result.success === true,
+        "Purchase creation failed."
+      );
+
+
+      return result;
+
+    }
+  );
+
+
+  /**********************************************
+   * 7. INVENTORY AFTER PURCHASE
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "07_INVENTORY_AFTER_PURCHASE",
+    function() {
+
+      context.stockAfterPurchase =
+        mairixFullCycleGetStock(
+          context.warehouse.code,
+          context.item.code
+        );
+
+      mairixFullCycleAssert(
+        context.stockAfterPurchase >=
+        MAIRIX_FULL_CYCLE_TEST.PURCHASE_QTY,
+        "Inventory did not increase after purchase."
+      );
+
+
+      return {
+        stock:
+          stock
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 8. VENDOR PAYMENT
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "08_VENDOR_PAYMENT",
+    function() {
+
+      const purchaseReference =
+        mairixFullCycleExtractPurchaseReference(
+          context.purchase
+        );
+
+
+      const result =
+        createVendorPayment({
+
+          vendorId:
+            context.vendor.code,
+
+          amount:
+            MAIRIX_FULL_CYCLE_TEST
+              .VENDOR_PAYMENT_AMOUNT,
+
+          paymentMethod:
+            "CASH",
+
+          paymentDate:
+            new Date(),
+
+          purchaseReference:
+            purchaseReference,
+
+          notes:
+            "MAIRIX FULL CYCLE TEST"
+
+        });
+
+
+      context.vendorPayment =
+        result;
+
+
+      mairixFullCycleAssert(
+        result &&
+        result.success === true,
+        "Vendor payment creation failed."
+      );
+
+
+      mairixFullCycleAssert(
+        Number(
+          result.cashEffect
+        ) ===
+        -MAIRIX_FULL_CYCLE_TEST
+          .VENDOR_PAYMENT_AMOUNT,
+        "Vendor payment cash effect must be negative."
+      );
+
+
+      mairixFullCycleAssert(
+        Number(
+          result.vendorPayableEffect
+        ) ===
+        -MAIRIX_FULL_CYCLE_TEST
+          .VENDOR_PAYMENT_AMOUNT,
+        "Vendor payment payable effect must be negative."
+      );
+
+
+      return result;
+
+    }
+  );
+
+
+  /**********************************************
+   * 9. PURCHASE RETURN
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "09_PURCHASE_RETURN",
+    function() {
+
+      const purchaseId =
+        mairixFullCycleExtractPurchaseId(
+          context.purchase
+        );
+
+
+      const result =
+        createPurchaseReturn({
+
+          originalPurchaseId:
+            purchaseId,
+
+          referenceNo:
+            "TST-PRT-" +
+            runId,
+
+          date:
+            new Date(),
+
+          lines: [
+
+            {
+
+              originalLineNo:
+                1,
+
+              itemCode:
+                context.item.code,
+
+              quantity:
+                MAIRIX_FULL_CYCLE_TEST
+                  .PURCHASE_RETURN_QTY
+
+            }
+
+          ]
+
+        });
+
+
+      context.purchaseReturn =
+        result;
+
+
+      mairixFullCycleAssert(
+        result &&
+        result.success === true,
+        "Purchase return creation failed."
+      );
+
+
+      return result;
+
+    }
+  );
+
+
+  /**********************************************
+   * 10. INVENTORY AFTER PURCHASE RETURN
+   **********************************************/
+
+  mairixFullCycleStep(
+        context,
+        "10_INVENTORY_AFTER_PURCHASE_RETURN",
+        function() {
+
+          const stockAfterReturn =
+      mairixFullCycleGetStock(
+        context.warehouse.code,
+        context.item.code
+      );
+
+    const expectedStock =
+      context.stockAfterPurchase -
+      MAIRIX_FULL_CYCLE_TEST.PURCHASE_RETURN_QTY;
+
+    mairixFullCycleAssert(
+      stockAfterReturn === expectedStock,
+      "Purchase return inventory effect is incorrect."
+    );
+
+    return {
+
+      stockBeforeReturn:
+        context.stockAfterPurchase,
+
+      stockAfterReturn:
+        stockAfterReturn,
+
+      inventoryEffect:
+        stockAfterReturn -
+        context.stockAfterPurchase
+
+    };
+
+  }
+  );
+
+
+  /**********************************************
+   * 11. CREDIT SALE
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "11_CREDIT_SALE",
+    function() {
+
+      const result =
+        createMairixSale({
+
+          customerCode:
+            context.customer.code,
+
+          salesmanCode:
+            context.salesman.code,
+
+          warehouseCode:
+            context.warehouse.code,
+
+          paymentMethod:
+            "CREDIT",
+
+          discountPercent:
+            MAIRIX_FULL_CYCLE_TEST
+              .SALE_DISCOUNT,
+
+          referenceNote:
+            "MAIRIX FULL CYCLE TEST",
+
+          items: [
+
+            {
+
+              itemCode:
+                context.item.code,
+
+              quantity:
+                MAIRIX_FULL_CYCLE_TEST
+                  .CREDIT_SALE_QTY,
+
+              unitPrice:
+                MAIRIX_FULL_CYCLE_TEST
+                  .CREDIT_SALE_UNIT_PRICE
+
+            }
+
+          ]
+
+        });
+
+
+      context.sale =
+        result;
+
+
+      mairixFullCycleAssert(
+        result &&
+        result.success === true,
+        "Credit sale creation failed."
+      );
+
+
+      mairixFullCycleAssert(
+        result.paymentMethod ===
+        "CREDIT",
+        "Sale payment method must be CREDIT."
+      );
+
+
+      mairixFullCycleAssert(
+        Number(
+          result.cashEffect
+        ) === 0,
+        "Credit sale must not increase cash."
+      );
+
+
+      mairixFullCycleAssert(
+        Number(
+          result.customerCreditEffect
+        ) > 0,
+        "Credit sale must increase customer receivable."
+      );
+
+
+      mairixFullCycleAssert(
+        Number(
+          result.discountPercent
+        ) ===
+        MAIRIX_FULL_CYCLE_TEST
+          .SALE_DISCOUNT,
+        "Sale discount was not applied."
+      );
+
+
+      return result;
+
+    }
+  );
+
+
+  /**********************************************
+   * 12. INVENTORY AFTER SALE
+   **********************************************/
+
+  mairixFullCycleStep(
+        context,
+        "12_INVENTORY_AFTER_SALE",
+        function() {
+
+          const stockAfterSale =
+      mairixFullCycleGetStock(
+        context.warehouse.code,
+        context.item.code
+      );
+
+    const expectedStock =
+      context.stockAfterPurchase -
+      MAIRIX_FULL_CYCLE_TEST.PURCHASE_RETURN_QTY -
+      MAIRIX_FULL_CYCLE_TEST.CREDIT_SALE_QTY;
+
+    mairixFullCycleAssert(
+      stockAfterSale === expectedStock,
+      "Sale inventory effect is incorrect."
+    );
+
+    return {
+
+      stockBeforeSale:
+        context.stockAfterPurchase -
+        MAIRIX_FULL_CYCLE_TEST.PURCHASE_RETURN_QTY,
+
+      stockAfterSale:
+        stockAfterSale,
+
+      inventoryEffect:
+        stockAfterSale -
+        (
+          context.stockAfterPurchase -
+          MAIRIX_FULL_CYCLE_TEST.PURCHASE_RETURN_QTY
+        )
+
+    };
+  }
+  );
+
+
+  /**********************************************
+   * 13. LOYALTY
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "13_LOYALTY",
+    function() {
+
+      const pointsAfter =
+        Number(
+          context.sale
+            .customer
+            .loyaltyPointsAfter ||
+          0
+        );
+
+
+      const pointsAdded =
+        Number(
+          context.sale
+            .customer
+            .loyaltyPointsAdded ||
+          0
+        );
+
+
+      mairixFullCycleAssert(
+        pointsAdded ===
+        MAIRIX_FULL_CYCLE_TEST
+          .CREDIT_SALE_QTY,
+        "Loyalty points must equal sold quantity."
+      );
+
+
+      mairixFullCycleAssert(
+        pointsAfter >= pointsAdded,
+        "Customer loyalty balance is invalid."
+      );
+
+
+      return {
+        pointsAdded:
+          pointsAdded,
+
+        pointsAfter:
+          pointsAfter
+
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 14. COMMISSION
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "14_COMMISSION",
+    function() {
+
+      const reference =
+        mairixFullCycleExtractSaleReference(
+          context.sale
+        );
+
+
+      const ledger =
+        mairixFullCycleReadByReference(
+          [
+            "COMMISSION_LEDGER",
+            "MAIRIX_COMMISSION_LEDGER",
+            "COMMISSIONS"
+          ],
+          reference
+        );
+
+
+      if (
+        ledger.length === 0
+      ) {
+
+        throw new Error(
+          "Commission ledger entry was not found for test sale: " +
+          reference
+        );
+
+      }
+
+
+      return {
+        reference:
+          reference,
+
+        rows:
+          ledger.length
+
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 15. CUSTOMER COLLECTION
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "15_CUSTOMER_COLLECTION",
+    function() {
+
+      const invoiceId =
+        mairixFullCycleExtractSaleReference(
+          context.sale
+        );
+
+
+      const result =
+        createMAIRIXCollection({
+
+          customerId:
+            context.customer.code,
+
+          invoiceId:
+            invoiceId,
+
+          warehouseId:
+            context.warehouse.code,
+
+          paymentMethod:
+            "CASH",
+
+          amount:
+            MAIRIX_FULL_CYCLE_TEST
+              .COLLECTION_AMOUNT,
+
+          notes:
+            "MAIRIX FULL CYCLE TEST"
+
+        });
+
+
+      context.collection =
+        result;
+
+
+      mairixFullCycleAssert(
+        result &&
+        result.success === true,
+        "Customer collection creation failed."
+      );
+
+
+      return result;
+
+    }
+  );
+
+
+  /**********************************************
+   * 16. SALES RETURN
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "16_SALES_RETURN",
+    function() {
+
+      const saleReference =
+        mairixFullCycleExtractSaleReference(
+          context.sale
+        );
+
+
+      const result =
+        createMairixSalesReturn({
+
+          originalSaleReference:
+            saleReference,
+
+          returnDate:
+            new Date(),
+
+          customerCode:
+            context.customer.code,
+
+          warehouseCode:
+            context.warehouse.code,
+
+          returnType:
+            "CREDIT",
+
+          items: [
+
+            {
+
+              originalSaleLine:
+                1,
+
+              itemCode:
+                context.item.code,
+
+              quantity:
+                MAIRIX_FULL_CYCLE_TEST
+                  .SALES_RETURN_QTY
+
+            }
+
+          ]
+
+        });
+
+
+      context.salesReturn =
+        result;
+
+
+      mairixFullCycleAssert(
+        result &&
+        result.success === true,
+        "Sales return creation failed."
+      );
+
+
+      mairixFullCycleAssert(
+        Number(
+          result.inventoryEffect
+        ) ===
+        MAIRIX.INVENTORY_EFFECT.SALES_RETURN,
+        "Sales return inventory effect must be +1."
+      );
+
+
+      mairixFullCycleAssert(
+        Number(
+          result.loyaltyPointsEffect
+        ) <= 0,
+        "Sales return loyalty effect must be negative."
+      );
+
+
+      return result;
+
+    }
+  );
+
+  /**********************************************
+   * 16B. FINAL INVENTORY
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "16B_FINAL_INVENTORY",
+    function() {
+
+      const stock =
+        mairixFullCycleGetStock(
+          context.warehouse.code,
+          context.item.code
+        );
+
+      const expected =
+        MAIRIX_FULL_CYCLE_TEST.PURCHASE_QTY -
+        MAIRIX_FULL_CYCLE_TEST.PURCHASE_RETURN_QTY -
+        MAIRIX_FULL_CYCLE_TEST.CREDIT_SALE_QTY +
+        MAIRIX_FULL_CYCLE_TEST.SALES_RETURN_QTY;
+
+      mairixFullCycleAssert(
+        stock === expected,
+        "Final inventory does not match the complete transaction cycle."
+      );
+
+      return {
+
+        stock:
+          stock,
+
+        expected:
+          expected,
+
+        netEffect:
+          stock -
+          (
+            MAIRIX_FULL_CYCLE_TEST.PURCHASE_QTY
+          )
+
+      };
+
+    }
+  );
+
+  /**********************************************
+   * 17. GENERAL EXPENSE
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "17_GENERAL_EXPENSE",
+    function() {
+
+      const result =
+        createExpense({
+
+          date:
+            new Date(),
+
+          description:
+            "MAIRIX FULL CYCLE TEST GENERAL EXPENSE",
+
+          amount:
+            MAIRIX_FULL_CYCLE_TEST
+              .GENERAL_EXPENSE_AMOUNT,
+
+          category:
+            "OTH",
+
+          loadingMethod:
+            "GENERAL",
+
+          paymentMethod:
+            "CASH",
+
+          financialStatementCode:
+            "ADMIN_EXPENSE",
+
+          financialAccountCode:
+            "TEST-EXPENSE",
+
+          salesmanId:
+            "",
+
+          salesmanName:
+            ""
+
+        });
+
+
+      context.expenses.push(
+        result
+      );
+
+
+      mairixFullCycleAssert(
+        result &&
+        result.success === true,
+        "General expense creation failed."
+      );
+
+
+      return result;
+
+    }
+  );
+
+
+  /**********************************************
+   * 18. ITEM EXPENSE
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "18_ITEM_EXPENSE",
+    function() {
+
+      const result =
+        createExpense({
+
+          date:
+            new Date(),
+
+          description:
+            "MAIRIX FULL CYCLE TEST ITEM EXPENSE",
+
+          amount:
+            MAIRIX_FULL_CYCLE_TEST
+              .ITEM_EXPENSE_AMOUNT,
+
+          category:
+            "SHP",
+
+          loadingMethod:
+            "ITEM",
+
+          itemId:
+            context.item.code,
+
+          paymentMethod:
+            "CASH",
+
+          financialAccountCode:
+            "TEST-SHIPPING"
+
+        });
+
+
+      context.expenses.push(
+        result
+      );
+
+
+      mairixFullCycleAssert(
+        result &&
+        result.success === true,
+        "Item expense creation failed."
+      );
+
+
+      return result;
+
+    }
+  );
+
+
+  /**********************************************
+   * 19. SIGN VERIFICATION
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "19_SIGNED_EFFECTS",
+    function() {
+
+      mairixFullCycleAssert(
+  MAIRIX.INVENTORY_EFFECT.SALE === -1,
+  "SALE inventory sign must be -1."
+    );
+
+    mairixFullCycleAssert(
+      MAIRIX.INVENTORY_EFFECT.SALES_RETURN === 1,
+      "SALES_RETURN inventory sign must be +1."
+    );
+
+    mairixFullCycleAssert(
+      MAIRIX.INVENTORY_EFFECT.PURCHASE === 1,
+      "PURCHASE inventory sign must be +1."
+    );
+
+    mairixFullCycleAssert(
+      MAIRIX.INVENTORY_EFFECT.PURCHASE_RETURN === -1,
+      "PURCHASE_RETURN inventory sign must be -1."
+    );
+
+    mairixFullCycleAssert(
+      MAIRIX.FINANCIAL_EFFECT.CASH.CUSTOMER_COLLECTION === 1,
+      "Customer collection cash sign must be +1."
+    );
+
+    mairixFullCycleAssert(
+      MAIRIX.FINANCIAL_EFFECT.CASH.VENDOR_PAYMENT === -1,
+      "Vendor payment cash sign must be -1."
+    );
+
+    mairixFullCycleAssert(
+      MAIRIX.FINANCIAL_EFFECT.COMMISSION_PAYABLE.COMMISSION_EARNED === 1,
+      "Commission earned sign must be +1."
+    );
+
+    mairixFullCycleAssert(
+      MAIRIX.FINANCIAL_EFFECT.COMMISSION_PAYABLE.COMMISSION_SETTLEMENT === -1,
+      "Commission settlement sign must be -1."
+    );
+
+
+      return {
+        success:
+          true
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 20. REPORTS
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "20_OPERATIONAL_REPORTS",
+    function() {
+
+      const start =
+        new Date(
+          Date.now() -
+          24 *
+          60 *
+          60 *
+          1000
+        );
+
+      const end =
+        new Date(
+          Date.now() +
+          24 *
+          60 *
+          60 *
+          1000
+        );
+
+
+      const report =
+        getMAIRIXInventoryMovementReport(
+          start,
+          end,
+          {
+            warehouseCode:
+              context.warehouse.code,
+
+            itemCode:
+              context.item.code,
+
+            postedOnly:
+              true
+
+          }
+        );
+
+
+      mairixFullCycleAssert(
+        report &&
+        Array.isArray(
+          report.rows
+        ),
+        "Inventory report did not return rows."
+      );
+
+
+      return {
+        rows:
+          report.rows.length,
+
+        quantityEffect:
+          report.totalQuantityEffect,
+
+        inventoryEffect:
+          report.totalInventoryEffect
+
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 21. INVENTORY REPORT BY ITEM
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "21_INVENTORY_REPORT_BY_ITEM",
+    function() {
+
+      const start =
+        new Date(
+          Date.now() -
+          24 *
+          60 *
+          60 *
+          1000
+        );
+
+      const end =
+        new Date(
+          Date.now() +
+          24 *
+          60 *
+          60 *
+          1000
+        );
+
+
+      const report =
+        getMAIRIXInventoryMovementByItem(
+          start,
+          end,
+          {
+            warehouseCode:
+              context.warehouse.code,
+
+            itemCode:
+              context.item.code,
+
+            postedOnly:
+              true
+
+          }
+        );
+
+
+      mairixFullCycleAssert(
+        report &&
+        Array.isArray(
+          report.rows
+        ),
+        "Inventory by item report did not return rows."
+      );
+
+
+      return {
+        rows:
+          report.rows.length
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 22. FINANCIAL STATEMENTS
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "22_FINANCIAL_STATEMENTS",
+    function() {
+
+      if (
+        typeof getMAIRIXIncomeStatement ===
+        "function"
+      ) {
+
+        const income =
+          getMAIRIXIncomeStatement(
+            new Date(
+              Date.now() -
+              24 *
+              60 *
+              60 *
+              1000
+            ),
+            new Date(
+              Date.now() +
+              24 *
+              60 *
+              60 *
+              1000
+            )
+          );
+
+
+        mairixFullCycleAssert(
+          income !== null &&
+          income !== undefined,
+          "Income Statement returned no result."
+        );
+
+      }
+
+
+      if (
+        typeof getMAIRIXBalanceSheet ===
+        "function"
+      ) {
+
+        const balance =
+          getMAIRIXBalanceSheet(
+            new Date(
+              Date.now() -
+              24 *
+              60 *
+              60 *
+              1000
+            ),
+            new Date(
+              Date.now() +
+              24 *
+              60 *
+              60 *
+              1000
+            )
+          );
+
+
+        mairixFullCycleAssert(
+          balance !== null &&
+          balance !== undefined,
+          "Balance Sheet returned no result."
+        );
+
+      }
+
+
+      return {
+        success:
+          true,
+
+        note:
+          "Available financial statement APIs were executed."
+
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 23. CENTRAL REFERENCES
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "23_CENTRAL_REFERENCES",
+    function() {
+
+      const checks = {
+
+        purchase:
+          mairixFullCycleExtractPurchaseReference(
+            context.purchase
+          ),
+
+        sale:
+          mairixFullCycleExtractSaleReference(
+            context.sale
+          ),
+
+        collection:
+          context.collection &&
+          (
+            context.collection.reference ||
+            context.collection.referenceNo ||
+            context.collection.collectionId
+          ),
+
+        vendorPayment:
+          context.vendorPayment &&
+          (
+            context.vendorPayment.reference ||
+            context.vendorPayment.paymentId
+          ),
+
+        salesReturn:
+          context.salesReturn &&
+          (
+            context.salesReturn.reference ||
+            context.salesReturn.returnReference
+          )
+
+      };
+
+
+      Object.keys(
+        checks
+      ).forEach(
+        function(key) {
+
+          if (
+            !checks[key]
+          ) {
+
+            throw new Error(
+              "Missing central reference for: " +
+              key
+            );
+
+          }
+
+        }
+      );
+
+
+      return checks;
+
+    }
+  );
+
+
+  /**********************************************
+   * 24. BOOLEAN / CHECKBOX PRINCIPLE
+   **********************************************/
+
+  mairixFullCycleStep(
+    context,
+    "24_BOOLEAN_CHECKBOX_PRINCIPLE",
+    function() {
+
+      const values = [
+        true,
+        false,
+        "TRUE",
+        "FALSE",
+        "YES",
+        "NO"
+      ];
+
+
+      values.forEach(
+        function(value) {
+
+          const result =
+            mairixFullCycleBoolean(
+              value
+            );
+
+
+          if (
+            typeof result !==
+            "boolean"
+          ) {
+
+            throw new Error(
+              "Boolean normalization failed for: " +
+              value
+            );
+
+          }
+
+        }
+      );
+
+
+      return {
+        success:
+          true,
+
+        rule:
+          "TRUE/FALSE and YES/NO are treated as boolean checkbox values."
+
+      };
+
+    }
+  );
+
+
+  /**********************************************
+   * 25. FINALIZE
+   **********************************************/
+
+  const finishedAt =
+    new Date();
+
+  const passed =
+    context.results.filter(
+      function(row) {
+        return row.status === "PASS";
+      }
+    ).length;
+
+  const failed =
+    context.results.filter(
+      function(row) {
+        return row.status === "FAIL";
+      }
+    ).length;
+
+  const skipped =
+    context.results.filter(
+      function(row) {
+        return row.status === "SKIP";
+      }
+    ).length;
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FULL CYCLE RESULT"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "Run ID: " +
+    runId
+  );
+
+  Logger.log(
+    "PASS: " +
+    passed
+  );
+
+  Logger.log(
+    "FAIL: " +
+    failed
+  );
+
+  Logger.log(
+    "SKIP: " +
+    skipped
+  );
+
+  Logger.log(
+    "Started: " +
+    startedAt
+  );
+
+  Logger.log(
+    "Finished: " +
+    finishedAt
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  context.finishedAt =
+    finishedAt;
+
+  context.summary = {
+
+    runId:
+      runId,
+
+    pass:
+      passed,
+
+    fail:
+      failed,
+
+    skip:
+      skipped,
+
+    success:
+      failed === 0
+
+  };
+
+
+  Logger.log(
+    JSON.stringify(
+      context.summary
+    )
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  if (
+    failed > 0
+  ) {
+
+    throw new Error(
+      "MAIRIX FULL CYCLE FAILED. " +
+      failed +
+      " check(s) failed. " +
+      "Review execution log."
+    );
+
+  }
+
+
+  return context;
+
+}
+
+
+/************************************************
+ * ENVIRONMENT SETUP
+ ************************************************/
+
+function mairixFullCycleSetupEnvironment() {
+
+  const setupFunctions = [
+
+    "setupMAIRIXUsersSheet",
+
+    "setupMAIRIXRolesPermissions",
+
+    "setupMAIRIXPurchases",
+
+    "setupMAIRIXPurchaseReturns",
+
+    "setupMairixSalesReturns",
+
+    "setupMAIRIXCollections",
+
+    "setupMAIRIXCommissions"
+
+  ];
+
+
+  setupFunctions.forEach(
+    function(name) {
+
+      if (
+        typeof this[name] ===
+        "function"
+      ) {
+
+        try {
+
+          this[name]();
+
+        } catch (error) {
+
+          Logger.log(
+            "Setup warning [" +
+            name +
+            "]: " +
+            error.message
+          );
+
+        }
+
+      }
+
+    }
+  );
+
+
+  mairixFullCycleEnsureSheet(
+    "SALES"
+  );
+
+  mairixFullCycleEnsureSheet(
+    "SALES_ITEMS"
+  );
+
+  mairixFullCycleEnsureSheet(
+    "CUSTOMERS"
+  );
+
+  mairixFullCycleEnsureSheet(
+    "VENDORS"
+  );
+
+  mairixFullCycleEnsureSheet(
+    "ITEMS"
+  );
+
+  mairixFullCycleEnsureSheet(
+    "WAREHOUSES"
+  );
+
+  mairixFullCycleEnsureSheet(
+    "EXPENSES"
+  );
+
+}
+
+
+/************************************************
+ * CURRENT USER
+ ************************************************/
+
+function mairixFullCycleEnsureCurrentUser() {
+
+  if (
+    typeof setupMAIRIXUsersSheet ===
+    "function"
+  ) {
+
+    setupMAIRIXUsersSheet();
+
+  }
+
+
+  const email =
+    Session
+      .getActiveUser()
+      .getEmail()
+      .trim()
+      .toLowerCase();
+
+
+  if (!email) {
+
+    throw new Error(
+      "Cannot identify current Google account."
+    );
+
+  }
+
+
+  let user =
+    mairixGetUserByEmail(
+      email
+    );
+
+
+  if (
+    user
+  ) {
+
+    if (
+      !user.active
+    ) {
+
+      mairixFullCycleActivateUserDirect(
+        user.userId
+      );
+
+    }
+
+    return mairixGetUserById(
+      user.userId
+    );
+
+  }
+
+
+  /*
+   * Bootstrap only.
+   *
+   * The application normally creates users
+   * through mairixCreateUser().
+   *
+   * We cannot call mairixCreateUser()
+   * before a current user exists.
+   *
+   * Therefore the first administrator is
+   * bootstrapped directly by the test.
+   */
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "USERS"
+      );
+
+
+  const userId =
+    mairixGenerateUserId();
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  mairixFullCycleSetHeader(
+    row,
+    headers,
+    "User ID",
+    userId
+  );
+
+  mairixFullCycleSetHeader(
+    row,
+    headers,
+    "Gmail",
+    email
+  );
+
+  mairixFullCycleSetHeader(
+    row,
+    headers,
+    "Name",
+    "MAIRIX TEST ADMIN"
+  );
+
+  mairixFullCycleSetHeader(
+    row,
+    headers,
+    "Role",
+    "ADMIN"
+  );
+
+  mairixFullCycleSetHeader(
+    row,
+    headers,
+    "Active",
+    true
+  );
+
+  mairixFullCycleSetHeader(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+  mairixFullCycleSetHeader(
+    row,
+    headers,
+    "Created By",
+    "MAIRIX FULL CYCLE TEST"
+  );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  return mairixGetUserById(
+    userId
+  );
+
+}
+
+
+/************************************************
+ * DIRECT TEST ACTIVATION
+ ************************************************/
+
+function mairixFullCycleActivateUserDirect(
+  userId
+) {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "USERS"
+      );
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const idIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+  const activeIndex =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  if (
+    idIndex === -1 ||
+    activeIndex === -1
+  ) {
+
+    throw new Error(
+      "USERS sheet is missing User ID or Active."
+    );
+
+  }
+
+
+  const rows =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        sheet.getLastColumn()
+      )
+      .getValues();
+
+
+  for (
+    let i = 0;
+    i < rows.length;
+    i++
+  ) {
+
+    if (
+      String(
+        rows[i][idIndex]
+      ).trim() ===
+      userId
+    ) {
+
+      sheet
+        .getRange(
+          i + 2,
+          activeIndex + 1
+        )
+        .insertCheckboxes()
+        .setValue(
+          true
+        );
+
+      return;
+
+    }
+
+  }
+
+}
+
+
+/************************************************
+ * CREATE MASTER DATA
+ ************************************************/
+
+function mairixFullCycleCreateMasterData(
+  runId
+) {
+
+  const customerCode =
+    "TST-CUS-" +
+    runId;
+
+  const vendorCode =
+    "TST-VND-" +
+    runId;
+
+  const itemCode =
+    "TST-ITM-" +
+    runId;
+
+  const warehouseCode =
+    "TST-WH-" +
+    runId;
+
+  const salesmanCode =
+    "TST-SLS-" +
+    runId;
+
+
+  const customer =
+    createMairixCustomer({
+
+      code:
+        customerCode,
+
+      name:
+        MAIRIX_FULL_CYCLE_TEST
+          .CUSTOMER_NAME,
+
+      phone:
+        "01000000000",
+
+      address:
+        "MAIRIX TEST",
+
+      status:
+        "ACTIVE"
+
+    });
+
+
+  const vendor =
+    createMairixVendor({
+
+      code:
+        vendorCode,
+
+      name:
+        MAIRIX_FULL_CYCLE_TEST
+          .VENDOR_NAME,
+
+      phone:
+        "01000000001",
+
+      address:
+        "MAIRIX TEST",
+
+      status:
+        "ACTIVE"
+
+    });
+
+
+  const item =
+    createMairixItem({
+
+      code:
+        itemCode,
+
+      name:
+        MAIRIX_FULL_CYCLE_TEST
+          .ITEM_NAME,
+
+      category:
+        "TEST",
+
+      unit:
+        "PCS",
+
+      barcode:
+        "TST-" +
+        runId,
+
+      status:
+        "ACTIVE"
+
+    });
+
+
+  const warehouse =
+    createMairixWarehouse({
+
+      code:
+        warehouseCode,
+
+      name:
+        MAIRIX_FULL_CYCLE_TEST
+          .WAREHOUSE_NAME,
+
+      description:
+        "MAIRIX FULL CYCLE TEST WAREHOUSE",
+
+      status:
+        "ACTIVE"
+
+    });
+
+
+  /*
+   * Current Sales Engine expects a salesman
+   * adapter.
+   *
+   * The test creates an employee record first.
+   * If a real salesman master engine exists,
+   * it will be used by the application.
+   */
+
+  let salesman =
+    null;
+
+
+  if (
+    typeof createMairixEmployee ===
+    "function"
+  ) {
+
+    salesman =
+      createMairixEmployee({
+
+        code:
+          salesmanCode,
+
+        name:
+          MAIRIX_FULL_CYCLE_TEST
+            .SALESMAN_NAME,
+
+        employeeType:
+          "SALESMAN",
+
+        phone:
+          "01000000002",
+
+        status:
+          "ACTIVE"
+
+      });
+
+  } else {
+
+    salesman = {
+
+      success:
+        false,
+
+      code:
+        salesmanCode,
+
+      name:
+        MAIRIX_FULL_CYCLE_TEST
+          .SALESMAN_NAME
+
+    };
+
+  }
+
+
+  return {
+
+    success:
+      true,
+
+    customer:
+      customer,
+
+    vendor:
+      vendor,
+
+    item:
+      item,
+
+    warehouse:
+      warehouse,
+
+    salesman:
+      salesman
+
+  };
+
+}
+
+
+/************************************************
+ * TEST OPERATOR / PERMISSIONS
+ ************************************************/
+
+function mairixFullCyclePrepareTestOperator(
+  context
+) {
+
+  Logger.log(
+    "OPERATOR CONTEXT TYPE: " +
+    typeof context
+  );
+
+  Logger.log(
+    "OPERATOR CONTEXT: " +
+    JSON.stringify(context)
+  );
+
+  if (
+    !context
+  ) {
+
+    throw new Error(
+      "MAIRIX FULL CYCLE: OPERATOR CONTEXT IS UNDEFINED"
+    );
+
+  }
+
+  if (
+    !context.runId
+  ) {
+
+    throw new Error(
+      "MAIRIX FULL CYCLE: OPERATOR CONTEXT HAS NO runId"
+    );
+
+  }
+
+  if (
+    !context.warehouse ||
+    !context.warehouse.code
+  ) {
+
+    throw new Error(
+      "MAIRIX FULL CYCLE: OPERATOR CONTEXT HAS NO warehouse.code"
+    );
+
+  }
+
+
+  const roleCode =
+    "TST_OPERATOR_" +
+    context.runId;
+
+
+  /*
+   * Create role.
+   */
+
+  if (
+    typeof mairixCreateRole ===
+    "function"
+  ) {
+
+    try {
+
+      mairixCreateRole(
+        roleCode,
+        MAIRIX_FULL_CYCLE_TEST
+          .OPERATOR_NAME,
+        "Full Cycle Test Operator",
+        false
+      );
+
+    } catch (error) {
+
+      Logger.log(
+        "Role creation note: " +
+        error.message
+      );
+
+    }
+
+  }
+
+
+  /*
+   * Create a test user directly because
+   * normal user creation requires an already
+   * authenticated MAIRIX user.
+   */
+
+  const email =
+    "mairix.fullcycle." +
+    context.runId +
+    "@test.local";
+
+
+  const userId =
+    "TST-USR-" +
+    context.runId;
+
+
+  const usersSheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "USERS"
+      );
+
+
+  const headers =
+    usersSheet
+      .getRange(
+        1,
+        1,
+        1,
+        usersSheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const existing =
+    mairixFullCycleFindRowByValue(
+      usersSheet,
+      "User ID",
+      userId
+    );
+
+
+  if (
+    !existing
+  ) {
+
+    const row =
+      new Array(
+        headers.length
+      ).fill("");
+
+
+    mairixFullCycleSetHeader(
+      row,
+      headers,
+      "User ID",
+      userId
+    );
+
+    mairixFullCycleSetHeader(
+      row,
+      headers,
+      "Gmail",
+      email
+    );
+
+    mairixFullCycleSetHeader(
+      row,
+      headers,
+      "Name",
+      MAIRIX_FULL_CYCLE_TEST
+        .OPERATOR_NAME
+    );
+
+    mairixFullCycleSetHeader(
+      row,
+      headers,
+      "Role",
+      roleCode
+    );
+
+    mairixFullCycleSetHeader(
+      row,
+      headers,
+      "Active",
+      true
+    );
+
+    mairixFullCycleSetHeader(
+      row,
+      headers,
+      "Created At",
+      new Date()
+    );
+
+    mairixFullCycleSetHeader(
+      row,
+      headers,
+      "Created By",
+      "MAIRIX FULL CYCLE TEST"
+    );
+
+
+    usersSheet.appendRow(
+      row
+    );
+
+  }
+
+
+  /*
+   * Make the test role inherit EVERY
+   * permission currently present in the
+   * permission catalog.
+   *
+   * This guarantees the test environment
+   * itself is not blocked by missing checkbox
+   * permission configuration.
+   */
+
+  const catalog =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "PERMISSION_CATALOG"
+      );
+
+
+  if (
+    catalog &&
+    typeof mairixSetRolePermission ===
+    "function"
+  ) {
+
+    const rows =
+      mairixFullCycleReadObjects(
+        catalog
+      );
+
+
+    rows.forEach(
+      function(row) {
+
+        const code =
+          row[
+            "Permission Code"
+          ] ||
+          row[
+            "Code"
+          ];
+
+
+        if (
+          code
+        ) {
+
+          try {
+
+            mairixSetRolePermission(
+              roleCode,
+              code,
+              {
+
+                View:
+                  true,
+
+                Create:
+                  true,
+
+                Edit:
+                  true,
+
+                Delete:
+                  true,
+
+                Export:
+                  true,
+
+                Active:
+                  true
+
+              }
+            );
+
+          } catch (error) {
+
+            Logger.log(
+              "Permission setup note [" +
+              code +
+              "]: " +
+              error.message
+            );
+
+          }
+
+        }
+
+      }
+    );
+
+  }
+
+
+  /*
+   * Generate current permissions.
+   */
+
+  if (
+    typeof mairixEnsureUserPermissions ===
+    "function"
+  ) {
+
+    try {
+
+      mairixEnsureUserPermissions(
+        userId
+      );
+
+    } catch (error) {
+
+      Logger.log(
+        "Ensure user permissions note: " +
+        error.message
+      );
+
+    }
+
+  }
+
+
+  /*
+   * Warehouse access.
+   */
+
+  if (
+    typeof mairixSetUserWarehouseAccess ===
+    "function"
+  ) {
+    
+      Logger.log(
+    "WAREHOUSE ACCESS DEBUG: " +
+    JSON.stringify({
+      userId: userId,
+      warehouse: context.warehouse
+    })
+  );
+
+    mairixSetUserWarehouseAccess(
+      userId,
+      context.warehouse.code,
+      {
+
+        View:
+          true,
+
+        Operate:
+          true,
+
+        Active:
+          true
+
+      }
+    );
+
+  }
+
+
+  return {
+
+    userId:
+      userId,
+
+    email:
+      email,
+
+    role:
+      roleCode,
+
+    active:
+      true,
+
+    warehouse:
+      context.warehouse.code
+
+  };
+
+}
+
+
+/************************************************
+ * COMMISSION PREPARATION
+ ************************************************/
+
+function mairixFullCyclePrepareCommission(
+  context
+) {
+
+  if (
+    typeof setupMAIRIXCommissions !==
+    "function"
+  ) {
+
+    return {
+
+      connected:
+        false,
+
+      skipped:
+        true,
+
+      reason:
+        "Commission setup function not available."
+
+    };
+
+  }
+
+
+  if (
+    typeof createCommissionRule !==
+    "function"
+  ) {
+
+    return {
+
+      connected:
+        false,
+
+      skipped:
+        true,
+
+      reason:
+        "Commission rule API not available."
+
+    };
+
+  }
+
+
+  /*
+   * Commission engine uses User ID.
+   */
+
+  const userId =
+    context.testOperator.userId;
+
+
+  const result =
+    createCommissionRule({
+
+      userId:
+        userId,
+
+      ruleType:
+        "RATE",
+
+      rate:
+        MAIRIX_FULL_CYCLE_TEST
+          .COMMISSION_RATE,
+
+      fixedAmount:
+        0,
+
+      basis:
+        "NET_SALE",
+
+      effectiveFrom:
+        new Date(),
+
+      active:
+        true,
+
+      notes:
+        "MAIRIX FULL CYCLE TEST"
+
+    });
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * STEP RUNNER
+ ************************************************/
+
+function mairixFullCycleStep(
+  context,
+  name,
+  callback
+) {
+
+  const started =
+    new Date();
+
+  try {
+
+    const result =
+      callback();
+
+    const finished =
+      new Date();
+
+    context.results.push({
+
+      name:
+        name,
+
+      status:
+        "PASS",
+
+      startedAt:
+        started,
+
+      finishedAt:
+        finished,
+
+      result:
+        mairixFullCycleSafeJson(
+          result
+        )
+
+    });
+
+    Logger.log(
+      "PASS | " +
+      name
+    );
+
+    return result;
+
+  } catch (error) {
+
+    const finished =
+      new Date();
+
+    context.results.push({
+
+      name:
+        name,
+
+      status:
+        "FAIL",
+
+      startedAt:
+        started,
+
+      finishedAt:
+        finished,
+
+      error:
+        error.message,
+
+      stack:
+        error.stack
+
+    });
+
+    context.errors.push({
+
+      name:
+        name,
+
+      message:
+        error.message
+
+    });
+
+    Logger.log(
+      "FAIL | " +
+      name +
+      " | " +
+      error.message
+    );
+
+    throw error;
+
+  }
+
+}
+
+
+/************************************************
+ * ASSERT
+ ************************************************/
+
+function mairixFullCycleAssert(
+  condition,
+  message
+) {
+
+  if (
+    !condition
+  ) {
+
+    throw new Error(
+      message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * STOCK READER
+ ************************************************/
+
+function mairixFullCycleGetStock(
+  warehouseCode,
+  itemCode
+) {
+
+  if (
+    typeof getWarehouseItemStock ===
+    "function"
+  ) {
+
+    return Number(
+      getWarehouseItemStock(
+        warehouseCode,
+        itemCode
+      ) ||
+      0
+    );
+
+  }
+
+
+  if (
+    typeof getMairixWarehouseStock ===
+    "function"
+  ) {
+
+    return Number(
+      getMairixWarehouseStock(
+        warehouseCode,
+        itemCode
+      ) ||
+      0
+    );
+
+  }
+
+
+  throw new Error(
+    "Inventory stock reader is not connected."
+  );
+
+}
+
+
+/************************************************
+ * EXTRACT PURCHASE REFERENCE
+ ************************************************/
+
+function mairixFullCycleExtractPurchaseReference(
+  result
+) {
+
+  if (!result) {
+
+    return "";
+
+  }
+
+
+  return (
+    result.referenceNo ||
+    result.reference ||
+    result.purchaseReference ||
+    result["Reference No"] ||
+    result["Purchase Reference"] ||
+    result.purchaseId ||
+    result.purchaseID ||
+    result["Purchase ID"] ||
+    ""
+  );
+
+}
+
+
+/************************************************
+ * EXTRACT PURCHASE ID
+ ************************************************/
+
+function mairixFullCycleExtractPurchaseId(
+  result
+) {
+
+  if (!result) {
+
+    return "";
+
+  }
+
+
+  return (
+    result.purchaseId ||
+    result.purchaseID ||
+    result["Purchase ID"] ||
+    result.id ||
+    result.referenceNo ||
+    result.reference ||
+    ""
+  );
+
+}
+
+
+/************************************************
+ * EXTRACT SALE REFERENCE
+ ************************************************/
+
+function mairixFullCycleExtractSaleReference(
+  result
+) {
+
+  if (!result) {
+
+    return "";
+
+  }
+
+
+  return (
+    result.referenceId ||
+    result.saleId ||
+    result.saleReference ||
+    result.reference ||
+    result["Sale Reference"] ||
+    result["Reference"] ||
+    ""
+  );
+
+}
+
+
+/************************************************
+ * READ BY REFERENCE
+ ************************************************/
+
+function mairixFullCycleReadByReference(
+  sheetNames,
+  reference
+) {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const output = [];
+
+
+  sheetNames.forEach(
+    function(name) {
+
+      const sheet =
+        ss.getSheetByName(
+          name
+        );
+
+
+      if (
+        !sheet
+      ) {
+
+        return;
+
+      }
+
+
+      const rows =
+        mairixFullCycleReadObjects(
+          sheet
+        );
+
+
+      rows.forEach(
+        function(row) {
+
+          const text =
+            JSON.stringify(
+              row
+            );
+
+
+          if (
+            text.indexOf(
+              reference
+            ) !== -1
+          ) {
+
+            output.push(
+              row
+            );
+
+          }
+
+        }
+      );
+
+    }
+  );
+
+
+  return output;
+
+}
+
+
+/************************************************
+ * READ SHEET OBJECTS
+ ************************************************/
+
+function mairixFullCycleReadObjects(
+  sheet
+) {
+
+  if (
+    !sheet ||
+    sheet.getLastRow() < 2
+  ) {
+
+    return [];
+
+  }
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const rows =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  return rows.map(
+    function(row) {
+
+      const object = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          object[
+            String(
+              header
+            ).trim()
+          ] =
+            row[index];
+
+        }
+      );
+
+
+      return object;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * FIND ROW BY VALUE
+ ************************************************/
+
+function mairixFullCycleFindRowByValue(
+  sheet,
+  header,
+  value
+) {
+
+  if (
+    !sheet ||
+    sheet.getLastRow() < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (
+    index === -1
+  ) {
+
+    return null;
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        index + 1,
+        sheet.getLastRow() - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      String(
+        values[i][0]
+      ).trim() ===
+      String(
+        value
+      ).trim()
+    ) {
+
+      return i + 2;
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * SET HEADER VALUE
+ ************************************************/
+
+function mairixFullCycleSetHeader(
+  row,
+  headers,
+  header,
+  value
+) {
+
+  const index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (
+    index !== -1
+  ) {
+
+    row[index] =
+      value;
+
+  }
+
+}
+
+
+/************************************************
+ * ENSURE SHEET
+ ************************************************/
+
+function mairixFullCycleEnsureSheet(
+  name
+) {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  let sheet =
+    ss.getSheetByName(
+      name
+    );
+
+
+  if (
+    !sheet
+  ) {
+
+    sheet =
+      ss.insertSheet(
+        name
+      );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * BOOLEAN NORMALIZER
+ *
+ * CENTRAL TEST PRINCIPLE:
+ *
+ * TRUE / FALSE
+ * YES / NO
+ * 1 / 0
+ *
+ * represent boolean checkbox values.
+ ************************************************/
+
+function mairixFullCycleBoolean(
+  value
+) {
+
+  if (
+    value === true
+  ) {
+
+    return true;
+
+  }
+
+
+  if (
+    value === false
+  ) {
+
+    return false;
+
+  }
+
+
+  const normalized =
+    String(
+      value
+    )
+      .trim()
+      .toUpperCase();
+
+
+  if (
+    normalized ===
+      "TRUE" ||
+    normalized ===
+      "YES" ||
+    normalized ===
+      "Y" ||
+    normalized ===
+      "1"
+  ) {
+
+    return true;
+
+  }
+
+
+  if (
+    normalized ===
+      "FALSE" ||
+    normalized ===
+      "NO" ||
+    normalized ===
+      "N" ||
+    normalized ===
+      "0"
+  ) {
+
+    return false;
+
+  }
+
+
+  throw new Error(
+    "Invalid boolean value: " +
+    value
+  );
+
+}
+
+
+/************************************************
+ * SAFE JSON
+ ************************************************/
+
+function mairixFullCycleSafeJson(
+  value
+) {
+
+  if (
+    value ===
+    undefined
+  ) {
+
+    return null;
+
+  }
+
+
+  try {
+
+    return JSON.parse(
+      JSON.stringify(
+        value
+      )
+    );
+
+  } catch (error) {
+
+    return String(
+      value
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * RUN ID
+ ************************************************/
+
+function mairixFullCycleRunId() {
+
+  const date =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd-HHmmss"
+    );
+
+
+  const random =
+    Math.floor(
+      Math.random() *
+      1000
+    )
+      .toString()
+      .padStart(
+        3,
+        "0"
+      );
+
+
+  return (
+    date +
+    "-" +
+    random
+  );
+
+}
+
+
+/************************************************
+ * CLEANUP
+ *
+ * IMPORTANT:
+ * This is intentionally manual.
+ *
+ * It only removes records that carry the
+ * selected TEST prefix.
+ *
+ * Default run:
+ *
+ *   cleanupMAIRIXFullCycleTest()
+ *
+ ************************************************/
+
+function cleanupMAIRIXFullCycleTest() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sheets = [
+
+    {
+      name:
+        "CUSTOMERS",
+
+      columns: [
+        "Customer Code"
+      ]
+
+    },
+
+    {
+      name:
+        "VENDORS",
+
+      columns: [
+        "Vendor Code"
+      ]
+
+    },
+
+    {
+      name:
+        "ITEMS",
+
+      columns: [
+        "Item Code"
+      ]
+
+    },
+
+    {
+      name:
+        "WAREHOUSES",
+
+      columns: [
+        "Warehouse Code"
+      ]
+
+    },
+
+    {
+      name:
+        "EMPLOYEES",
+
+      columns: [
+        "Employee Code"
+      ]
+
+    }
+
+  ];
+
+
+  let deleted =
+    0;
+
+
+  sheets.forEach(
+    function(config) {
+
+      const sheet =
+        ss.getSheetByName(
+          config.name
+        );
+
+
+      if (
+        !sheet ||
+        sheet.getLastRow() < 2
+      ) {
+
+        return;
+
+      }
+
+
+      const headers =
+        sheet
+          .getRange(
+            1,
+            1,
+            1,
+            sheet.getLastColumn()
+          )
+          .getDisplayValues()[0];
+
+
+      let keyIndex =
+        -1;
+
+
+      for (
+        let i = 0;
+        i < config.columns.length;
+        i++
+      ) {
+
+        const index =
+          headers.indexOf(
+            config.columns[i]
+          );
+
+
+        if (
+          index !== -1
+        ) {
+
+          keyIndex =
+            index;
+
+          break;
+
+        }
+
+      }
+
+
+      if (
+        keyIndex === -1
+      ) {
+
+        return;
+
+      }
+
+
+      const rows =
+        sheet
+          .getRange(
+            2,
+            1,
+            sheet.getLastRow() - 1,
+            sheet.getLastColumn()
+          )
+          .getValues();
+
+
+      for (
+        let i =
+          rows.length - 1;
+        i >= 0;
+        i--
+      ) {
+
+        const value =
+          String(
+            rows[i][keyIndex] ||
+            ""
+          );
+
+
+        if (
+          value.indexOf(
+            "TST-"
+          ) === 0
+        ) {
+
+          sheet.deleteRow(
+            i + 2
+          );
+
+          deleted++;
+
+        }
+
+      }
+
+    }
+  );
+
+
+  Logger.log(
+    "MAIRIX FULL CYCLE TEST CLEANUP"
+  );
+
+  Logger.log(
+    "Deleted master test rows: " +
+    deleted
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    deleted:
+      deleted
+
+  };
+
+}
+
+
+/************************************************
+ * QUICK STRUCTURAL CHECK
+ ************************************************/
+
+function testMAIRIXFullCycleStructure() {
+
+  const requiredFunctions = [
+
+    "createMairixCustomer",
+    "createMairixVendor",
+    "createMairixItem",
+    "createMairixWarehouse",
+
+    "createPurchase",
+    "createPurchaseReturn",
+
+    "createMairixSale",
+    "createMairixSalesReturn",
+
+    "createMAIRIXCollection",
+    "createVendorPayment",
+
+    "createExpense",
+
+    "getMAIRIXInventoryMovementReport",
+    "getMAIRIXInventoryMovementByItem"
+
+  ];
+
+
+  const missing = [];
+
+
+  requiredFunctions.forEach(
+    function(name) {
+
+      if (
+        typeof this[name] !==
+        "function"
+      ) {
+
+        missing.push(
+          name
+        );
+
+      }
+
+    }
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FULL CYCLE STRUCTURE CHECK"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  if (
+    missing.length
+  ) {
+
+    Logger.log(
+      "MISSING:"
+    );
+
+    missing.forEach(
+      function(name) {
+
+        Logger.log(
+          name
+        );
+
+      }
+    );
+
+
+    throw new Error(
+      "MAIRIX Full Cycle structure is incomplete. Missing " +
+      missing.length +
+      " required public function(s)."
+    );
+
+  }
+
+
+  Logger.log(
+    "STRUCTURE CHECK: PASS"
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    checked:
+      requiredFunctions.length
+
+  };
+
+}
+
+/************************************************
+ * MAIRIX FULL CYCLE
+ * REAL ROLLBACK VERIFICATION
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Verify application-level rollback by:
+ *
+ * 1. Creating dedicated temporary test sheets.
+ * 2. Taking a complete snapshot.
+ * 3. Applying multiple modifications.
+ * 4. Forcing an intentional failure.
+ * 5. Restoring the original snapshot.
+ * 6. Comparing the sheets before/after.
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * This is an application-level rollback test.
+ *
+ * Google Sheets does not provide a native
+ * multi-sheet database transaction.
+ *
+ * The rollback mechanism tested here is therefore
+ * snapshot + restore.
+ ************************************************/
+
+function testMAIRIXFullCycleRollback() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const runId =
+    "TST-RB-" +
+    mairixFullCycleRunId();
+
+
+  const sheetNames = [
+
+    "TST_RB_A_" + runId,
+
+    "TST_RB_B_" + runId,
+
+    "TST_RB_C_" + runId
+
+  ];
+
+
+  let snapshots =
+    {};
+
+  let rollbackExecuted =
+    false;
+
+  let intentionalFailure =
+    false;
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FULL CYCLE ROLLBACK TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "Rollback Run ID: " +
+    runId
+  );
+
+
+  try {
+
+    /********************************************
+     * 1. CREATE ISOLATED TEST DATA
+     ********************************************/
+
+    sheetNames.forEach(
+      function(name, index) {
+
+        const sheet =
+          ss.insertSheet(
+            name
+          );
+
+
+        sheet
+          .getRange(
+            1,
+            1,
+            3,
+            3
+          )
+          .setValues([
+
+            [
+              "Reference",
+              "Type",
+              "Amount"
+            ],
+
+            [
+              "ORIGINAL-" + index,
+              "ORIGINAL",
+              100 + index
+            ],
+
+            [
+              "KEEP-" + index,
+              "ORIGINAL",
+              200 + index
+            ]
+
+          ]);
+
+      }
+    );
+
+
+    Logger.log(
+      "ISOLATED TEST DATA: PASS"
+    );
+
+
+    /********************************************
+     * 2. CREATE COMPLETE SNAPSHOT
+     ********************************************/
+
+    snapshots =
+      mairixFullCycleCreateSheetSnapshots(
+        ss,
+        sheetNames
+      );
+
+
+    mairixFullCycleAssert(
+      Object.keys(
+        snapshots
+      ).length ===
+      sheetNames.length,
+      "Rollback snapshot was not created for all test sheets."
+    );
+
+
+    Logger.log(
+      "SNAPSHOT: PASS"
+    );
+
+
+    /********************************************
+     * 3. APPLY MULTI-SHEET MODIFICATIONS
+     ********************************************/
+
+    sheetNames.forEach(
+      function(name, index) {
+
+        const sheet =
+          ss.getSheetByName(
+            name
+          );
+
+
+        /*
+         * Modify an existing record.
+         */
+
+        sheet
+          .getRange(
+            2,
+            3
+          )
+          .setValue(
+            999999
+          );
+
+
+        /*
+         * Create a new record.
+         */
+
+        sheet
+          .getRange(
+            4,
+            1,
+            1,
+            3
+          )
+          .setValues([
+
+            [
+              "CREATED-" + index,
+              "MODIFIED",
+              5000 + index
+            ]
+
+          ]);
+
+      }
+    );
+
+
+    Logger.log(
+      "MULTI-SHEET MODIFICATION: APPLIED"
+    );
+
+
+    /********************************************
+     * 4. VERIFY MODIFICATION REALLY HAPPENED
+     ********************************************/
+
+    sheetNames.forEach(
+      function(name) {
+
+        const sheet =
+          ss.getSheetByName(
+            name
+          );
+
+
+        const modifiedValue =
+          sheet
+            .getRange(
+              2,
+              3
+            )
+            .getValue();
+
+
+        mairixFullCycleAssert(
+          Number(
+            modifiedValue
+          ) === 999999,
+          "Existing record modification was not applied."
+        );
+
+
+        const createdReference =
+          sheet
+            .getRange(
+              4,
+              1
+            )
+            .getValue();
+
+
+        mairixFullCycleAssert(
+          String(
+            createdReference
+          ).indexOf(
+            "CREATED-"
+          ) === 0,
+          "New record was not created."
+        );
+
+      }
+    );
+
+
+    Logger.log(
+      "MODIFICATION VERIFICATION: PASS"
+    );
+
+
+    /********************************************
+     * 5. FORCE INTENTIONAL FAILURE
+     ********************************************/
+
+    try {
+
+      throw new Error(
+        "MAIRIX INTENTIONAL ROLLBACK FAILURE"
+      );
+
+    } catch (error) {
+
+      intentionalFailure =
+        true;
+
+
+      Logger.log(
+        "INTENTIONAL FAILURE: PASS"
+      );
+
+      Logger.log(
+        "Failure message: " +
+        error.message
+      );
+
+
+      /******************************************
+       * 6. RESTORE SNAPSHOT
+       ******************************************/
+
+      mairixFullCycleRestoreSheetSnapshots(
+        ss,
+        snapshots
+      );
+
+
+      rollbackExecuted =
+        true;
+
+
+      Logger.log(
+        "ROLLBACK EXECUTION: PASS"
+      );
+
+    }
+
+
+    /********************************************
+     * 7. VERIFY COMPLETE RESTORATION
+     ********************************************/
+
+    const verification =
+      mairixFullCycleVerifySheetSnapshots(
+        ss,
+        snapshots
+      );
+
+
+    mairixFullCycleAssert(
+      verification &&
+      verification.success === true,
+      "Rollback verification failed."
+    );
+
+
+    /********************************************
+     * 8. VERIFY MODIFIED VALUES ARE GONE
+     ********************************************/
+
+    sheetNames.forEach(
+      function(name) {
+
+        const sheet =
+          ss.getSheetByName(
+            name
+          );
+
+
+        /*
+         * Original value must be restored.
+         */
+
+        const restoredValue =
+          sheet
+            .getRange(
+              2,
+              3
+            )
+            .getValue();
+
+
+        mairixFullCycleAssert(
+          Number(
+            restoredValue
+          ) !== 999999,
+          "Modified value still exists after rollback."
+        );
+
+
+        /*
+         * Created row must be removed.
+         */
+
+        const createdReference =
+          sheet
+            .getRange(
+              4,
+              1
+            )
+            .getValue();
+
+
+        mairixFullCycleAssert(
+          String(
+            createdReference
+          ).indexOf(
+            "CREATED-"
+          ) === -1,
+          "Created rollback record still exists."
+        );
+
+
+        /*
+         * Original values must exist.
+         */
+
+        const originalReference =
+          sheet
+            .getRange(
+              2,
+              1
+            )
+            .getValue();
+
+
+        mairixFullCycleAssert(
+          String(
+            originalReference
+          ).indexOf(
+            "ORIGINAL-"
+          ) === 0,
+          "Original record was not restored."
+        );
+
+      }
+    );
+
+
+    Logger.log(
+      "CELL-LEVEL ROLLBACK VERIFICATION: PASS"
+    );
+
+
+    /********************************************
+     * 9. FINAL STATE ASSERTIONS
+     ********************************************/
+
+    mairixFullCycleAssert(
+      intentionalFailure === true,
+      "Intentional failure was not generated."
+    );
+
+
+    mairixFullCycleAssert(
+      rollbackExecuted === true,
+      "Rollback was not executed."
+    );
+
+
+    mairixFullCycleAssert(
+      verification.verifiedSheets ===
+      sheetNames.length,
+      "Not all rollback sheets were verified."
+    );
+
+
+    Logger.log(
+      "=========================================="
+    );
+
+    Logger.log(
+      "ROLLBACK VERIFICATION: PASS"
+    );
+
+    Logger.log(
+      "=========================================="
+    );
+
+
+    Logger.log(
+      "Sheets verified: " +
+      verification.verifiedSheets
+    );
+
+
+    Logger.log(
+      "Intentional failure: " +
+      intentionalFailure
+    );
+
+
+    Logger.log(
+      "Rollback executed: " +
+      rollbackExecuted
+    );
+
+
+    return {
+
+      success:
+        true,
+
+      intentionalFailure:
+        intentionalFailure,
+
+      rollbackExecuted:
+        rollbackExecuted,
+
+      verifiedSheets:
+        verification.verifiedSheets,
+
+      runId:
+        runId
+
+    };
+
+  } finally {
+
+    /********************************************
+     * 10. REMOVE ONLY OUR TEMPORARY SHEETS
+     ********************************************/
+
+    sheetNames.forEach(
+      function(name) {
+
+        const sheet =
+          ss.getSheetByName(
+            name
+          );
+
+
+        if (
+          sheet
+        ) {
+
+          ss.deleteSheet(
+            sheet
+          );
+
+        }
+
+      }
+    );
+
+
+    Logger.log(
+      "Rollback test temporary data cleaned."
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * CREATE SHEET SNAPSHOTS
+ ************************************************/
+
+function mairixFullCycleCreateSheetSnapshots(
+  ss,
+  sheetNames
+) {
+
+  const snapshots = {};
+
+
+  sheetNames.forEach(
+    function(name) {
+
+      const sheet =
+        ss.getSheetByName(
+          name
+        );
+
+
+      if (
+        !sheet
+      ) {
+
+        throw new Error(
+          "Cannot snapshot missing sheet: " +
+          name
+        );
+
+      }
+
+
+      const lastRow =
+        Math.max(
+          sheet.getLastRow(),
+          1
+        );
+
+
+      const lastColumn =
+        Math.max(
+          sheet.getLastColumn(),
+          1
+        );
+
+
+      const range =
+        sheet.getRange(
+          1,
+          1,
+          lastRow,
+          lastColumn
+        );
+
+
+      snapshots[name] = {
+
+        rows:
+          lastRow,
+
+        columns:
+          lastColumn,
+
+        values:
+          range.getValues(),
+
+        formulas:
+          range.getFormulas(),
+
+        backgrounds:
+          range.getBackgrounds(),
+
+        numberFormats:
+          range.getNumberFormats()
+
+      };
+
+    }
+  );
+
+
+  return snapshots;
+
+}
+
+
+/************************************************
+ * RESTORE SHEET SNAPSHOTS
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * Restore values first.
+ *
+ * Then restore ONLY cells that originally
+ * contained formulas.
+ *
+ * We must NOT call setFormulas() over the
+ * entire range because empty formula strings
+ * would erase normal cell values.
+ ************************************************/
+
+function mairixFullCycleRestoreSheetSnapshots(
+  ss,
+  snapshots
+) {
+
+  Object.keys(
+    snapshots
+  ).forEach(
+    function(name) {
+
+      const snapshot =
+        snapshots[name];
+
+      const sheet =
+        ss.getSheetByName(
+          name
+        );
+
+
+      if (
+        !sheet
+      ) {
+
+        throw new Error(
+          "Cannot rollback missing sheet: " +
+          name
+        );
+
+      }
+
+
+      /********************************************
+       * 1. CLEAR CURRENT CONTENT
+       ********************************************/
+
+      const currentRows =
+        Math.max(
+          sheet.getMaxRows(),
+          snapshot.rows
+        );
+
+      const currentColumns =
+        Math.max(
+          sheet.getMaxColumns(),
+          snapshot.columns
+        );
+
+
+      sheet
+        .getRange(
+          1,
+          1,
+          currentRows,
+          currentColumns
+        )
+        .clearContent();
+
+
+      /********************************************
+       * 2. RESTORE ORIGINAL VALUES
+       ********************************************/
+
+      const targetRange =
+        sheet.getRange(
+          1,
+          1,
+          snapshot.rows,
+          snapshot.columns
+        );
+
+
+      targetRange.setValues(
+        snapshot.values
+      );
+
+
+      /********************************************
+       * 3. RESTORE ONLY REAL FORMULAS
+       *
+       * DO NOT use setFormulas() on the entire
+       * range because "" would erase ordinary
+       * values.
+       ********************************************/
+
+      for (
+        let r = 0;
+        r < snapshot.rows;
+        r++
+      ) {
+
+        for (
+          let c = 0;
+          c < snapshot.columns;
+          c++
+        ) {
+
+          const formula =
+            snapshot.formulas[r][c];
+
+
+          if (
+            formula !== null &&
+            formula !== undefined &&
+            String(formula).trim() !== ""
+          ) {
+
+            sheet
+              .getRange(
+                r + 1,
+                c + 1
+              )
+              .setFormula(
+                formula
+              );
+
+          }
+
+        }
+
+      }
+
+
+      /********************************************
+       * 4. RESTORE BACKGROUNDS
+       ********************************************/
+
+      targetRange.setBackgrounds(
+        snapshot.backgrounds
+      );
+
+
+      /********************************************
+       * 5. RESTORE NUMBER FORMATS
+       ********************************************/
+
+      targetRange.setNumberFormats(
+        snapshot.numberFormats
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * VERIFY SHEET SNAPSHOTS
+ ************************************************/
+
+function mairixFullCycleVerifySheetSnapshots(
+  ss,
+  snapshots
+) {
+
+  const differences = [];
+
+  let verifiedSheets =
+    0;
+
+
+  Object.keys(
+    snapshots
+  ).forEach(
+    function(name) {
+
+      const snapshot =
+        snapshots[name];
+
+
+      const sheet =
+        ss.getSheetByName(
+          name
+        );
+
+
+      if (
+        !sheet
+      ) {
+
+        differences.push(
+          "Missing sheet: " +
+          name
+        );
+
+        return;
+
+      }
+
+
+      const range =
+        sheet.getRange(
+          1,
+          1,
+          snapshot.rows,
+          snapshot.columns
+        );
+
+
+      const values =
+        range.getValues();
+
+
+      const formulas =
+        range.getFormulas();
+
+
+      for (
+        let r = 0;
+        r < snapshot.rows;
+        r++
+      ) {
+
+        for (
+          let c = 0;
+          c < snapshot.columns;
+          c++
+        ) {
+
+          const originalFormula =
+            snapshot.formulas[r][c];
+
+
+          const currentFormula =
+            formulas[r][c];
+
+
+          /*
+           * If the original cell contained a
+           * formula, verify the formula itself.
+           */
+
+          if (
+            originalFormula
+          ) {
+
+            if (
+              String(
+                originalFormula
+              ) !==
+              String(
+                currentFormula
+              )
+            ) {
+
+              differences.push(
+
+                name +
+                " | Row " +
+                (r + 1) +
+                " | Column " +
+                (c + 1) +
+                " | Formula Before: " +
+                originalFormula +
+                " | Formula After: " +
+                currentFormula
+
+              );
+
+            }
+
+            continue;
+
+          }
+
+
+          /*
+           * Otherwise verify the actual value.
+           */
+
+          const before =
+            mairixFullCycleNormalizeValue(
+              snapshot.values[r][c]
+            );
+
+
+          const after =
+            mairixFullCycleNormalizeValue(
+              values[r][c]
+            );
+
+
+          if (
+            before !== after
+          ) {
+
+            differences.push(
+
+              name +
+              " | Row " +
+              (r + 1) +
+              " | Column " +
+              (c + 1) +
+              " | Before: " +
+              before +
+              " | After: " +
+              after
+
+            );
+
+          }
+
+        }
+
+      }
+
+
+      verifiedSheets++;
+
+    }
+  );
+
+
+  if (
+    differences.length > 0
+  ) {
+
+    Logger.log(
+      "ROLLBACK DIFFERENCES:"
+    );
+
+
+    differences.forEach(
+      function(value) {
+
+        Logger.log(
+          value
+        );
+
+      }
+    );
+
+
+    return {
+
+      success:
+        false,
+
+      verifiedSheets:
+        verifiedSheets,
+
+      differences:
+        differences
+
+    };
+
+  }
+
+
+  return {
+
+    success:
+      true,
+
+    verifiedSheets:
+      verifiedSheets,
+
+    differences:
+      []
+
+  };
+
+}
+
+
+/************************************************
+ * NORMALIZE SNAPSHOT VALUE
+ ************************************************/
+
+function mairixFullCycleNormalizeValue(
+  value
+) {
+
+  if (
+    value instanceof Date
+  ) {
+
+    return value
+      .getTime()
+      .toString();
+
+  }
+
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(
+    value
+  );
+
+}

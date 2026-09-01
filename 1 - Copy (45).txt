@@ -1,0 +1,58 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 60-MAIRIX_SalesReturnIntegration.gs
+ *
+ * Sales Return integration facade.
+ *
+ * Existing apiCreateSalesReturn() remains authoritative.
+ ************************************************/
+
+function mairixE2ESalesReturnCreate(data) {
+
+  if (typeof apiCreateSalesReturn !== "function") {
+    throw new Error("apiCreateSalesReturn() is not available.");
+  }
+
+  if (!data) {
+    throw new Error("Sales return data is required.");
+  }
+
+  var request = Object.assign({}, data);
+
+  delete request.userId;
+  delete request.serverUserId;
+  delete request.createdBy;
+  delete request.updatedBy;
+
+  var result = apiCreateSalesReturn(request);
+
+  if (!result || result.success !== true) {
+    throw new Error(
+      "Sales return integration failed: " +
+      JSON.stringify(result && result.error ? result.error : result)
+    );
+  }
+
+  return result;
+}
+
+function testMairixSalesReturnIntegrationContract() {
+
+  [
+    "apiCreateSalesReturn",
+    "createSalesReturn",
+    "mairixApiRequirePermission"
+  ].forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Missing Sales Return function: " + name);
+    }
+  });
+
+  Logger.log("60 SALES RETURN INTEGRATION: PASS");
+
+  return {
+    success: true,
+    module: "SALES_RETURN",
+    status: "READY"
+  };
+}

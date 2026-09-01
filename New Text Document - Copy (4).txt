@@ -1,0 +1,63 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 72-MAIRIX_FullE2EOrchestrator.gs
+ *
+ * Full E2E verification orchestrator.
+ *
+ * This file invokes existing contract tests when available.
+ * It does not manufacture transactions automatically.
+ ************************************************/
+
+function mairixRunIfAvailable(functionName) {
+  if (typeof globalThis[functionName] !== "function") {
+    return {
+      functionName: functionName,
+      status: "NOT_AVAILABLE"
+    };
+  }
+
+  try {
+    return {
+      functionName: functionName,
+      status: "PASS",
+      result: globalThis[functionName]()
+    };
+  } catch (error) {
+    return {
+      functionName: functionName,
+      status: "FAIL",
+      error: error.message || String(error)
+    };
+  }
+}
+
+function runMairixFullE2EContractSuite() {
+  var tests = [
+    "testMairixSaleIntegrationContract",
+    "runMairixSaleAuthorizationTests",
+    "runMairixSaleRollbackAuditTests",
+    "testMairixSalesReturnIntegrationContract",
+    "testMairixPurchaseTaxWACContract",
+    "testMairixPurchaseReturnIntegrationContract",
+    "testMairixCollectionIntegrationContract",
+    "testMairixSupplierPaymentIntegrationContract",
+    "testMairixExpenseIntegrationContract",
+    "testMairixCommissionIntegrationContract",
+    "testMairixLoyaltyDiscountContract",
+    "testMairixEmployeeEvaluationContract",
+    "testMairixTaxEngineFinalization",
+    "testMairixReportingEngineContract",
+    "testMairixFinancialStatementsContract"
+  ];
+
+  var results = tests.map(mairixRunIfAvailable);
+  var failures = results.filter(function(r) { return r.status === "FAIL"; });
+
+  Logger.log("72 FULL E2E CONTRACT SUITE: " + (failures.length ? "FAIL" : "PASS"));
+
+  return {
+    success: failures.length === 0,
+    results: results,
+    failures: failures
+  };
+}

@@ -1,0 +1,4451 @@
+/************************************************
+ * MAIRIX ERP
+ * 27-MAIRIX_UI_API
+ *
+ * UI <-> SERVER API
+ *
+ * RESPONSIBILITIES:
+ *
+ * 1. Single server-side gateway for the UI
+ * 2. Never trust UI userId
+ * 3. Identify authenticated MAIRIX user server-side
+ * 4. Enforce permissions before every operation
+ * 5. Route requests to the correct engine
+ * 6. Return standardized responses
+ * 7. Keep UI independent from spreadsheet structure
+ * 8. Provide controlled server-side search
+ * 9. Provide controlled exact lookups
+ *
+ * IMPORTANT:
+ *
+ * UI MUST NOT:
+ *
+ * - write directly to sheets
+ * - calculate balances
+ * - calculate taxes
+ * - calculate inventory
+ * - calculate financial statements
+ * - decide permissions
+ * - create master-data records implicitly
+ *
+ * All business logic remains server-side.
+ ************************************************/
+
+
+/************************************************
+ * API VERSION
+ ************************************************/
+
+const MAIRIX_UI_API_VERSION = "1.1.0";
+
+
+/************************************************
+ * UI SEARCH LIMITS
+ ************************************************/
+
+const MAIRIX_UI_SEARCH_LIMITS = {
+
+  PRODUCTS:
+    20,
+
+  CUSTOMERS:
+    20,
+
+  VENDORS:
+    20,
+
+  WAREHOUSES:
+    50
+
+};
+
+
+/************************************************
+ * STANDARD SUCCESS RESPONSE
+ ************************************************/
+
+function mairixApiSuccess(
+  data,
+  message
+){
+
+  return {
+
+    success:
+      true,
+
+    apiVersion:
+      MAIRIX_UI_API_VERSION,
+
+    message:
+      message ||
+      "Operation completed successfully.",
+
+    data:
+      data === undefined
+        ? null
+        : data
+
+  };
+
+}
+
+
+/************************************************
+ * STANDARD ERROR RESPONSE
+ *
+ * IMPORTANT:
+ *
+ * Rejected operations record the
+ * authenticated server-side User ID.
+ *
+ * UI supplied userId is NEVER trusted.
+ ************************************************/
+
+function mairixApiError(
+  error,
+  code,
+  context
+) {
+
+  const message =
+    error &&
+    error.message
+      ? error.message
+      : String(error);
+
+
+  let trustedContext =
+    context || null;
+
+
+  if (
+    !trustedContext
+  ) {
+
+    try {
+
+      if (
+        typeof mairixApiContext ===
+        "function"
+      ) {
+
+        trustedContext =
+          mairixApiContext();
+
+      }
+
+    } catch (
+      authError
+    ) {
+
+      trustedContext =
+        null;
+
+    }
+
+  }
+
+
+  const rejection = {
+
+    timestamp:
+      new Date(),
+
+    source:
+      "MAIRIX_UI_API",
+
+    code:
+      code ||
+      "MAIRIX_API_ERROR",
+
+    message:
+      message,
+
+    userId:
+      trustedContext &&
+      trustedContext.userId
+        ? trustedContext.userId
+        : "",
+
+    reference:
+      trustedContext &&
+      trustedContext.reference
+        ? trustedContext.reference
+        : "",
+
+    rejected:
+      true
+
+  };
+
+
+  /*
+   * Record rejection centrally.
+   *
+   * The rejection engine remains responsible
+   * for persistence / rejection reporting.
+   */
+
+  if (
+    typeof mairixRecordRejection ===
+    "function"
+  ) {
+
+    try {
+
+      mairixRecordRejection(
+        rejection
+      );
+
+    } catch (
+      rejectionError
+    ) {
+
+      /*
+       * Never replace the original API
+       * error with a rejection-log error.
+       */
+
+      console.error(
+        rejectionError
+      );
+
+    }
+
+  }
+
+
+  return {
+
+    success:
+      false,
+
+    apiVersion:
+      MAIRIX_UI_API_VERSION,
+
+    error: {
+
+      code:
+        code ||
+        "MAIRIX_API_ERROR",
+
+      message:
+        message
+
+    }
+
+  };
+
+}
+
+
+/************************************************
+ * TEXT NORMALIZATION
+ ************************************************/
+
+function mairixUIApiCleanText(
+  value
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(
+    value
+  ).trim();
+
+}
+
+
+/************************************************
+ * SEARCH NORMALIZATION
+ *
+ * Used only for comparison.
+ *
+ * Original Master Data is never modified.
+ ************************************************/
+
+function mairixUIApiNormalizeSearch(
+  value
+) {
+
+  return mairixUIApiCleanText(
+    value
+  )
+    .toLowerCase();
+
+}
+
+
+/************************************************
+ * ACTIVE FLAG NORMALIZATION
+ ************************************************/
+
+function mairixUIApiIsActive(
+  value
+) {
+
+  if (
+    value === true
+  ) {
+
+    return true;
+
+  }
+
+
+  if (
+    value === false
+  ) {
+
+    return false;
+
+  }
+
+
+  const normalized =
+    mairixUIApiNormalizeSearch(
+      value
+    );
+
+
+  return (
+
+    normalized === "true" ||
+
+    normalized === "1" ||
+
+    normalized === "yes" ||
+
+    normalized === "active"
+
+  );
+
+}
+
+
+/************************************************
+ * TRUSTED CURRENT USER
+ *
+ * IMPORTANT:
+ *
+ * UI userId is NEVER trusted.
+ *
+ * Authentication must come from
+ * server-side MAIRIX authentication layer.
+ ************************************************/
+
+function mairixApiCurrentUser() {
+
+  if (
+    typeof mairixRequireCurrentUser ===
+    "function"
+  ) {
+
+    return mairixRequireCurrentUser();
+
+  }
+
+
+  if (
+    typeof requireCurrentUser ===
+    "function"
+  ) {
+
+    return requireCurrentUser();
+
+  }
+
+
+  throw new Error(
+    "MAIRIX authentication engine is unavailable."
+  );
+
+}
+
+
+/************************************************
+ * API CONTEXT
+ *
+ * Creates the trusted server-side context.
+ ************************************************/
+
+function mairixApiContext() {
+
+  const user =
+    mairixApiCurrentUser();
+
+
+  return {
+
+    userId:
+      user.userId,
+
+    email:
+      user.email,
+
+    name:
+      user.name,
+
+    role:
+      user.role,
+
+    active:
+      user.active === true
+
+  };
+
+}
+
+
+/************************************************
+ * GENERIC API PERMISSION CHECK
+ ************************************************/
+
+function mairixApiRequirePermission(
+  permissionCode,
+  action
+) {
+
+  const context =
+    mairixApiContext();
+
+
+  mairixRequirePermission(
+    context.userId,
+    permissionCode,
+    action
+  );
+
+
+  return context;
+
+}
+
+
+/************************************************
+ * GET CURRENT USER FOR UI
+ ************************************************/
+
+function apiGetCurrentUser() {
+
+  try {
+
+    const user =
+      mairixApiCurrentUser();
+
+
+    return mairixApiSuccess(
+      {
+
+        userId:
+          user.userId,
+
+        name:
+          user.name,
+
+        email:
+          user.email,
+
+        role:
+          user.role,
+
+        active:
+          user.active
+
+      },
+      "Current user loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "AUTHENTICATION_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * GET USER PERMISSIONS
+ ************************************************/
+
+function apiGetMyPermissions() {
+
+  try {
+
+    const context =
+      mairixApiContext();
+
+
+    if (
+      context.role === "ADMIN"
+    ) {
+
+      return mairixApiSuccess(
+        {
+
+          userId:
+            context.userId,
+
+          role:
+            context.role,
+
+          admin:
+            true,
+
+          fullAccess:
+            true
+
+        },
+        "Administrator permissions loaded."
+      );
+
+    }
+
+
+    const permissionData =
+      mairixGetCurrentUserPermissions(
+        context.userId
+      );
+
+
+    return mairixApiSuccess(
+      {
+
+        userId:
+          context.userId,
+
+        role:
+          context.role,
+
+        admin:
+          permissionData.admin,
+
+        fullAccess:
+          permissionData.fullAccess,
+
+        permissions:
+          permissionData.permissions
+
+      },
+      "User permissions loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "PERMISSIONS_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * GENERIC PERMISSION QUERY
+ *
+ * UI visibility only.
+ *
+ * NEVER replaces server-side enforcement.
+ ************************************************/
+
+function apiHasPermission(
+  permissionCode,
+  action
+) {
+
+  try {
+
+    const context =
+      mairixApiContext();
+
+
+    const allowed =
+      mairixHasPermission(
+        context.userId,
+        permissionCode,
+        action
+      );
+
+
+    return mairixApiSuccess(
+      {
+
+        permissionCode:
+          permissionCode,
+
+        action:
+          action,
+
+        allowed:
+          allowed === true
+
+      },
+      "Permission checked."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "PERMISSION_CHECK_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * MASTER DATA
+ ************************************************/
+
+function apiGetMasterData(
+  request
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    if (
+      typeof getMasterData !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getMasterData() is not available."
+      );
+
+    }
+
+
+    const result =
+      getMasterData(
+        request || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Master data loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "MASTER_DATA_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * MASTER DATA SHEET READER
+ *
+ * READ ONLY.
+ *
+ * This is used ONLY for controlled UI search.
+ *
+ * No transaction writes.
+ * No calculations.
+ * No business decisions.
+ ************************************************/
+
+function mairixUIApiReadSheetRecords(
+  sheetName
+) {
+
+  if (
+    typeof mairixgetSheet !==
+    "function"
+  ) {
+
+    throw new Error(
+      "mairixgetSheet() is not available."
+    );
+
+  }
+
+
+  const sheet =
+    mairixgetSheet(
+      sheetName
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Sheet not found: " +
+      sheetName
+    );
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getDisplayValues();
+
+
+  const records =
+    [];
+
+
+  for (
+    let rowIndex = 0;
+    rowIndex < values.length;
+    rowIndex++
+  ) {
+
+    const record =
+      {};
+
+
+    for (
+      let columnIndex = 0;
+      columnIndex < headers.length;
+      columnIndex++
+    ) {
+
+      const header =
+        mairixUIApiCleanText(
+          headers[columnIndex]
+        );
+
+
+      if (!header) {
+
+        continue;
+
+      }
+
+
+      record[header] =
+        values[rowIndex][
+          columnIndex
+        ];
+
+    }
+
+
+    records.push(
+      record
+    );
+
+  }
+
+
+  return records;
+
+}
+
+
+/************************************************
+ * PRODUCT NORMALIZER
+ *
+ * PRODUCT MASTER DATA
+ *
+ * Product Code
+ * Barcode
+ * Product Name
+ * Category
+ * Unit
+ * Opening Stock
+ * Opening Cost
+ * Min Stock
+ * Active
+ * Sale Price
+ * WAC
+ * Current Stock
+ ************************************************/
+
+function mairixUIApiNormalizeProduct(
+  record
+) {
+
+  if (!record) {
+
+    return null;
+
+  }
+
+
+  const productCode =
+    mairixUIApiCleanText(
+      record["Product Code"]
+    );
+
+
+  const barcode =
+    mairixUIApiCleanText(
+      record["Barcode"]
+    );
+
+
+  const productName =
+    mairixUIApiCleanText(
+      record["Product Name"]
+    );
+
+
+  const category =
+    mairixUIApiCleanText(
+      record["Category"]
+    );
+
+
+  return {
+
+    productCode:
+      productCode,
+
+    barcode:
+      barcode,
+
+    productName:
+      productName,
+
+    name:
+      productName,
+
+    itemCode:
+      productCode,
+
+    itemName:
+      productName,
+
+    category:
+      category,
+
+    categoryName:
+      category,
+
+    unit:
+      mairixUIApiCleanText(
+        record["Unit"]
+      ),
+
+    openingStock:
+      record["Opening Stock"],
+
+    openingCost:
+      record["Opening Cost"],
+
+    minStock:
+      record["Min Stock"],
+
+    active:
+      mairixUIApiIsActive(
+        record["Active"]
+      ),
+
+    salePrice:
+      record["Sale Price"],
+
+    wac:
+      record["WAC"],
+
+    currentStock:
+      record["Current Stock"]
+
+  };
+
+}
+
+
+/************************************************
+ * CUSTOMER NORMALIZER
+ *
+ * IMPORTANT:
+ *
+ * Search endpoint returns only information
+ * needed by the UI selector.
+ *
+ * Financial balances are NOT exposed here.
+ ************************************************/
+
+function mairixUIApiNormalizeCustomer(
+  record
+) {
+
+  if (!record) {
+
+    return null;
+
+  }
+
+
+  const code =
+    mairixUIApiCleanText(
+      record["Customer Code"]
+    );
+
+
+  const name =
+    mairixUIApiCleanText(
+      record["Customer Name"]
+    );
+
+
+  return {
+
+    customerCode:
+      code,
+
+    code:
+      code,
+
+    customerName:
+      name,
+
+    name:
+      name,
+
+    phone:
+      mairixUIApiCleanText(
+        record["Phone"]
+      ),
+
+    address:
+      mairixUIApiCleanText(
+        record["Address"]
+      ),
+
+    active:
+      mairixUIApiIsActive(
+        record["Active"]
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * VENDOR NORMALIZER
+ ************************************************/
+
+function mairixUIApiNormalizeVendor(
+  record
+) {
+
+  if (!record) {
+
+    return null;
+
+  }
+
+
+  const code =
+    mairixUIApiCleanText(
+      record["Vendor Code"]
+    );
+
+
+  const name =
+    mairixUIApiCleanText(
+      record["Vendor Name"]
+    );
+
+
+  return {
+
+    vendorCode:
+      code,
+
+    code:
+      code,
+
+    vendorName:
+      name,
+
+    name:
+      name,
+
+    phone:
+      mairixUIApiCleanText(
+        record["Phone"]
+      ),
+
+    address:
+      mairixUIApiCleanText(
+        record["Address"]
+      ),
+
+    active:
+      mairixUIApiIsActive(
+        record["Active"]
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * WAREHOUSE NORMALIZER
+ ************************************************/
+
+function mairixUIApiNormalizeWarehouse(
+  record
+) {
+
+  if (!record) {
+
+    return null;
+
+  }
+
+
+  const code =
+    mairixUIApiCleanText(
+      record["Warehouse Code"]
+    );
+
+
+  const name =
+    mairixUIApiCleanText(
+      record["Warehouse Name"]
+    );
+
+
+  return {
+
+    warehouseCode:
+      code,
+
+    code:
+      code,
+
+    warehouseName:
+      name,
+
+    name:
+      name,
+
+    active:
+      mairixUIApiIsActive(
+        record["Active"]
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * PRODUCT SEARCH
+ *
+ * SEARCH BY:
+ *
+ * 1. Product Code
+ * 2. Barcode
+ * 3. Product Name
+ *
+ * ONLY ACTIVE PRODUCTS.
+ *
+ * SERVER-SIDE SEARCH.
+ *
+ * The UI may type a name or barcode,
+ * but the selected record always comes
+ * from PRODUCTS Master Data.
+ ************************************************/
+
+function apiSearchProducts(
+  query
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    const search =
+      mairixUIApiNormalizeSearch(
+        query
+      );
+
+
+    if (!search) {
+
+      return mairixApiSuccess(
+        [],
+        "No product search query supplied."
+      );
+
+    }
+
+
+    const records =
+      mairixUIApiReadSheetRecords(
+        "PRODUCTS"
+      );
+
+
+    const results =
+      [];
+
+
+    for (
+      let i = 0;
+      i < records.length;
+      i++
+    ) {
+
+      const record =
+        records[i];
+
+
+      if (
+        !mairixUIApiIsActive(
+          record["Active"]
+        )
+      ) {
+
+        continue;
+
+      }
+
+
+      const productCode =
+        mairixUIApiNormalizeSearch(
+          record["Product Code"]
+        );
+
+
+      const barcode =
+        mairixUIApiNormalizeSearch(
+          record["Barcode"]
+        );
+
+
+      const productName =
+        mairixUIApiNormalizeSearch(
+          record["Product Name"]
+        );
+
+
+      const matched =
+
+        productCode.indexOf(
+          search
+        ) !== -1 ||
+
+        barcode.indexOf(
+          search
+        ) !== -1 ||
+
+        productName.indexOf(
+          search
+        ) !== -1;
+
+
+      if (!matched) {
+
+        continue;
+
+      }
+
+
+      results.push(
+        mairixUIApiNormalizeProduct(
+          record
+        )
+      );
+
+
+      if (
+        results.length >=
+        MAIRIX_UI_SEARCH_LIMITS.PRODUCTS
+      ) {
+
+        break;
+
+      }
+
+    }
+
+
+    return mairixApiSuccess(
+      results,
+      "Product search completed."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "PRODUCT_SEARCH_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * CUSTOMER SEARCH
+ *
+ * SEARCH BY:
+ *
+ * Customer Code
+ * Customer Name
+ ************************************************/
+
+function apiSearchCustomers(
+  query
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    const search =
+      mairixUIApiNormalizeSearch(
+        query
+      );
+
+
+    if (!search) {
+
+      return mairixApiSuccess(
+        [],
+        "No customer search query supplied."
+      );
+
+    }
+
+
+    const records =
+      mairixUIApiReadSheetRecords(
+        "CUSTOMERS"
+      );
+
+
+    const results =
+      [];
+
+
+    for (
+      let i = 0;
+      i < records.length;
+      i++
+    ) {
+
+      const record =
+        records[i];
+
+
+      if (
+        !mairixUIApiIsActive(
+          record["Active"]
+        )
+      ) {
+
+        continue;
+
+      }
+
+
+      const code =
+        mairixUIApiNormalizeSearch(
+          record["Customer Code"]
+        );
+
+
+      const name =
+        mairixUIApiNormalizeSearch(
+          record["Customer Name"]
+        );
+
+
+      const matched =
+
+        code.indexOf(
+          search
+        ) !== -1 ||
+
+        name.indexOf(
+          search
+        ) !== -1;
+
+
+      if (!matched) {
+
+        continue;
+
+      }
+
+
+      results.push(
+        mairixUIApiNormalizeCustomer(
+          record
+        )
+      );
+
+
+      if (
+        results.length >=
+        MAIRIX_UI_SEARCH_LIMITS.CUSTOMERS
+      ) {
+
+        break;
+
+      }
+
+    }
+
+
+    return mairixApiSuccess(
+      results,
+      "Customer search completed."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "CUSTOMER_SEARCH_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * VENDOR SEARCH
+ *
+ * SEARCH BY:
+ *
+ * Vendor Code
+ * Vendor Name
+ ************************************************/
+
+function apiSearchVendors(
+  query
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    const search =
+      mairixUIApiNormalizeSearch(
+        query
+      );
+
+
+    if (!search) {
+
+      return mairixApiSuccess(
+        [],
+        "No vendor search query supplied."
+      );
+
+    }
+
+
+    const records =
+      mairixUIApiReadSheetRecords(
+        "VENDORS"
+      );
+
+
+    const results =
+      [];
+
+
+    for (
+      let i = 0;
+      i < records.length;
+      i++
+    ) {
+
+      const record =
+        records[i];
+
+
+      if (
+        !mairixUIApiIsActive(
+          record["Active"]
+        )
+      ) {
+
+        continue;
+
+      }
+
+
+      const code =
+        mairixUIApiNormalizeSearch(
+          record["Vendor Code"]
+        );
+
+
+      const name =
+        mairixUIApiNormalizeSearch(
+          record["Vendor Name"]
+        );
+
+
+      const matched =
+
+        code.indexOf(
+          search
+        ) !== -1 ||
+
+        name.indexOf(
+          search
+        ) !== -1;
+
+
+      if (!matched) {
+
+        continue;
+
+      }
+
+
+      results.push(
+        mairixUIApiNormalizeVendor(
+          record
+        )
+      );
+
+
+      if (
+        results.length >=
+        MAIRIX_UI_SEARCH_LIMITS.VENDORS
+      ) {
+
+        break;
+
+      }
+
+    }
+
+
+    return mairixApiSuccess(
+      results,
+      "Vendor search completed."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "VENDOR_SEARCH_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * WAREHOUSE SEARCH
+ *
+ * SEARCH BY:
+ *
+ * Warehouse Code
+ * Warehouse Name
+ *
+ * IMPORTANT:
+ *
+ * This API exposes ACTIVE MASTER DATA.
+ *
+ * It does NOT grant operational permission.
+ *
+ * Any transaction using a warehouse must
+ * still pass the transaction engine's
+ * authorization / validation rules.
+ ************************************************/
+
+function apiSearchWarehouses(
+  query
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    const search =
+      mairixUIApiNormalizeSearch(
+        query
+      );
+
+
+    const records =
+      mairixUIApiReadSheetRecords(
+        "WAREHOUSES"
+      );
+
+
+    const results =
+      [];
+
+
+    for (
+      let i = 0;
+      i < records.length;
+      i++
+    ) {
+
+      const record =
+        records[i];
+
+
+      if (
+        !mairixUIApiIsActive(
+          record["Active"]
+        )
+      ) {
+
+        continue;
+
+      }
+
+
+      const code =
+        mairixUIApiNormalizeSearch(
+          record["Warehouse Code"]
+        );
+
+
+      const name =
+        mairixUIApiNormalizeSearch(
+          record["Warehouse Name"]
+        );
+
+
+      const matched =
+
+        !search ||
+
+        code.indexOf(
+          search
+        ) !== -1 ||
+
+        name.indexOf(
+          search
+        ) !== -1;
+
+
+      if (!matched) {
+
+        continue;
+
+      }
+
+
+      results.push(
+        mairixUIApiNormalizeWarehouse(
+          record
+        )
+      );
+
+
+      if (
+        results.length >=
+        MAIRIX_UI_SEARCH_LIMITS.WAREHOUSES
+      ) {
+
+        break;
+
+      }
+
+    }
+
+
+    return mairixApiSuccess(
+      results,
+      "Warehouse search completed."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "WAREHOUSE_SEARCH_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * PRODUCT EXACT LOOKUP
+ *
+ * Used after:
+ *
+ * - barcode scan
+ * - selected search result
+ * - exact Product Code
+ *
+ * Search is NOT used as authorization.
+ ************************************************/
+
+function apiGetProduct(
+  lookup
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    const key =
+      mairixUIApiCleanText(
+        lookup
+      );
+
+
+    if (!key) {
+
+      throw new Error(
+        "Product Code or Barcode is required."
+      );
+
+    }
+
+
+    /*
+     * Prefer existing MAIRIX inventory/product
+     * resolver so the transaction layer and
+     * UI layer resolve products consistently.
+     */
+
+    let product =
+      null;
+
+
+    if (
+      typeof getProductForInventory ===
+      "function"
+    ) {
+
+      product =
+        getProductForInventory(
+          key
+        );
+
+    }
+
+
+    if (
+      !product &&
+      typeof mairixGetItem ===
+      "function"
+    ) {
+
+      product =
+        mairixGetItem(
+          key
+        );
+
+    }
+
+
+    /*
+     * Controlled fallback against PRODUCTS
+     * Master Data.
+     */
+
+    if (!product) {
+
+      const records =
+        mairixUIApiReadSheetRecords(
+          "PRODUCTS"
+        );
+
+
+      const normalizedKey =
+        mairixUIApiNormalizeSearch(
+          key
+        );
+
+
+      for (
+        let i = 0;
+        i < records.length;
+        i++
+      ) {
+
+        const record =
+          records[i];
+
+
+        if (
+          !mairixUIApiIsActive(
+            record["Active"]
+          )
+        ) {
+
+          continue;
+
+        }
+
+
+        const code =
+          mairixUIApiNormalizeSearch(
+            record["Product Code"]
+          );
+
+
+        const barcode =
+          mairixUIApiNormalizeSearch(
+            record["Barcode"]
+          );
+
+
+        if (
+          normalizedKey === code ||
+          normalizedKey === barcode
+        ) {
+
+          product =
+            mairixUIApiNormalizeProduct(
+              record
+            );
+
+          break;
+
+        }
+
+      }
+
+    }
+
+
+    if (!product) {
+
+      return mairixApiError(
+        new Error(
+          "Product not found."
+        ),
+        "PRODUCT_NOT_FOUND"
+      );
+
+    }
+
+
+    return mairixApiSuccess(
+      product,
+      "Product loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "PRODUCT_LOOKUP_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * CUSTOMER EXACT LOOKUP
+ ************************************************/
+
+function apiGetCustomer(
+  customerCode
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    const code =
+      mairixUIApiCleanText(
+        customerCode
+      );
+
+
+    if (!code) {
+
+      throw new Error(
+        "Customer Code is required."
+      );
+
+    }
+
+
+    if (
+      typeof mairixGetCustomer !==
+      "function"
+    ) {
+
+      throw new Error(
+        "mairixGetCustomer() is not available."
+      );
+
+    }
+
+
+    const customer =
+      mairixGetCustomer(
+        code
+      );
+
+
+    if (!customer) {
+
+      throw new Error(
+        "Customer not found."
+      );
+
+    }
+
+
+    return mairixApiSuccess(
+      customer,
+      "Customer loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "CUSTOMER_LOOKUP_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * VENDOR EXACT LOOKUP
+ ************************************************/
+
+function apiGetVendor(
+  vendorCode
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    const code =
+      mairixUIApiCleanText(
+        vendorCode
+      );
+
+
+    if (!code) {
+
+      throw new Error(
+        "Vendor Code is required."
+      );
+
+    }
+
+
+    if (
+      typeof mairixGetVendor !==
+      "function"
+    ) {
+
+      throw new Error(
+        "mairixGetVendor() is not available."
+      );
+
+    }
+
+
+    const vendor =
+      mairixGetVendor(
+        code
+      );
+
+
+    if (!vendor) {
+
+      throw new Error(
+        "Vendor not found."
+      );
+
+    }
+
+
+    return mairixApiSuccess(
+      vendor,
+      "Vendor loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "VENDOR_LOOKUP_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * WAREHOUSE EXACT LOOKUP
+ ************************************************/
+
+function apiGetWarehouse(
+  warehouseCode
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "MASTER_DATA",
+      "View"
+    );
+
+
+    const code =
+      mairixUIApiCleanText(
+        warehouseCode
+      );
+
+
+    if (!code) {
+
+      throw new Error(
+        "Warehouse Code is required."
+      );
+
+    }
+
+
+    if (
+      typeof mairixGetWarehouse !==
+      "function"
+    ) {
+
+      throw new Error(
+        "mairixGetWarehouse() is not available."
+      );
+
+    }
+
+
+    const warehouse =
+      mairixGetWarehouse(
+        code
+      );
+
+
+    if (!warehouse) {
+
+      throw new Error(
+        "Warehouse not found."
+      );
+
+    }
+
+
+    return mairixApiSuccess(
+      warehouse,
+      "Warehouse loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "WAREHOUSE_LOOKUP_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * UI SEARCH COMPATIBILITY FUNCTIONS
+ *
+ * These are the functions the UI Components
+ * can call through google.script.run.
+ *
+ * They intentionally use the standardized
+ * MAIRIX API response format.
+ ************************************************/
+
+function mairixUIApiSearchProducts(
+  query
+) {
+
+  return apiSearchProducts(
+    query
+  );
+
+}
+
+
+function mairixUIApiSearchCustomers(
+  query
+) {
+
+  return apiSearchCustomers(
+    query
+  );
+
+}
+
+
+function mairixUIApiSearchVendors(
+  query
+) {
+
+  return apiSearchVendors(
+    query
+  );
+
+}
+
+
+function mairixUIApiSearchWarehouses(
+  query
+) {
+
+  return apiSearchWarehouses(
+    query
+  );
+
+}
+
+
+/************************************************
+ * WAREHOUSE STOCK
+ *
+ * READ ONLY.
+ *
+ * Business rules remain in inventory engine.
+ ************************************************/
+
+function apiGetWarehouseStock(
+  warehouseCode,
+  itemCode
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "INVENTORY_VIEW",
+      "View"
+    );
+
+
+    const warehouse =
+      mairixUIApiCleanText(
+        warehouseCode
+      );
+
+
+    const item =
+      mairixUIApiCleanText(
+        itemCode
+      );
+
+
+    if (!warehouse) {
+
+      throw new Error(
+        "Warehouse Code is required."
+      );
+
+    }
+
+
+    if (!item) {
+
+      throw new Error(
+        "Product Code is required."
+      );
+
+    }
+
+
+    if (
+      typeof mairixGetWarehouseStock !==
+      "function"
+    ) {
+
+      throw new Error(
+        "mairixGetWarehouseStock() is not available."
+      );
+
+    }
+
+
+    const quantity =
+      mairixGetWarehouseStock(
+        warehouse,
+        item
+      );
+
+
+    return mairixApiSuccess(
+      {
+
+        warehouseCode:
+          warehouse,
+
+        itemCode:
+          item,
+
+        quantity:
+          Number(
+            quantity || 0
+          )
+
+      },
+      "Warehouse stock loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "WAREHOUSE_STOCK_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * CUSTOMER LOYALTY POINTS
+ *
+ * ONLY LOYALTY INFORMATION required by
+ * Sales UI is exposed here.
+ ************************************************/
+
+function apiGetCustomerLoyaltyPoints(
+  customerCode
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "SALES",
+      "View"
+    );
+
+
+    const code =
+      mairixUIApiCleanText(
+        customerCode
+      );
+
+
+    if (!code) {
+
+      throw new Error(
+        "Customer Code is required."
+      );
+
+    }
+
+
+    if (
+      typeof mairixGetCustomerLoyaltyPoints !==
+      "function"
+    ) {
+
+      throw new Error(
+        "mairixGetCustomerLoyaltyPoints() is not available."
+      );
+
+    }
+
+
+    const points =
+      mairixGetCustomerLoyaltyPoints(
+        code
+      );
+
+
+    return mairixApiSuccess(
+      {
+
+        customerCode:
+          code,
+
+        loyaltyPoints:
+          Number(
+            points || 0
+          )
+
+      },
+      "Customer loyalty loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "LOYALTY_LOOKUP_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * SALES
+ ************************************************/
+
+function apiCreateSale(
+  data
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "SALES",
+        "Create"
+      );
+
+
+    if (
+      typeof createSale !==
+      "function"
+    ) {
+
+      throw new Error(
+        "createSale() is not available."
+      );
+
+    }
+
+
+    const request =
+      mairixApiSanitizeTransactionPayload(
+        data,
+        context
+      );
+
+
+    const result =
+      createSale(
+        request
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Sale created successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "SALES_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * SALES RETURNS
+ ************************************************/
+
+function apiCreateSalesReturn(
+  data
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "SALES_RETURNS_CREATE",
+        "Create"
+      );
+
+
+    if (
+      typeof createSalesReturn !==
+      "function"
+    ) {
+
+      throw new Error(
+        "createSalesReturn() is not available."
+      );
+
+    }
+
+
+    const request =
+      mairixApiSanitizeTransactionPayload(
+        data,
+        context
+      );
+
+
+    const result =
+      createSalesReturn(
+        request
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Sales return created successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "SALES_RETURN_CREATE_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * PURCHASES
+ ************************************************/
+
+function apiCreatePurchase(
+  data
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "PURCHASES_CREATE",
+        "Create"
+      );
+
+
+    if (
+      typeof createPurchase !==
+      "function"
+    ) {
+
+      throw new Error(
+        "createPurchase() is not available."
+      );
+
+    }
+
+
+    const request =
+      mairixApiSanitizeTransactionPayload(
+        data,
+        context
+      );
+
+
+    const result =
+      createPurchase(
+        request
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Purchase created successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "PURCHASE_CREATE_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * PURCHASE RETURNS
+ ************************************************/
+
+function apiCreatePurchaseReturn(
+  data
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "PURCHASE_RETURNS_CREATE",
+        "Create"
+      );
+
+
+    if (
+      typeof createPurchaseReturn !==
+      "function"
+    ) {
+
+      throw new Error(
+        "createPurchaseReturn() is not available."
+      );
+
+    }
+
+
+    const request =
+      mairixApiSanitizeTransactionPayload(
+        data,
+        context
+      );
+
+
+    const result =
+      createPurchaseReturn(
+        request
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Purchase return created successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "PURCHASE_RETURN_CREATE_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * COLLECTIONS
+ ************************************************/
+
+function apiCreateCollection(
+  data
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "COLLECTIONS_CREATE",
+        "Create"
+      );
+
+
+    if (
+      typeof createCollection !==
+      "function"
+    ) {
+
+      throw new Error(
+        "createCollection() is not available."
+      );
+
+    }
+
+
+    const request =
+      mairixApiSanitizeTransactionPayload(
+        data,
+        context
+      );
+
+
+    const result =
+      createCollection(
+        request
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Collection recorded successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "COLLECTION_CREATE_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * VENDOR PAYMENTS
+ ************************************************/
+
+function apiCreateVendorPayment(
+  data
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "VENDOR_PAYMENTS_CREATE",
+        "Create"
+      );
+
+
+    if (
+      typeof createVendorPayment !==
+      "function"
+    ) {
+
+      throw new Error(
+        "createVendorPayment() is not available."
+      );
+
+    }
+
+
+    const request =
+      mairixApiSanitizeTransactionPayload(
+        data,
+        context
+      );
+
+
+    const result =
+      createVendorPayment(
+        request
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Vendor payment recorded successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "VENDOR_PAYMENT_CREATE_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * EXPENSES
+ ************************************************/
+
+function apiCreateExpense(
+  data
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "EXPENSES_CREATE",
+        "Create"
+      );
+
+
+    if (
+      typeof createExpense !==
+      "function"
+    ) {
+
+      throw new Error(
+        "createExpense() is not available."
+      );
+
+    }
+
+
+    const request =
+      mairixApiSanitizeTransactionPayload(
+        data,
+        context
+      );
+
+
+    const result =
+      createExpense(
+        request
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Expense recorded successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "EXPENSE_CREATE_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * COMMISSIONS
+ ************************************************/
+
+function apiGetCommissionSummary(
+  request
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "COMMISSIONS_VIEW",
+      "View"
+    );
+
+
+    if (
+      typeof getCommissionSummary !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getCommissionSummary() is not available."
+      );
+
+    }
+
+
+    const result =
+      getCommissionSummary(
+        request || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Commission summary loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "COMMISSION_REPORT_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * LOYALTY
+ ************************************************/
+
+function apiGetCustomerLoyalty(
+  customerCode
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "SALES",
+      "View"
+    );
+
+
+    if (
+      typeof getCustomerLoyalty !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getCustomerLoyalty() is not available."
+      );
+
+    }
+
+
+    const result =
+      getCustomerLoyalty(
+        customerCode
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Customer loyalty loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "LOYALTY_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * TAX
+ ************************************************/
+
+function apiCalculateTaxes(
+  request
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "TAX_VIEW",
+      "View"
+    );
+
+
+    if (
+      typeof calculateTaxes !==
+      "function"
+    ) {
+
+      throw new Error(
+        "calculateTaxes() is not available."
+      );
+
+    }
+
+
+    const result =
+      calculateTaxes(
+        request || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Tax calculation completed."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "TAX_CALCULATION_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * INVENTORY
+ ************************************************/
+
+function apiGetInventory(
+  request
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "INVENTORY_VIEW",
+      "View"
+    );
+
+
+    if (
+      typeof getInventory !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getInventory() is not available."
+      );
+
+    }
+
+
+    const result =
+      getInventory(
+        request || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Inventory loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "INVENTORY_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * FINANCIAL STATEMENTS
+ ************************************************/
+
+function apiGetFinancialStatement(
+  request
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "FINANCIAL_STATEMENTS_VIEW",
+      "View"
+    );
+
+
+    if (
+      typeof getFinancialStatement !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getFinancialStatement() is not available."
+      );
+
+    }
+
+
+    const result =
+      getFinancialStatement(
+        request || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Financial statement loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "FINANCIAL_STATEMENT_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * REPORTS
+ ************************************************/
+
+function apiGetReport(
+  reportCode,
+  request
+) {
+
+  try {
+
+    const context =
+      mairixApiContext();
+
+
+    requireReportPermission(
+      context.userId,
+      reportCode,
+      "View"
+    );
+
+
+    if (
+      typeof generateReport !==
+      "function"
+    ) {
+
+      throw new Error(
+        "generateReport() is not available."
+      );
+
+    }
+
+
+    const result =
+      generateReport(
+        reportCode,
+        request || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Report generated successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "REPORT_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * REFERENCE VIEWER
+ ************************************************/
+
+function apiGetReference(
+  referenceId
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "REPORTS_VIEW",
+      "View"
+    );
+
+
+    if (
+      typeof getReferenceDetails !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getReferenceDetails() is not available."
+      );
+
+    }
+
+
+    const result =
+      getReferenceDetails(
+        referenceId
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Reference details loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "REFERENCE_VIEW_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * AUDIT TRAIL
+ ************************************************/
+
+function apiGetAuditTrail(
+  request
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "AUDIT_VIEW",
+      "View"
+    );
+
+
+    if (
+      typeof getAuditTrail !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getAuditTrail() is not available."
+      );
+
+    }
+
+
+    const result =
+      getAuditTrail(
+        request || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Audit trail loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "AUDIT_TRAIL_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * EMPLOYEE EVALUATION
+ ************************************************/
+
+function apiGetEmployeeEvaluation(
+  request
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "EMPLOYEE_EVALUATION_VIEW",
+      "View"
+    );
+
+
+    if (
+      typeof getEmployeeEvaluation !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getEmployeeEvaluation() is not available."
+      );
+
+    }
+
+
+    const result =
+      getEmployeeEvaluation(
+        request || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Employee evaluation loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "EMPLOYEE_EVALUATION_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * SETTINGS
+ ************************************************/
+
+function apiGetSettings() {
+
+  try {
+
+    mairixApiRequirePermission(
+      "SETTINGS_VIEW",
+      "View"
+    );
+
+
+    if (
+      typeof getSystemSettings !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getSystemSettings() is not available."
+      );
+
+    }
+
+
+    const result =
+      getSystemSettings();
+
+
+    return mairixApiSuccess(
+      result,
+      "System settings loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "SETTINGS_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * ADMIN USER CREATION
+ ************************************************/
+
+function apiCreateUser(
+  data
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "USERS_CREATE",
+        "Create"
+      );
+
+
+    if (
+      typeof createUser !==
+      "function"
+    ) {
+
+      throw new Error(
+        "createUser() is not available."
+      );
+
+    }
+
+
+    const request =
+      mairixApiSanitizeTransactionPayload(
+        data,
+        context
+      );
+
+
+    const result =
+      createUser(
+        request
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "User created successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "USER_CREATE_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * ADMIN USER UPDATE
+ ************************************************/
+
+function apiUpdateUser(
+  userId,
+  data
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "USERS_EDIT",
+      "Edit"
+    );
+
+
+    const result =
+      updateUser(
+        userId,
+        data || {}
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "User updated successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "USER_UPDATE_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * ADMIN USER ACTIVATION
+ ************************************************/
+
+function apiSetUserActive(
+  userId,
+  active
+) {
+
+  try {
+
+    mairixApiRequirePermission(
+      "USERS_EDIT",
+      "Edit"
+    );
+
+
+    const result =
+      setUserActive(
+        userId,
+        active
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      active === true
+        ? "User activated successfully."
+        : "User deactivated successfully."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "USER_STATUS_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * GENERIC SEARCH
+ *
+ * Existing MAIRIX search engine.
+ *
+ * This remains available for searches that
+ * belong to the central search engine.
+ *
+ * The four specialized selectors use the
+ * dedicated APIs above.
+ ************************************************/
+
+function apiSearch(
+  request
+) {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "MASTER_DATA",
+        "View"
+      );
+
+
+    if (
+      typeof searchMAIRIX !==
+      "function"
+    ) {
+
+      throw new Error(
+        "searchMAIRIX() is not available."
+      );
+
+    }
+
+
+    const searchRequest =
+      Object.assign(
+        {},
+        request || {}
+      );
+
+
+    /*
+     * Never trust client-side identity.
+     */
+
+    delete searchRequest.userId;
+
+    delete searchRequest.serverUserId;
+
+
+    searchRequest.serverUserId =
+      context.userId;
+
+
+    const result =
+      searchMAIRIX(
+        searchRequest
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Search completed."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "SEARCH_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * DASHBOARD
+ ************************************************/
+
+function apiGetDashboard() {
+
+  try {
+
+    const context =
+      mairixApiRequirePermission(
+        "REPORTS_VIEW",
+        "View"
+      );
+
+
+    if (
+      typeof getDashboardData !==
+      "function"
+    ) {
+
+      throw new Error(
+        "getDashboardData() is not available."
+      );
+
+    }
+
+
+    const result =
+      getDashboardData(
+        context.userId
+      );
+
+
+    return mairixApiSuccess(
+      result,
+      "Dashboard loaded."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "DASHBOARD_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * GET ACTIVE SETTINGS OPTIONS
+ ************************************************/
+
+function getMairixActiveSettingOptions(
+  key
+) {
+
+  const normalizedKey =
+    mairixCleanText(key)
+      .toUpperCase();
+
+  return mairixSettingsGetAllOptionRows()
+
+    .filter(
+      function(option) {
+
+        return (
+          mairixCleanText(option.key)
+            .toUpperCase() ===
+          normalizedKey
+          &&
+          option.active === true
+        );
+
+      }
+    )
+
+    .sort(
+      function(a, b) {
+
+        return (
+          Number(a.sortOrder || 0) -
+          Number(b.sortOrder || 0)
+        );
+
+      }
+    );
+
+}
+
+/************************************************
+ * API ROUTER
+ ************************************************/
+
+function mairixApiRouter(action, payload) {
+
+  /************************************************
+   * SECURITY HARDENING
+   *
+   * Never trust identity coming from UI.
+   ************************************************/
+
+  const secureRequest =
+    mairixSecurityPrepareRequest(
+      action,
+      payload
+    );
+
+  action =
+    secureRequest.action;
+
+  payload =
+    secureRequest.payload;
+
+  const context =
+    secureRequest.context;
+
+
+  /************************************************
+   * EXISTING ROUTER CODE CONTINUES BELOW
+   ************************************************/
+
+
+  // اترك باقي الكود الأصلي للدالة هنا كما هو
+
+  try {
+
+    const normalizedAction =
+      mairixUIApiCleanText(
+        action
+      );
+
+
+    switch (
+      normalizedAction
+    ) {
+
+      case "CURRENT_USER":
+
+        return apiGetCurrentUser();
+
+
+      case "MY_PERMISSIONS":
+
+        return apiGetMyPermissions();
+
+
+      case "HAS_PERMISSION":
+
+        return apiHasPermission(
+          payload &&
+            payload.permissionCode,
+          payload &&
+            payload.action
+        );
+
+
+      case "MASTER_DATA":
+
+        return apiGetMasterData(
+          payload
+        );
+
+
+      case "SEARCH":
+
+        return apiSearch(
+          payload
+        );
+
+
+      case "SEARCH_PRODUCTS":
+
+        return apiSearchProducts(
+          payload &&
+            (
+              payload.query ||
+              payload.search ||
+              payload.value
+            )
+        );
+
+
+      case "SEARCH_CUSTOMERS":
+
+        return apiSearchCustomers(
+          payload &&
+            (
+              payload.query ||
+              payload.search ||
+              payload.value
+            )
+        );
+
+
+      case "SEARCH_VENDORS":
+
+        return apiSearchVendors(
+          payload &&
+            (
+              payload.query ||
+              payload.search ||
+              payload.value
+            )
+        );
+
+
+      case "SEARCH_WAREHOUSES":
+
+        return apiSearchWarehouses(
+          payload &&
+            (
+              payload.query ||
+              payload.search ||
+              payload.value
+            )
+        );
+
+
+      case "GET_PRODUCT":
+
+        return apiGetProduct(
+          payload &&
+            (
+              payload.lookup ||
+              payload.productCode ||
+              payload.barcode ||
+              payload.itemCode
+            )
+        );
+
+
+      case "GET_CUSTOMER":
+
+        return apiGetCustomer(
+          payload &&
+            (
+              payload.customerCode ||
+              payload.code
+            )
+        );
+
+
+      case "GET_VENDOR":
+
+        return apiGetVendor(
+          payload &&
+            (
+              payload.vendorCode ||
+              payload.code
+            )
+        );
+
+
+      case "GET_WAREHOUSE":
+
+        return apiGetWarehouse(
+          payload &&
+            (
+              payload.warehouseCode ||
+              payload.code
+            )
+        );
+
+
+      case "WAREHOUSE_STOCK":
+
+        return apiGetWarehouseStock(
+          payload &&
+            (
+              payload.warehouseCode ||
+              payload.warehouse
+            ),
+          payload &&
+            (
+              payload.itemCode ||
+              payload.productCode
+            )
+        );
+
+
+      case "CUSTOMER_LOYALTY_POINTS":
+
+        return apiGetCustomerLoyaltyPoints(
+          payload &&
+            (
+              payload.customerCode ||
+              payload.code
+            )
+        );
+
+
+      case "CREATE_SALE":
+
+        return apiCreateSale(
+          payload
+        );
+
+
+      case "CREATE_SALES_RETURN":
+
+        return apiCreateSalesReturn(
+          payload
+        );
+
+
+      case "CREATE_PURCHASE":
+
+        return apiCreatePurchase(
+          payload
+        );
+
+
+      case "CREATE_PURCHASE_RETURN":
+
+        return apiCreatePurchaseReturn(
+          payload
+        );
+
+
+      case "CREATE_COLLECTION":
+
+        return apiCreateCollection(
+          payload
+        );
+
+
+      case "CREATE_VENDOR_PAYMENT":
+
+        return apiCreateVendorPayment(
+          payload
+        );
+
+
+      case "CREATE_EXPENSE":
+
+        return apiCreateExpense(
+          payload
+        );
+
+
+      case "COMMISSION_SUMMARY":
+
+        return apiGetCommissionSummary(
+          payload
+        );
+
+
+      case "CUSTOMER_LOYALTY":
+
+        return apiGetCustomerLoyalty(
+          payload &&
+            payload.customerCode
+        );
+
+
+      case "CALCULATE_TAXES":
+
+        return apiCalculateTaxes(
+          payload
+        );
+
+
+      case "INVENTORY":
+
+        return apiGetInventory(
+          payload
+        );
+
+
+      case "FINANCIAL_STATEMENT":
+
+        return apiGetFinancialStatement(
+          payload
+        );
+
+
+      case "REPORT":
+
+        return apiGetReport(
+          payload &&
+            payload.reportCode,
+          payload
+        );
+
+
+      case "REFERENCE":
+
+        return apiGetReference(
+          payload &&
+            payload.referenceId
+        );
+
+
+      case "AUDIT_TRAIL":
+
+        return apiGetAuditTrail(
+          payload
+        );
+
+
+      case "EMPLOYEE_EVALUATION":
+
+        return apiGetEmployeeEvaluation(
+          payload
+        );
+
+
+      case "SETTINGS":
+
+        return apiGetSettings();
+
+
+      case "CREATE_USER":
+
+        return apiCreateUser(
+          payload
+        );
+
+
+      case "UPDATE_USER":
+
+        return apiUpdateUser(
+          payload &&
+            payload.userId,
+          payload
+        );
+
+
+      case "SET_USER_ACTIVE":
+
+        return apiSetUserActive(
+          payload &&
+            payload.userId,
+          payload &&
+            payload.active
+        );
+
+
+      case "DASHBOARD":
+
+        return apiGetDashboard();
+
+
+      default:
+
+        throw new Error(
+          "Unknown MAIRIX API action: " +
+          normalizedAction
+        );
+
+    }
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "API_ROUTER_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * doGet
+ ************************************************/
+
+function doGet(
+  e
+) {
+
+  try {
+
+    const params =
+      e &&
+      e.parameter
+        ? e.parameter
+        : {};
+
+
+    const action =
+      params.action ||
+      "CURRENT_USER";
+
+
+    let payload =
+      {};
+
+
+    if (
+      params.payload
+    ) {
+
+      try {
+
+        payload =
+          JSON.parse(
+            params.payload
+          );
+
+      } catch (error) {
+
+        throw new Error(
+          "Invalid JSON payload."
+        );
+
+      }
+
+    }
+
+
+    const result =
+      mairixApiRouter(
+        action,
+        payload
+      );
+
+
+    return ContentService
+      .createTextOutput(
+        JSON.stringify(
+          result
+        )
+      )
+      .setMimeType(
+        ContentService.MimeType.JSON
+      );
+
+  } catch (error) {
+
+    return ContentService
+      .createTextOutput(
+        JSON.stringify(
+          mairixApiError(
+            error,
+            "DO_GET_ERROR"
+          )
+        )
+      )
+      .setMimeType(
+        ContentService.MimeType.JSON
+      );
+
+  }
+
+}
+
+
+/************************************************
+ * doPost
+ ************************************************/
+
+function doPost(
+  e
+) {
+
+  try {
+
+    let body =
+      {};
+
+
+    if (
+      e &&
+      e.postData &&
+      e.postData.contents
+    ) {
+
+      try {
+
+        body =
+          JSON.parse(
+            e.postData.contents
+          );
+
+      } catch (error) {
+
+        throw new Error(
+          "Invalid JSON request body."
+        );
+
+      }
+
+    }
+
+
+    const action =
+      body.action;
+
+
+    const payload =
+      body.payload || {};
+
+
+    const result =
+      mairixApiRouter(
+        action,
+        payload
+      );
+
+
+    return ContentService
+      .createTextOutput(
+        JSON.stringify(
+          result
+        )
+      )
+      .setMimeType(
+        ContentService.MimeType.JSON
+      );
+
+  } catch (error) {
+
+    return ContentService
+      .createTextOutput(
+        JSON.stringify(
+          mairixApiError(
+            error,
+            "DO_POST_ERROR"
+          )
+        )
+      )
+      .setMimeType(
+        ContentService.MimeType.JSON
+      );
+
+  }
+
+}
+
+
+/************************************************
+ * API HEALTH CHECK
+ ************************************************/
+
+function apiHealthCheck() {
+
+  try {
+
+    const context =
+      mairixApiCurrentUser();
+
+
+    return mairixApiSuccess(
+      {
+
+        status:
+          "ONLINE",
+
+        apiVersion:
+          MAIRIX_UI_API_VERSION,
+
+        userId:
+          context.userId,
+
+        role:
+          context.role,
+
+        timestamp:
+          new Date()
+
+      },
+      "MAIRIX API is online."
+    );
+
+  } catch (error) {
+
+    return mairixApiError(
+      error,
+      "API_HEALTH_ERROR"
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * TEST UI API
+ ************************************************/
+
+function testMAIRIXUIAPI() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /**********************************************
+   * CURRENT USER
+   **********************************************/
+
+  const currentUser =
+    apiGetCurrentUser();
+
+
+  Logger.log(
+    "CURRENT USER:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      currentUser,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !currentUser ||
+    currentUser.success !== true
+  ) {
+
+    throw new Error(
+      "Current user API failed."
+    );
+
+  }
+
+
+  /**********************************************
+   * HEALTH
+   **********************************************/
+
+  const health =
+    apiHealthCheck();
+
+
+  Logger.log(
+    "HEALTH:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      health,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !health ||
+    health.success !== true
+  ) {
+
+    throw new Error(
+      "API health check failed."
+    );
+
+  }
+
+
+  /**********************************************
+   * PERMISSIONS
+   **********************************************/
+
+  const permissions =
+    apiGetMyPermissions();
+
+
+  Logger.log(
+    "PERMISSIONS:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      permissions,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    !permissions ||
+    permissions.success !== true
+  ) {
+
+    throw new Error(
+      "Permissions API failed."
+    );
+
+  }
+
+
+  /**********************************************
+   * SEARCH API SMOKE TESTS
+   *
+   * These intentionally do NOT invent a
+   * database value.
+   *
+   * Empty query verifies that the endpoint
+   * responds safely without dumping Master Data.
+   **********************************************/
+
+  const products =
+    apiSearchProducts(
+      ""
+    );
+
+
+  Logger.log(
+    "PRODUCT SEARCH EMPTY QUERY:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      products,
+      null,
+      2
+    )
+  );
+
+
+  const customers =
+    apiSearchCustomers(
+      ""
+    );
+
+
+  Logger.log(
+    "CUSTOMER SEARCH EMPTY QUERY:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      customers,
+      null,
+      2
+    )
+  );
+
+
+  const vendors =
+    apiSearchVendors(
+      ""
+    );
+
+
+  Logger.log(
+    "VENDOR SEARCH EMPTY QUERY:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      vendors,
+      null,
+      2
+    )
+  );
+
+
+  /**********************************************
+   * FINAL
+   **********************************************/
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX UI API TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * MAIRIX API PERMISSION MAP
+ *
+ * Central documentation of API permissions.
+ ************************************************/
+
+const MAIRIX_API_PERMISSIONS = {
+
+  MASTER_DATA:
+    "MASTER_DATA",
+
+  SALES:
+    "SALES",
+
+  SALES_RETURN_CREATE:
+    "SALES_RETURNS_CREATE",
+
+  PURCHASE_CREATE:
+    "PURCHASES_CREATE",
+
+  PURCHASE_RETURN_CREATE:
+    "PURCHASE_RETURNS_CREATE",
+
+  COLLECTION_CREATE:
+    "COLLECTIONS_CREATE",
+
+  VENDOR_PAYMENT_CREATE:
+    "VENDOR_PAYMENTS_CREATE",
+
+  EXPENSE_CREATE:
+    "EXPENSES_CREATE",
+
+  COMMISSIONS_VIEW:
+    "COMMISSIONS_VIEW",
+
+  SALES:
+    "SALES",
+
+  TAX_VIEW:
+    "TAX_VIEW",
+
+  INVENTORY_VIEW:
+    "INVENTORY_VIEW",
+
+  FINANCIAL_STATEMENTS_VIEW:
+    "FINANCIAL_STATEMENTS_VIEW",
+
+  REPORTS_VIEW:
+    "REPORTS_VIEW",
+
+  AUDIT_VIEW:
+    "AUDIT_VIEW",
+
+  EMPLOYEE_EVALUATION_VIEW:
+    "EMPLOYEE_EVALUATION_VIEW",
+
+  SETTINGS_VIEW:
+    "SETTINGS_VIEW",
+
+  USERS_CREATE:
+    "USERS_CREATE",
+
+  USERS_EDIT:
+    "USERS_EDIT"
+
+};
+
+
+/************************************************
+ * SANITIZE CLIENT TRANSACTION PAYLOAD
+ *
+ * Client supplied security identity is ignored.
+ *
+ * Server identity is authoritative.
+ ************************************************/
+
+function mairixApiSanitizeTransactionPayload(
+  data,
+  context
+) {
+
+  const request =
+    Object.assign(
+      {},
+      data || {}
+    );
+
+
+  /*
+   * Never trust these values from UI.
+   */
+
+  delete request.userId;
+
+  delete request.serverUserId;
+
+  delete request.user;
+
+  delete request.role;
+
+  delete request.email;
+
+  delete request.userEmail;
+
+  delete request.userName;
+
+  delete request.createdBy;
+
+  delete request.updatedBy;
+
+
+  /*
+   * Server-owned identity.
+   */
+
+  request.serverUserId =
+    context.userId;
+
+  request.serverUserEmail =
+    context.email;
+
+  request.serverUserName =
+    context.name;
+
+
+  return request;
+
+}

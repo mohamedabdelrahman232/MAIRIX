@@ -1,0 +1,275 @@
+/************************************************
+ * MAIRIX ERP
+ * 85-MAIRIX_CompatibilityPatch.gs
+ *
+ * SAFE COMPATIBILITY LAYER
+ *
+ * IMPORTANT:
+ * - No recursion between getSheet and mairixGetSheet
+ * - Never accepts undefined sheet names silently
+ * - Provides clear diagnostic errors
+ ************************************************/
+
+
+/************************************************
+ * INTERNAL: GET ACTIVE SPREADSHEET
+ ************************************************/
+function mairixGetActiveSpreadsheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (!ss) {
+    throw new Error(
+      'MAIRIX ERROR: Active Spreadsheet not available.'
+    );
+  }
+
+  return ss;
+}
+
+
+/************************************************
+ * INTERNAL: VALIDATE SHEET NAME
+ ************************************************/
+function mairixValidateSheetName_(sheetName, callerName) {
+
+  if (
+    sheetName === undefined ||
+    sheetName === null ||
+    String(sheetName).trim() === ''
+  ) {
+
+    throw new Error(
+      'MAIRIX ERROR: Sheet name is required. ' +
+      'Caller: ' + (callerName || 'UNKNOWN')
+    );
+  }
+
+  return String(sheetName).trim();
+}
+
+
+/************************************************
+ * INTERNAL: FIND SHEET
+ ************************************************/
+function mairixFindSheet_(sheetName) {
+
+  const ss = mairixGetActiveSpreadsheet_();
+
+  const normalizedName =
+    mairixValidateSheetName_(
+      sheetName,
+      'mairixFindSheet_'
+    );
+
+  return ss.getSheetByName(normalizedName);
+}
+
+
+/************************************************
+ * INTERNAL: REQUIRE SHEET
+ ************************************************/
+function mairixRequireSheet_(sheetName, callerName) {
+
+  const normalizedName =
+    mairixValidateSheetName_(
+      sheetName,
+      callerName || 'mairixRequireSheet_'
+    );
+
+  const sheet =
+    mairixFindSheet_(normalizedName);
+
+  if (!sheet) {
+
+    const ss = mairixGetActiveSpreadsheet_();
+
+    const availableSheets =
+      ss.getSheets()
+        .map(function(sheetItem) {
+          return sheetItem.getName();
+        })
+        .join(', ');
+
+    throw new Error(
+      'MAIRIX ERROR: Sheet not found: "' +
+      normalizedName +
+      '". Available sheets: [' +
+      availableSheets +
+      ']'
+    );
+  }
+
+  return sheet;
+}
+
+
+/************************************************
+ * PUBLIC COMPATIBILITY FUNCTION
+ *
+ * LEGACY NAME:
+ * getSheet(sheetName)
+ ************************************************/
+function getSheet(sheetName) {
+
+  return mairixRequireSheet_(
+    sheetName,
+    'getSheet'
+  );
+}
+
+
+/************************************************
+ * PUBLIC MAIRIX FUNCTION
+ *
+ * NEW NAME:
+ * mairixGetSheet(sheetName)
+ ************************************************/
+function mairixGetSheet(sheetName) {
+
+  return mairixRequireSheet_(
+    sheetName,
+    'mairixGetSheet'
+  );
+}
+
+
+/************************************************
+ * OPTIONAL SAFE LOOKUP
+ *
+ * Returns null instead of throwing.
+ ************************************************/
+function mairixFindSheet(sheetName) {
+
+  const normalizedName =
+    mairixValidateSheetName_(
+      sheetName,
+      'mairixFindSheet'
+    );
+
+  return mairixFindSheet_(normalizedName);
+}
+
+
+/************************************************
+ * CHECK SHEET EXISTS
+ ************************************************/
+function mairixSheetExists(sheetName) {
+
+  if (
+    sheetName === undefined ||
+    sheetName === null ||
+    String(sheetName).trim() === ''
+  ) {
+    return false;
+  }
+
+  return !!mairixFindSheet_(
+    String(sheetName).trim()
+  );
+}
+
+
+/************************************************
+ * GET SHEET DATA
+ ************************************************/
+function mairixGetSheetData(sheetName) {
+
+  const sheet =
+    mairixRequireSheet_(
+      sheetName,
+      'mairixGetSheetData'
+    );
+
+  return sheet.getDataRange().getValues();
+}
+
+
+/************************************************
+ * GET SHEET HEADERS
+ ************************************************/
+function mairixGetSheetHeaders(sheetName) {
+
+  const sheet =
+    mairixRequireSheet_(
+      sheetName,
+      'mairixGetSheetHeaders'
+    );
+
+  const lastColumn = sheet.getLastColumn();
+
+  if (lastColumn === 0) {
+    return [];
+  }
+
+  return sheet
+    .getRange(1, 1, 1, lastColumn)
+    .getValues()[0]
+    .map(function(header) {
+      return String(header || '').trim();
+    });
+}
+
+
+/************************************************
+ * COMPATIBILITY TEST
+ ************************************************/
+function mairixTestCompatibilityPatch() {
+
+  Logger.log('==========================================');
+  Logger.log('MAIRIX COMPATIBILITY PATCH TEST');
+  Logger.log('==========================================');
+
+  const ss =
+    mairixGetActiveSpreadsheet_();
+
+  const sheets =
+    ss.getSheets().map(function(sheet) {
+      return sheet.getName();
+    });
+
+  Logger.log(
+    'AVAILABLE SHEETS: ' +
+    JSON.stringify(sheets)
+  );
+
+  Logger.log(
+    'ACTIVE SPREADSHEET: ' +
+    ss.getName()
+  );
+
+  Logger.log('------------------------------------------');
+
+  Logger.log(
+    'Testing undefined protection...'
+  );
+
+  try {
+
+    mairixGetSheet();
+
+    throw new Error(
+      'Undefined protection FAILED'
+    );
+
+  } catch (error) {
+
+    Logger.log(
+      'Undefined protection OK: ' +
+      error.message
+    );
+  }
+
+  Logger.log('------------------------------------------');
+
+  Logger.log(
+    'COMPATIBILITY PATCH: OK'
+  );
+
+  Logger.log('==========================================');
+
+  return {
+    success: true,
+    spreadsheet: ss.getName(),
+    sheets: sheets
+  };
+}

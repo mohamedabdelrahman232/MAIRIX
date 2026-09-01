@@ -1,0 +1,69 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 71-MAIRIX_FinancialStatements.gs
+ *
+ * Management Income Statement + Management Balance Sheet.
+ *
+ * These are administrative management statements, not
+ * statutory double-entry financial statements.
+ ************************************************/
+
+function mairixBuildManagementIncomeStatement(input) {
+  input = input || {};
+
+  var netSales = Number(input.netSales || 0);
+  var cogs = Number(input.cogs || 0);
+  var commissions = Number(input.commissions || 0);
+  var allocatedExpenses = Number(input.allocatedExpenses || 0);
+  var generalExpenses = Number(input.generalExpenses || 0);
+
+  var grossProfit = netSales - cogs;
+  var netProfit =
+    grossProfit -
+    commissions -
+    allocatedExpenses -
+    generalExpenses;
+
+  return {
+    netSales: netSales,
+    cogs: cogs,
+    grossProfit: grossProfit,
+    commissions: commissions,
+    allocatedExpenses: allocatedExpenses,
+    generalExpenses: generalExpenses,
+    netProfit: netProfit
+  };
+}
+
+function mairixBuildManagementBalanceSheet(input) {
+  input = input || {};
+
+  return {
+    assets: {
+      inventory: Number(input.inventory || 0),
+      customerReceivables: Number(input.customerReceivables || 0),
+      estimatedCash: Number(input.estimatedCash || 0)
+    },
+    liabilities: {
+      supplierPayables: Number(input.supplierPayables || 0),
+      outstandingCommissions: Number(input.outstandingCommissions || 0)
+    }
+  };
+}
+
+function testMairixFinancialStatementsContract() {
+  var income = mairixBuildManagementIncomeStatement({
+    netSales: 1000,
+    cogs: 600,
+    commissions: 50,
+    allocatedExpenses: 25,
+    generalExpenses: 100
+  });
+
+  if (income.netProfit !== 225) {
+    throw new Error("Income statement calculation failed.");
+  }
+
+  Logger.log("71 FINANCIAL STATEMENTS: PASS");
+  return { success: true, statementType: "MANAGEMENT" };
+}

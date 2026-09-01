@@ -1,0 +1,740 @@
+/************************************************
+ * MAIRIX ERP
+ * UI APPLICATION SHELL
+ *
+ * FILE:
+ * MAIRIX_UI_App.gs
+ *
+ * PURPOSE:
+ *
+ * 1. Web App entry point.
+ * 2. Serve the MAIRIX UI.
+ * 3. Provide the application shell bootstrap.
+ * 4. Keep UI routing separate from business logic.
+ * 5. Never access Sheets directly from the UI.
+ * 6. Never perform authorization decisions here.
+ *
+ * IMPORTANT:
+ *
+ * UI = Presentation / Interaction Layer
+ *
+ * AUTHORIZATION remains server-side.
+ * TRANSACTIONS remain server-side.
+ * VALIDATION remains server-side.
+ * DATABASE access remains server-side.
+ ************************************************/
+
+
+/************************************************
+ * WEB APP ENTRY POINT
+ ************************************************/
+
+function doGet() {
+
+  return HtmlService
+    .createTemplateFromFile(
+      'MAIRIX_UI_Index'
+    )
+    .evaluate()
+    .setTitle(
+      'MAIRIX ERP'
+    )
+    .setXFrameOptionsMode(
+      HtmlService.XFrameOptionsMode.ALLOWALL
+    );
+
+}
+
+
+/************************************************
+ * INCLUDE UI FILE
+ *
+ * Used later for modular HTML files.
+ *
+ * Example:
+ *
+ * <?!= include('MAIRIX_UI_Components'); ?>
+ *
+ * IMPORTANT:
+ *
+ * This is only an HTML composition helper.
+ * It does not access business data.
+ ************************************************/
+
+function include(
+  filename
+) {
+
+  if (
+    !filename ||
+    typeof filename !== 'string'
+  ) {
+
+    throw new Error(
+      'Invalid UI include filename.'
+    );
+
+  }
+
+
+  return HtmlService
+    .createHtmlOutputFromFile(
+      filename
+    )
+    .getContent();
+
+}
+
+
+/************************************************
+ * UI APPLICATION CONFIGURATION
+ *
+ * Static UI configuration only.
+ *
+ * No sensitive information.
+ * No passwords.
+ * No authorization secrets.
+ * No database credentials.
+ ************************************************/
+
+function apiGetUIConfiguration() {
+
+  return {
+
+    success:
+      true,
+
+    application:
+      'MAIRIX ERP',
+
+    version:
+      '1.0',
+
+    ui:
+      {
+
+        defaultLanguage:
+          'ar',
+
+        direction:
+          'rtl',
+
+        initialSaleRows:
+          5,
+
+        allowAdditionalSaleRows:
+          true
+
+      }
+
+  };
+
+}
+
+
+/************************************************
+ * APPLICATION HEALTH CHECK
+ *
+ * This does NOT replace transaction validation
+ * or authorization.
+ *
+ * It only verifies that the UI backend endpoint
+ * is reachable.
+ ************************************************/
+
+function apiUIHealthCheck() {
+
+  return {
+
+    success:
+      true,
+
+    service:
+      'MAIRIX ERP UI',
+
+    status:
+      'AVAILABLE'
+
+  };
+
+}
+
+
+/************************************************
+ * UI ROUTING MAP
+ *
+ * This is a presentation map only.
+ *
+ * A route being present here does NOT grant
+ * permission to access it.
+ *
+ * Server-side permission checks remain
+ * authoritative.
+ ************************************************/
+
+function apiGetUIRoutes() {
+
+  return {
+
+    success:
+      true,
+
+    routes:
+      [
+
+        {
+          id:
+            'dashboard',
+
+          title:
+            'لوحة التحكم',
+
+          module:
+            'dashboard',
+
+          screen:
+            'MAIRIX_UI_Dashboard'
+
+        },
+
+        {
+          id:
+            'sales',
+
+          title:
+            'المبيعات',
+
+          module:
+            'sales',
+
+          screen:
+            'MAIRIX_UI_Sales'
+
+        },
+
+        {
+          id:
+            'salesReturn',
+
+          title:
+            'مرتجع المبيعات',
+
+          module:
+            'salesReturn',
+
+          screen:
+            'MAIRIX_UI_SalesReturn'
+
+        },
+
+        {
+          id:
+            'purchases',
+
+          title:
+            'المشتريات',
+
+          module:
+            'purchases',
+
+          screen:
+            'MAIRIX_UI_Purchases'
+
+        },
+
+        {
+          id:
+            'purchaseReturn',
+
+          title:
+            'مرتجع المشتريات',
+
+          module:
+            'purchaseReturn',
+
+          screen:
+            'MAIRIX_UI_PurchaseReturn'
+
+        },
+
+        {
+          id:
+            'collections',
+
+          title:
+            'تحصيلات العملاء',
+
+          module:
+            'collections',
+
+          screen:
+            'MAIRIX_UI_Collections'
+
+        },
+
+        {
+          id:
+            'supplierPayments',
+
+          title:
+            'سداد الموردين',
+
+          module:
+            'supplierPayments',
+
+          screen:
+            'MAIRIX_UI_SupplierPayments'
+
+        },
+
+        {
+          id:
+            'expenses',
+
+          title:
+            'المصروفات',
+
+          module:
+            'expenses',
+
+          screen:
+            'MAIRIX_UI_Expenses'
+
+        },
+
+        {
+          id:
+            'products',
+
+          title:
+            'الأصناف',
+
+          module:
+            'products',
+
+          screen:
+            'MAIRIX_UI_Products'
+
+        },
+
+        {
+          id:
+            'customers',
+
+          title:
+            'العملاء',
+
+          module:
+            'customers',
+
+          screen:
+            'MAIRIX_UI_Customers'
+
+        },
+
+        {
+          id:
+            'suppliers',
+
+          title:
+            'الموردون',
+
+          module:
+            'suppliers',
+
+          screen:
+            'MAIRIX_UI_Suppliers'
+
+        },
+
+        {
+          id:
+            'inventory',
+
+          title:
+            'المخزون',
+
+          module:
+            'inventory',
+
+          screen:
+            'MAIRIX_UI_Inventory'
+
+        },
+
+        {
+          id:
+            'warehouses',
+
+          title:
+            'المخازن',
+
+          module:
+            'warehouses',
+
+          screen:
+            'MAIRIX_UI_Warehouses'
+
+        },
+
+        {
+          id:
+            'salesmen',
+
+          title:
+            'المناديب',
+
+          module:
+            'salesmen',
+
+          screen:
+            'MAIRIX_UI_Salesmen'
+
+        },
+
+        {
+          id:
+            'commissions',
+
+          title:
+            'العمولات',
+
+          module:
+            'commissions',
+
+          screen:
+            'MAIRIX_UI_Commissions'
+
+        },
+
+        {
+          id:
+            'employees',
+
+          title:
+            'الموظفون',
+
+          module:
+            'employees',
+
+          screen:
+            'MAIRIX_UI_Employees'
+
+        },
+
+        {
+          id:
+            'evaluations',
+
+          title:
+            'تقييم الموظفين',
+
+          module:
+            'evaluations',
+
+          screen:
+            'MAIRIX_UI_EmployeeEvaluation'
+
+        },
+
+        {
+          id:
+            'reports',
+
+          title:
+            'التقارير',
+
+          module:
+            'reports',
+
+          screen:
+            'MAIRIX_UI_Reports'
+
+        },
+
+        {
+          id:
+            'administration',
+
+          title:
+            'الإدارة',
+
+          module:
+            'administration',
+
+          screen:
+            'MAIRIX_UI_Administration'
+
+        }
+
+      ]
+
+  };
+
+}
+
+
+/************************************************
+ * APPLICATION START CONTRACT
+ *
+ * The Index file calls this function if the
+ * Application Shell is loaded.
+ *
+ * IMPORTANT:
+ *
+ * This function does not authenticate a user.
+ *
+ * Authentication / current-user resolution is
+ * performed by the existing server-side user
+ * context contract.
+ ************************************************/
+
+function apiInitializeApplication() {
+
+  var userResult =
+    apiGetCurrentUser();
+
+  if (
+    !userResult ||
+    userResult.success !== true
+  ) {
+
+    return {
+
+      success:
+        false,
+
+      error:
+        {
+
+          code:
+            'UI_USER_CONTEXT_FAILED',
+
+          message:
+            'تعذر الحصول على بيانات المستخدم الحالي.'
+
+        }
+
+    };
+
+  }
+
+
+  var configuration =
+    apiGetUIConfiguration();
+
+
+  var routes =
+    apiGetUIRoutes();
+
+
+  return {
+
+    success:
+      true,
+
+    user:
+      userResult,
+
+    configuration:
+      configuration,
+
+    routes:
+      routes
+
+  };
+
+}
+
+
+/************************************************
+ * SERVER-SIDE CURRENT USER CONTRACT
+ *
+ * IMPORTANT:
+ *
+ * Do NOT trust a userId supplied by the UI.
+ *
+ * The existing MAIRIX access layer is the
+ * authority for resolving the authenticated
+ * user.
+ *
+ * This wrapper intentionally delegates to the
+ * existing function if available.
+ ************************************************/
+
+function apiGetCurrentUser() {
+
+  /*
+   * Existing MAIRIX user-context implementation
+   * must be used here.
+   *
+   * This wrapper does not accept userId.
+   */
+
+
+  if (
+    typeof getCurrentUserContext ===
+    'function'
+  ) {
+
+    return getCurrentUserContext();
+
+  }
+
+
+  if (
+    typeof getCurrentUser ===
+    'function'
+  ) {
+
+    return getCurrentUser();
+
+  }
+
+
+  /*
+   * Do not silently invent a user.
+   *
+   * If the project does not expose the expected
+   * current-user contract, fail closed.
+   */
+
+  return {
+
+    success:
+      false,
+
+    error:
+      {
+
+        code:
+          'CURRENT_USER_API_NOT_AVAILABLE',
+
+        message:
+          'خدمة المستخدم الحالي غير متاحة.'
+
+      }
+
+  };
+
+}
+
+
+/************************************************
+ * UI ROUTE ACCESS HELPER
+ *
+ * IMPORTANT:
+ *
+ * This function is NOT an authorization engine.
+ *
+ * It only resolves whether a UI route exists.
+ *
+ * Actual permission checking must be performed
+ * by the server-side Access Control layer.
+ ************************************************/
+
+function apiResolveUIRoute(
+  routeId
+) {
+
+  if (
+    !routeId ||
+    typeof routeId !== 'string'
+  ) {
+
+    return {
+
+      success:
+        false,
+
+      error:
+        {
+
+          code:
+            'INVALID_ROUTE_ID',
+
+          message:
+            'Route ID غير صالح.'
+
+        }
+
+    };
+
+  }
+
+
+  var result =
+    apiGetUIRoutes();
+
+
+  if (
+    !result ||
+    result.success !== true
+  ) {
+
+    return {
+
+      success:
+        false,
+
+      error:
+        {
+
+          code:
+            'UI_ROUTES_UNAVAILABLE',
+
+          message:
+            'تعذر تحميل مسارات الواجهة.'
+
+        }
+
+    };
+
+  }
+
+
+  for (
+    var i = 0;
+    i < result.routes.length;
+    i++
+  ) {
+
+    if (
+      result.routes[i].id ===
+      routeId
+    ) {
+
+      return {
+
+        success:
+          true,
+
+        route:
+          result.routes[i]
+
+      };
+
+    }
+
+  }
+
+
+  return {
+
+    success:
+      false,
+
+    error:
+      {
+
+        code:
+          'ROUTE_NOT_FOUND',
+
+        message:
+          'الشاشة المطلوبة غير موجودة.'
+
+      }
+
+  };
+
+}

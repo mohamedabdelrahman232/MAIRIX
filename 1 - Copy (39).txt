@@ -1,0 +1,832 @@
+<!--
+============================================================
+MAIRIX ERP
+APPLICATION SHELL
+
+FILE:
+39-MAIRIX_UI_AppShell.html
+
+PURPOSE:
+
+Central application shell for the Web App.
+
+RESPONSIBILITIES:
+
+- Render navigation
+- Render current-user summary
+- Resolve routes
+- Load screens
+- Hide unauthorized UI elements
+- Keep transaction authorization server-side
+
+IMPORTANT:
+
+Hidden navigation is NOT security.
+
+Every server operation remains protected.
+============================================================
+-->
+
+<style>
+
+  .mairix-shell {
+
+    min-height:
+      100vh;
+
+    display:
+      flex;
+
+    flex-direction:
+      column;
+
+    background:
+      #f5f6f8;
+
+  }
+
+
+  .mairix-shell-header {
+
+    min-height:
+      64px;
+
+    display:
+      flex;
+
+    align-items:
+      center;
+
+    justify-content:
+      space-between;
+
+    padding:
+      0 18px;
+
+    background:
+      #ffffff;
+
+    border-bottom:
+      1px solid #e0e0e0;
+
+  }
+
+
+  .mairix-shell-brand {
+
+    font-size:
+      20px;
+
+    font-weight:
+      800;
+
+  }
+
+
+  .mairix-shell-user {
+
+    display:
+      flex;
+
+    align-items:
+      center;
+
+    gap:
+      10px;
+
+    font-size:
+      13px;
+
+  }
+
+
+  .mairix-shell-body {
+
+    flex:
+      1;
+
+    display:
+      flex;
+
+    min-height:
+      0;
+
+  }
+
+
+  .mairix-shell-sidebar {
+
+    width:
+      230px;
+
+    background:
+      #ffffff;
+
+    border-left:
+      1px solid #e0e0e0;
+
+    overflow-y:
+      auto;
+
+  }
+
+
+  .mairix-shell-content {
+
+    flex:
+      1;
+
+    padding:
+      18px;
+
+    overflow:
+      auto;
+
+  }
+
+
+  .mairix-shell-menu {
+
+    padding:
+      10px;
+
+  }
+
+
+  .mairix-shell-menu-button {
+
+    width:
+      100%;
+
+    min-height:
+      42px;
+
+    margin-bottom:
+      5px;
+
+    border:
+      0;
+
+    border-radius:
+      7px;
+
+    background:
+      transparent;
+
+    text-align:
+      right;
+
+    padding:
+      9px 12px;
+
+    cursor:
+      pointer;
+
+  }
+
+
+  .mairix-shell-menu-button:hover {
+
+    background:
+      #f1f1f1;
+
+  }
+
+
+  .mairix-shell-menu-button.is-active {
+
+    background:
+      #e9e9e9;
+
+    font-weight:
+      700;
+
+  }
+
+
+  .mairix-shell-loading {
+
+    padding:
+      40px;
+
+    text-align:
+      center;
+
+  }
+
+
+  .mairix-shell-error {
+
+    padding:
+      24px;
+
+    border:
+      1px solid #ddd;
+
+    border-radius:
+      8px;
+
+    background:
+      #fff;
+
+  }
+
+
+  @media (
+    max-width: 760px
+  ) {
+
+    .mairix-shell-body {
+
+      flex-direction:
+        column;
+
+    }
+
+
+    .mairix-shell-sidebar {
+
+      width:
+        100%;
+
+      border-left:
+        0;
+
+      border-bottom:
+        1px solid #e0e0e0;
+
+    }
+
+
+    .mairix-shell-menu {
+
+      display:
+        flex;
+
+      gap:
+        5px;
+
+      overflow-x:
+        auto;
+
+    }
+
+
+    .mairix-shell-menu-button {
+
+      width:
+        auto;
+
+      min-width:
+        max-content;
+
+    }
+
+  }
+
+</style>
+
+
+<script>
+
+/************************************************************
+ * APPLICATION STATE
+ ************************************************************/
+
+var MAIRIX_UI_APP_STATE = {
+
+  session:
+    null,
+
+  routes:
+    [],
+
+  currentRoute:
+    null
+
+};
+
+
+/************************************************************
+ * INITIALIZE APPLICATION
+ ************************************************************/
+
+function mairixUIInitializeApp(
+  context
+) {
+
+  var root =
+    document.getElementById(
+      "mairixApplicationRoot"
+    );
+
+
+  if (!root) {
+
+    return;
+
+  }
+
+
+  root.innerHTML = "";
+
+
+  var shell =
+    document.createElement(
+      "div"
+    );
+
+  shell.className =
+    "mairix-shell";
+
+
+  root.appendChild(
+    shell
+  );
+
+
+  var header =
+    document.createElement(
+      "div"
+    );
+
+  header.className =
+    "mairix-shell-header";
+
+
+  shell.appendChild(
+    header
+  );
+
+
+  var brand =
+    document.createElement(
+      "div"
+    );
+
+  brand.className =
+    "mairix-shell-brand";
+
+  brand.textContent =
+    "MAIRIX ERP";
+
+
+  header.appendChild(
+    brand
+  );
+
+
+  var userBox =
+    document.createElement(
+      "div"
+    );
+
+  userBox.className =
+    "mairix-shell-user";
+
+
+  var user =
+    context.data &&
+    context.data.user
+      ? context.data.user
+      : context.user ||
+        null;
+
+
+  if (user) {
+
+    userBox.textContent =
+      (
+        user.name ||
+        user.email ||
+        user.userId ||
+        ""
+      );
+
+  }
+
+
+  header.appendChild(
+    userBox
+  );
+
+
+  var body =
+    document.createElement(
+      "div"
+    );
+
+  body.className =
+    "mairix-shell-body";
+
+
+  shell.appendChild(
+    body
+  );
+
+
+  var sidebar =
+    document.createElement(
+      "aside"
+    );
+
+  sidebar.className =
+    "mairix-shell-sidebar";
+
+
+  body.appendChild(
+    sidebar
+  );
+
+
+  var menu =
+    document.createElement(
+      "div"
+    );
+
+  menu.className =
+    "mairix-shell-menu";
+
+
+  sidebar.appendChild(
+    menu
+  );
+
+
+  var content =
+    document.createElement(
+      "main"
+    );
+
+  content.className =
+    "mairix-shell-content";
+
+
+  body.appendChild(
+    content
+  );
+
+
+  MAIRIX_UI_APP_STATE.session =
+    context;
+
+
+  if (
+    context.routes &&
+    Array.isArray(
+      context.routes
+    )
+  ) {
+
+    MAIRIX_UI_APP_STATE.routes =
+      context.routes;
+
+  } else if (
+    context.data &&
+    context.data.routes &&
+    Array.isArray(
+      context.data.routes
+    )
+  ) {
+
+    MAIRIX_UI_APP_STATE.routes =
+      context.data.routes;
+
+  }
+
+
+  mairixUIRenderRoutes(
+    menu
+  );
+
+
+  if (
+    MAIRIX_UI_APP_STATE.routes.length
+  ) {
+
+    mairixUINavigate(
+      MAIRIX_UI_APP_STATE.routes[0].id
+    );
+
+  } else {
+
+    content.textContent =
+      "لا توجد شاشات متاحة.";
+
+  }
+
+}
+
+
+/************************************************************
+ * RENDER ROUTES
+ ************************************************************/
+
+function mairixUIRenderRoutes(
+  menu
+) {
+
+  menu.innerHTML = "";
+
+
+  MAIRIX_UI_APP_STATE.routes.forEach(
+    function(route) {
+
+      var button =
+        document.createElement(
+          "button"
+        );
+
+
+      button.type =
+        "button";
+
+
+      button.className =
+        "mairix-shell-menu-button";
+
+
+      button.textContent =
+        route.title ||
+        route.id;
+
+
+      button.addEventListener(
+        "click",
+        function() {
+
+          mairixUINavigate(
+            route.id
+          );
+
+        }
+      );
+
+
+      menu.appendChild(
+        button
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * NAVIGATE
+ ************************************************************/
+
+function mairixUINavigate(
+  routeId
+) {
+
+  var route =
+    null;
+
+
+  for (
+    var i = 0;
+    i <
+    MAIRIX_UI_APP_STATE.routes.length;
+    i++
+  ) {
+
+    if (
+      MAIRIX_UI_APP_STATE.routes[i].id ===
+      routeId
+    ) {
+
+      route =
+        MAIRIX_UI_APP_STATE.routes[i];
+
+      break;
+
+    }
+
+  }
+
+
+  if (!route) {
+
+    mairixUIShowRouteError(
+      "الشاشة المطلوبة غير موجودة."
+    );
+
+    return;
+
+  }
+
+
+  MAIRIX_UI_APP_STATE.currentRoute =
+    route;
+
+
+  var content =
+    document.querySelector(
+      ".mairix-shell-content"
+    );
+
+
+  if (!content) {
+
+    return;
+
+  }
+
+
+  content.innerHTML = "";
+
+
+  var loading =
+    document.createElement(
+      "div"
+    );
+
+  loading.className =
+    "mairix-shell-loading";
+
+
+  loading.textContent =
+    "جاري تحميل الشاشة...";
+
+
+  content.appendChild(
+    loading
+  );
+
+
+  mairixUIUpdateActiveMenu(
+    routeId
+  );
+
+
+  /*
+   * Screen loader is intentionally isolated.
+   *
+   * A route existing does NOT mean the user
+   * has permission to execute its operations.
+   */
+
+  mairixUILoadScreen(
+    route,
+    content
+  );
+
+}
+
+
+/************************************************************
+ * ACTIVE MENU
+ ************************************************************/
+
+function mairixUIUpdateActiveMenu(
+  routeId
+) {
+
+  var buttons =
+    document.querySelectorAll(
+      ".mairix-shell-menu-button"
+    );
+
+
+  buttons.forEach(
+    function(button, index) {
+
+      var route =
+        MAIRIX_UI_APP_STATE.routes[
+          index
+        ];
+
+
+      if (
+        route &&
+        route.id ===
+        routeId
+      ) {
+
+        button.classList.add(
+          "is-active"
+        );
+
+      } else {
+
+        button.classList.remove(
+          "is-active"
+        );
+
+      }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * SCREEN LOADER
+ *
+ * Only resolves the presentation screen.
+ *
+ * Business operations remain server-side.
+ ************************************************************/
+
+function mairixUILoadScreen(
+  route,
+  content
+) {
+
+  content.innerHTML = "";
+
+
+  var title =
+    document.createElement(
+      "h2"
+    );
+
+  title.textContent =
+    route.title ||
+    route.id;
+
+
+  content.appendChild(
+    title
+  );
+
+
+  var placeholder =
+    document.createElement(
+      "div"
+    );
+
+
+  placeholder.className =
+    "mairix-shell-loading";
+
+
+  placeholder.textContent =
+    "الشاشة جاهزة للتحميل.";
+
+  content.appendChild(
+    placeholder
+  );
+
+
+  /*
+   * Dedicated screen modules will mount here.
+   *
+   * Example:
+   *
+   * mairixUISalesMount(content);
+   *
+   * No transaction logic belongs in the shell.
+   */
+
+}
+
+
+/************************************************************
+ * ROUTE ERROR
+ ************************************************************/
+
+function mairixUIShowRouteError(
+  message
+) {
+
+  var content =
+    document.querySelector(
+      ".mairix-shell-content"
+    );
+
+
+  if (!content) {
+
+    return;
+
+  }
+
+
+  content.innerHTML = "";
+
+
+  var box =
+    document.createElement(
+      "div"
+    );
+
+  box.className =
+    "mairix-shell-error";
+
+
+  box.textContent =
+    message ||
+    "تعذر تحميل الشاشة.";
+
+
+  content.appendChild(
+    box
+  );
+
+}
+
+</script>

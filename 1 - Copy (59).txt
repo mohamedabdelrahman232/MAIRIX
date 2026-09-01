@@ -1,0 +1,67 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 61-MAIRIX_PurchaseIntegrationTaxWAC.gs
+ *
+ * Purchase integration contract.
+ *
+ * Purchase Core + Inventory Core remain authoritative.
+ * WAC is not recalculated here.
+ ************************************************/
+
+function mairixE2EPurchaseCreate(data) {
+
+  if (typeof apiCreatePurchase !== "function") {
+    throw new Error("apiCreatePurchase() is not available.");
+  }
+
+  if (!data || !Array.isArray(data.items) || data.items.length === 0) {
+    throw new Error("Purchase requires at least one item.");
+  }
+
+  var request = Object.assign({}, data);
+
+  delete request.userId;
+  delete request.serverUserId;
+  delete request.createdBy;
+  delete request.updatedBy;
+
+  var result = apiCreatePurchase(request);
+
+  if (!result || result.success !== true) {
+    throw new Error(
+      "Purchase integration failed: " +
+      JSON.stringify(result && result.error ? result.error : result)
+    );
+  }
+
+  return result;
+}
+
+function testMairixPurchaseTaxWACContract() {
+
+  var required = [
+    "apiCreatePurchase",
+    "createPurchase",
+    "createPurchaseInventoryMovement_"
+  ];
+
+  required.forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Missing Purchase/WAC function: " + name);
+    }
+  });
+
+  if (typeof MAIF === "undefined" || !MAIF.DOC_TYPES) {
+    throw new Error("MAIF.DOC_TYPES is missing.");
+  }
+
+  Logger.log("61 PURCHASE + TAX/WAC CONTRACT: PASS");
+
+  return {
+    success: true,
+    purchase: "CONNECTED",
+    inventory: "CONNECTED",
+    wac: "OWNED_BY_INVENTORY_CORE",
+    tax: "PUBLIC_TAX_CONTRACT_REQUIRED"
+  };
+}

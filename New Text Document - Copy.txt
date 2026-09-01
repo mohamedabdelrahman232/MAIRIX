@@ -1,0 +1,34 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 77-MAIRIX_ProductionHardening.gs
+ *
+ * Production-hardening checks.
+ ************************************************/
+
+function testMairixProductionHardeningContracts() {
+  var checks = {
+    transactionReference:
+      typeof mairixBuildAuthorizedTransactionContext === "function",
+    authorization:
+      typeof mairixApiRequirePermission === "function",
+    transactionLock:
+      typeof withMaifTransactionLock_ === "function" ||
+      typeof withMairixTransactionLock_ === "function" ||
+      typeof withMairixTransactionLock === "function",
+    rejectionAudit:
+      typeof mairixRuntimeRecordRejection === "function"
+  };
+
+  Object.keys(checks).forEach(function(key) {
+    if (!checks[key]) {
+      throw new Error("Production hardening check failed: " + key);
+    }
+  });
+
+  Logger.log("77 PRODUCTION HARDENING: PASS");
+  return {
+    success: true,
+    checks: checks,
+    note: "Run manual duplicate-function/debug/legacy dependency audit before deployment."
+  };
+}

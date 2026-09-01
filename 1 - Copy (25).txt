@@ -1,0 +1,1751 @@
+/************************************************
+ * MAIRIX ERP
+ * 20-MAIRIX_FinancialStatements
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Central financial statement reporting engine.
+ *
+ * PRINCIPLE
+ * ------------------------------------------------
+ * Financial statements NEVER recalculate
+ * transaction logic independently.
+ *
+ * Every transaction produces centralized
+ * Financial Effects.
+ *
+ * FinancialStatements reads those effects and
+ * aggregates them through:
+ *
+ *      TRANSACTION
+ *           ↓
+ *    FINANCIAL EFFECT
+ *           ↓
+ *   ACCOUNTING MAPPING
+ *           ↓
+ *   STATEMENT LINE
+ *           ↓
+ *  FINANCIAL STATEMENT
+ *
+ *
+ * SUPPORTED STATEMENTS
+ * ------------------------------------------------
+ * 1. Income Statement
+ * 2. Balance Sheet
+ * 3. Cash Position
+ * 4. Receivables
+ * 5. Payables
+ * 6. Inventory
+ * 7. Tax Position
+ * 8. Equity / retained result
+ *
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * This file does NOT create transactions.
+ * This file does NOT modify inventory.
+ * This file does NOT calculate tax.
+ * This file does NOT calculate commissions.
+ *
+ * It only REPORTS centralized financial effects.
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+const MAIRIX_FINANCIAL_STATEMENTS = {
+
+  INCOME_STATEMENT:
+    "INCOME_STATEMENT",
+
+  BALANCE_SHEET:
+    "BALANCE_SHEET",
+
+  CASH_POSITION:
+    "CASH_POSITION",
+
+  RECEIVABLES:
+    "RECEIVABLES",
+
+  PAYABLES:
+    "PAYABLES",
+
+  INVENTORY:
+    "INVENTORY",
+
+  TAX_POSITION:
+    "TAX_POSITION",
+
+  EQUITY:
+    "EQUITY"
+
+};
+
+
+/************************************************
+ * CENTRAL FINANCIAL EFFECT SHEET
+ *
+ * This is the expected central source.
+ *
+ * Later FinancialEngine writes here.
+ ************************************************/
+
+const MAIRIX_FINANCIAL_EFFECTS_SHEET =
+  "FINANCIAL_EFFECTS";
+
+
+/************************************************
+ * REQUIRED FINANCIAL EFFECT HEADERS
+ ************************************************/
+
+const MAIRIX_FINANCIAL_EFFECT_HEADERS = [
+
+  "Effect ID",
+  "Reference Type",
+  "Reference ID",
+
+  "Date",
+  "Transaction Type",
+
+  "Mapping Code",
+  "Statement",
+  "Section",
+  "Line Code",
+  "Line Name",
+
+  "Effect Type",
+
+  "Amount",
+
+  /*
+   * Central signs.
+   *
+   * Positive / negative meaning is decided
+   * by FinancialEngine when the effect is created.
+   */
+
+  "Signed Amount",
+
+  /*
+   * Cash is isolated from credit balances.
+   */
+
+  "Cash Effect",
+
+  /*
+   * Receivable movement is isolated.
+   */
+
+  "Receivable Effect",
+
+  /*
+   * Payable movement is isolated.
+   */
+
+  "Payable Effect",
+
+  /*
+   * Inventory valuation movement.
+   */
+
+  "Inventory Effect",
+
+  /*
+   * Tax movement.
+   */
+
+  "Tax Effect",
+
+  "Tax Code",
+
+  /*
+   * Source information.
+   */
+
+  "User ID",
+  "Warehouse ID",
+
+  "Created At",
+
+  "Active"
+
+];
+
+
+/************************************************
+ * GET FINANCIAL EFFECTS SHEET
+ ************************************************/
+
+function getMAIRIXFinancialEffectsSheet() {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        MAIRIX_FINANCIAL_EFFECTS_SHEET
+      );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "FINANCIAL_EFFECTS sheet not found."
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * READ FINANCIAL EFFECTS
+ ************************************************/
+
+function getMAIRIXFinancialEffects() {
+
+  const sheet =
+    getMAIRIXFinancialEffectsSheet();
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  return values.map(
+    function(row) {
+
+      const object = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          object[
+            mairixCleanText(header)
+          ] =
+            row[index];
+
+        }
+      );
+
+
+      return object;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * DATE NORMALIZATION
+ ************************************************/
+
+function normalizeMAIRIXStatementDate(
+  value
+) {
+
+  if (
+    value instanceof Date &&
+    !isNaN(value.getTime())
+  ) {
+
+    return new Date(
+      value.getFullYear(),
+      value.getMonth(),
+      value.getDate()
+    );
+
+  }
+
+
+  const parsed =
+    new Date(value);
+
+
+  if (
+    isNaN(parsed.getTime())
+  ) {
+
+    return null;
+
+  }
+
+
+  return new Date(
+    parsed.getFullYear(),
+    parsed.getMonth(),
+    parsed.getDate()
+  );
+
+}
+
+
+/************************************************
+ * DATE RANGE FILTER
+ ************************************************/
+
+function filterMAIRIXFinancialEffectsByDate(
+  effects,
+  startDate,
+  endDate
+) {
+
+  const start =
+    normalizeMAIRIXStatementDate(
+      startDate
+    );
+
+
+  const end =
+    normalizeMAIRIXStatementDate(
+      endDate
+    );
+
+
+  if (!start || !end) {
+
+    throw new Error(
+      "Valid start date and end date are required."
+    );
+
+  }
+
+
+  if (
+    start.getTime() >
+    end.getTime()
+  ) {
+
+    throw new Error(
+      "Start date cannot be after end date."
+    );
+
+  }
+
+
+  end.setHours(
+    23,
+    59,
+    59,
+    999
+  );
+
+
+  return effects.filter(
+    function(effect) {
+
+      const date =
+        normalizeMAIRIXStatementDate(
+          effect["Date"]
+        );
+
+
+      if (!date) {
+        return false;
+      }
+
+
+      return (
+        date.getTime() >=
+          start.getTime() &&
+        date.getTime() <=
+          end.getTime()
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * ACTIVE EFFECT FILTER
+ ************************************************/
+
+function getActiveMAIRIXFinancialEffects(
+  effects
+) {
+
+  if (
+    !Array.isArray(
+      effects
+    )
+  ) {
+
+    return [];
+
+  }
+
+
+  return effects.filter(
+    function(effect) {
+
+      /*
+       * Empty Active is treated as active
+       * during setup / empty-data state.
+       */
+
+      if (
+        !effect ||
+        effect["Active"] === "" ||
+        effect["Active"] === null ||
+        effect["Active"] === undefined
+      ) {
+
+        return true;
+
+      }
+
+
+      return isTrueValue(
+        effect["Active"]
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * NUMERIC VALUE
+ ************************************************/
+
+function mairixFinancialNumber(
+  value
+) {
+
+  const number =
+    Number(value);
+
+
+  if (
+    isNaN(number)
+  ) {
+
+    return 0;
+
+  }
+
+
+  return number;
+
+}
+
+
+/************************************************
+ * CENTRAL AGGREGATION
+ ************************************************/
+
+function aggregateMAIRIXFinancialEffects(
+  effects
+) {
+
+  const result = {};
+
+
+  effects.forEach(
+    function(effect) {
+
+      const statement =
+        mairixCleanText(
+          effect["Statement"]
+        ).toUpperCase();
+
+
+      const section =
+        mairixCleanText(
+          effect["Section"]
+        );
+
+
+      const lineCode =
+        mairixCleanText(
+          effect["Line Code"]
+        );
+
+
+      const lineName =
+        mairixCleanText(
+          effect["Line Name"]
+        );
+
+
+      if (
+        !statement ||
+        !lineCode
+      ) {
+
+        return;
+
+      }
+
+
+      if (!result[statement]) {
+
+        result[statement] = {};
+
+      }
+
+
+      if (
+        !result[statement][lineCode]
+      ) {
+
+        result[statement][lineCode] = {
+
+          statement:
+            statement,
+
+          section:
+            section,
+
+          lineCode:
+            lineCode,
+
+          lineName:
+            lineName,
+
+          amount:
+            0,
+
+          cashEffect:
+            0,
+
+          receivableEffect:
+            0,
+
+          payableEffect:
+            0,
+
+          inventoryEffect:
+            0,
+
+          taxEffect:
+            0,
+
+          references:
+            []
+
+        };
+
+      }
+
+
+      const line =
+        result[
+          statement
+        ][
+          lineCode
+        ];
+
+
+      line.amount +=
+        mairixFinancialNumber(
+          effect["Signed Amount"]
+        );
+
+
+      line.cashEffect +=
+        mairixFinancialNumber(
+          effect["Cash Effect"]
+        );
+
+
+      line.receivableEffect +=
+        mairixFinancialNumber(
+          effect["Receivable Effect"]
+        );
+
+
+      line.payableEffect +=
+        mairixFinancialNumber(
+          effect["Payable Effect"]
+        );
+
+
+      line.inventoryEffect +=
+        mairixFinancialNumber(
+          effect["Inventory Effect"]
+        );
+
+
+      line.taxEffect +=
+        mairixFinancialNumber(
+          effect["Tax Effect"]
+        );
+
+
+      const referenceId =
+        mairixCleanText(
+          effect["Reference ID"]
+        );
+
+
+      if (referenceId) {
+
+        line.references.push({
+
+          referenceType:
+            mairixCleanText(
+              effect["Reference Type"]
+            ),
+
+          referenceId:
+            referenceId,
+
+          effectId:
+            mairixCleanText(
+              effect["Effect ID"]
+            ),
+
+          transactionType:
+            mairixCleanText(
+              effect["Transaction Type"]
+            )
+
+        });
+
+      }
+
+    }
+  );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * BUILD STATEMENT LINES
+ ************************************************/
+
+function buildMAIRIXStatementLines(
+  statement,
+  aggregated
+) {
+
+  const normalizedStatement =
+    mairixCleanText(
+      statement
+    ).toUpperCase();
+
+
+  const statementData =
+    aggregated[
+      normalizedStatement
+    ] || {};
+
+
+  return Object.keys(
+    statementData
+  ).map(
+    function(lineCode) {
+
+      const line =
+        statementData[
+          lineCode
+        ];
+
+
+      return {
+
+        statement:
+          line.statement,
+
+        section:
+          line.section,
+
+        lineCode:
+          line.lineCode,
+
+        lineName:
+          line.lineName,
+
+        amount:
+          line.amount,
+
+        cashEffect:
+          line.cashEffect,
+
+        receivableEffect:
+          line.receivableEffect,
+
+        payableEffect:
+          line.payableEffect,
+
+        inventoryEffect:
+          line.inventoryEffect,
+
+        taxEffect:
+          line.taxEffect,
+
+        referenceCount:
+          line.references.length
+
+      };
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * INCOME STATEMENT
+ ************************************************/
+
+function getMAIRIXIncomeStatement(
+  startDate,
+  endDate
+) {
+
+  const effects =
+    getActiveMAIRIXFinancialEffects();
+
+
+  const periodEffects =
+    filterMAIRIXFinancialEffectsByDate(
+      effects,
+      startDate,
+      endDate
+    );
+
+
+  const aggregated =
+    aggregateMAIRIXFinancialEffects(
+      periodEffects
+    );
+
+
+  const lines =
+    buildMAIRIXStatementLines(
+      MAIRIX_FINANCIAL_STATEMENTS
+        .INCOME_STATEMENT,
+      aggregated
+    );
+
+
+  return {
+
+    statement:
+      MAIRIX_FINANCIAL_STATEMENTS
+        .INCOME_STATEMENT,
+
+    startDate:
+      startDate,
+
+    endDate:
+      endDate,
+
+    lines:
+      lines,
+
+    totals:
+      calculateMAIRIXIncomeStatementTotals(
+        lines
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * INCOME STATEMENT TOTALS
+ ************************************************/
+
+function calculateMAIRIXIncomeStatementTotals(
+  lines
+) {
+
+  let revenue = 0;
+
+  let salesReturns = 0;
+
+  let cogs = 0;
+
+  let commissions = 0;
+
+  let expenses = 0;
+
+  let taxes = 0;
+
+
+  lines.forEach(
+    function(line) {
+
+      const section =
+        mairixCleanText(
+          line.section
+        ).toUpperCase();
+
+
+      const effect =
+        mairixFinancialNumber(
+          line.amount
+        );
+
+
+      if (
+        section === "REVENUE"
+      ) {
+
+        revenue += effect;
+
+      }
+
+
+      else if (
+        section === "SALES_RETURNS"
+      ) {
+
+        salesReturns += effect;
+
+      }
+
+
+      else if (
+        section === "COGS"
+      ) {
+
+        cogs += effect;
+
+      }
+
+
+      else if (
+        section === "COMMISSIONS"
+      ) {
+
+        commissions += effect;
+
+      }
+
+
+      else if (
+        section === "EXPENSES"
+      ) {
+
+        expenses += effect;
+
+      }
+
+
+      else if (
+        section === "TAXES"
+      ) {
+
+        taxes += effect;
+
+      }
+
+    }
+  );
+
+
+  const netSales =
+    revenue +
+    salesReturns;
+
+
+  const grossProfit =
+    netSales -
+    cogs;
+
+
+  const operatingProfit =
+    grossProfit -
+    commissions -
+    expenses;
+
+
+  const netProfit =
+    operatingProfit -
+    taxes;
+
+
+  return {
+
+    revenue:
+      revenue,
+
+    salesReturns:
+      salesReturns,
+
+    netSales:
+      netSales,
+
+    cogs:
+      cogs,
+
+    grossProfit:
+      grossProfit,
+
+    commissions:
+      commissions,
+
+    expenses:
+      expenses,
+
+    taxes:
+      taxes,
+
+    operatingProfit:
+      operatingProfit,
+
+    netProfit:
+      netProfit
+
+  };
+
+}
+
+
+/************************************************
+ * BALANCE SHEET
+ *
+ * IMPORTANT
+ * ------------------------------------------------
+ * Balance Sheet is a point-in-time statement.
+ *
+ * Therefore it reads ALL effects up to the
+ * requested end date.
+ ************************************************/
+
+function getMAIRIXBalanceSheet(
+  asOfDate
+) {
+
+  const effects =
+    getActiveMAIRIXFinancialEffects();
+
+
+  const end =
+    normalizeMAIRIXStatementDate(
+      asOfDate
+    );
+
+
+  if (!end) {
+
+    throw new Error(
+      "Valid balance sheet date is required."
+    );
+
+  }
+
+
+  end.setHours(
+    23,
+    59,
+    59,
+    999
+  );
+
+
+  const periodEffects =
+    effects.filter(
+      function(effect) {
+
+        const date =
+          normalizeMAIRIXStatementDate(
+            effect["Date"]
+          );
+
+
+        return (
+          date &&
+          date.getTime() <=
+            end.getTime()
+        );
+
+      }
+    );
+
+
+  const aggregated =
+    aggregateMAIRIXFinancialEffects(
+      periodEffects
+    );
+
+
+  const lines =
+    buildMAIRIXStatementLines(
+      MAIRIX_FINANCIAL_STATEMENTS
+        .BALANCE_SHEET,
+      aggregated
+    );
+
+
+  return {
+
+    statement:
+      MAIRIX_FINANCIAL_STATEMENTS
+        .BALANCE_SHEET,
+
+    asOfDate:
+      asOfDate,
+
+    lines:
+      lines,
+
+    totals:
+      calculateMAIRIXBalanceSheetTotals(
+        lines
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * BALANCE SHEET TOTALS
+ ************************************************/
+
+function calculateMAIRIXBalanceSheetTotals(
+  lines
+) {
+
+  let assets = 0;
+
+  let liabilities = 0;
+
+  let equity = 0;
+
+
+  lines.forEach(
+    function(line) {
+
+      const section =
+        mairixCleanText(
+          line.section
+        ).toUpperCase();
+
+
+      const amount =
+        mairixFinancialNumber(
+          line.amount
+        );
+
+
+      if (
+        section === "ASSETS"
+      ) {
+
+        assets += amount;
+
+      }
+
+
+      else if (
+        section === "LIABILITIES"
+      ) {
+
+        liabilities += amount;
+
+      }
+
+
+      else if (
+        section === "EQUITY"
+      ) {
+
+        equity += amount;
+
+      }
+
+    }
+  );
+
+
+  return {
+
+    assets:
+      assets,
+
+    liabilities:
+      liabilities,
+
+    equity:
+      equity,
+
+    liabilitiesAndEquity:
+      liabilities +
+      equity,
+
+    balanceDifference:
+      assets -
+      (
+        liabilities +
+        equity
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * CASH POSITION
+ *
+ * CASH ISOLATED FROM CREDIT.
+ ************************************************/
+
+function getMAIRIXCashPosition(
+  startDate,
+  endDate
+) {
+
+  const effects =
+    getActiveMAIRIXFinancialEffects();
+
+
+  const periodEffects =
+    filterMAIRIXFinancialEffectsByDate(
+      effects,
+      startDate,
+      endDate
+    );
+
+
+  let cashMovement = 0;
+
+
+  periodEffects.forEach(
+    function(effect) {
+
+      cashMovement +=
+        mairixFinancialNumber(
+          effect["Cash Effect"]
+        );
+
+    }
+  );
+
+
+  return {
+
+    startDate:
+      startDate,
+
+    endDate:
+      endDate,
+
+    cashMovement:
+      cashMovement
+
+  };
+
+}
+
+
+/************************************************
+ * RECEIVABLE POSITION
+ *
+ * CREDIT BALANCES ARE NOT MIXED WITH CASH.
+ ************************************************/
+
+function getMAIRIXReceivablesPosition(
+  startDate,
+  endDate
+) {
+
+  const effects =
+    getActiveMAIRIXFinancialEffects();
+
+
+  const periodEffects =
+    filterMAIRIXFinancialEffectsByDate(
+      effects,
+      startDate,
+      endDate
+    );
+
+
+  let movement = 0;
+
+
+  periodEffects.forEach(
+    function(effect) {
+
+      movement +=
+        mairixFinancialNumber(
+          effect[
+            "Receivable Effect"
+          ]
+        );
+
+    }
+  );
+
+
+  return {
+
+    startDate:
+      startDate,
+
+    endDate:
+      endDate,
+
+    receivableMovement:
+      movement
+
+  };
+
+}
+
+
+/************************************************
+ * PAYABLE POSITION
+ ************************************************/
+
+function getMAIRIXPayablesPosition(
+  startDate,
+  endDate
+) {
+
+  const effects =
+    getActiveMAIRIXFinancialEffects();
+
+
+  const periodEffects =
+    filterMAIRIXFinancialEffectsByDate(
+      effects,
+      startDate,
+      endDate
+    );
+
+
+  let movement = 0;
+
+
+  periodEffects.forEach(
+    function(effect) {
+
+      movement +=
+        mairixFinancialNumber(
+          effect[
+            "Payable Effect"
+          ]
+        );
+
+    }
+  );
+
+
+  return {
+
+    startDate:
+      startDate,
+
+    endDate:
+      endDate,
+
+    payableMovement:
+      movement
+
+  };
+
+}
+
+
+/************************************************
+ * INVENTORY POSITION
+ ************************************************/
+
+function getMAIRIXInventoryPosition(
+  startDate,
+  endDate
+) {
+
+  const effects =
+    getActiveMAIRIXFinancialEffects();
+
+
+  const periodEffects =
+    filterMAIRIXFinancialEffectsByDate(
+      effects,
+      startDate,
+      endDate
+    );
+
+
+  let movement = 0;
+
+
+  periodEffects.forEach(
+    function(effect) {
+
+      movement +=
+        mairixFinancialNumber(
+          effect[
+            "Inventory Effect"
+          ]
+        );
+
+    }
+  );
+
+
+  return {
+
+    startDate:
+      startDate,
+
+    endDate:
+      endDate,
+
+    inventoryMovement:
+      movement
+
+  };
+
+}
+
+
+/************************************************
+ * TAX POSITION
+ *
+ * TaxEngine remains responsible for tax
+ * calculation.
+ *
+ * This module only reports tax effects.
+ ************************************************/
+
+function getMAIRIXTaxPosition(
+  startDate,
+  endDate
+) {
+
+  const effects =
+    getActiveMAIRIXFinancialEffects();
+
+
+  const periodEffects =
+    filterMAIRIXFinancialEffectsByDate(
+      effects,
+      startDate,
+      endDate
+    );
+
+
+  const taxes = {};
+
+
+  periodEffects.forEach(
+    function(effect) {
+
+      const taxCode =
+        mairixCleanText(
+          effect["Tax Code"]
+        );
+
+
+      if (!taxCode) {
+        return;
+      }
+
+
+      if (!taxes[taxCode]) {
+
+        taxes[taxCode] = {
+
+          taxCode:
+            taxCode,
+
+          amount:
+            0
+
+        };
+
+      }
+
+
+      taxes[taxCode].amount +=
+        mairixFinancialNumber(
+          effect["Tax Effect"]
+        );
+
+    }
+  );
+
+
+  return {
+
+    startDate:
+      startDate,
+
+    endDate:
+      endDate,
+
+    taxes:
+      Object.keys(taxes)
+        .map(
+          function(code) {
+
+            return taxes[code];
+
+          }
+        )
+
+  };
+
+}
+
+
+/************************************************
+ * REFERENCE DRILL-DOWN
+ *
+ * Every financial report reference can be
+ * opened to reveal the source operations.
+ ************************************************/
+
+function getMAIRIXFinancialReferenceDetails(
+  referenceId
+) {
+
+  const normalizedReference =
+    mairixCleanText(
+      referenceId
+    );
+
+
+  if (!normalizedReference) {
+
+    throw new Error(
+      "Reference ID is required."
+    );
+
+  }
+
+
+  const effects =
+    getActiveMAIRIXFinancialEffects();
+
+
+  return effects.filter(
+    function(effect) {
+
+      return (
+        mairixCleanText(
+          effect["Reference ID"]
+        ) ===
+        normalizedReference
+      );
+
+    }
+  ).map(
+    function(effect) {
+
+      return {
+
+        effectId:
+          mairixCleanText(
+            effect["Effect ID"]
+          ),
+
+        referenceType:
+          mairixCleanText(
+            effect["Reference Type"]
+          ),
+
+        referenceId:
+          mairixCleanText(
+            effect["Reference ID"]
+          ),
+
+        date:
+          effect["Date"],
+
+        transactionType:
+          mairixCleanText(
+            effect["Transaction Type"]
+          ),
+
+        mappingCode:
+          mairixCleanText(
+            effect["Mapping Code"]
+          ),
+
+        statement:
+          mairixCleanText(
+            effect["Statement"]
+          ),
+
+        section:
+          mairixCleanText(
+            effect["Section"]
+          ),
+
+        lineCode:
+          mairixCleanText(
+            effect["Line Code"]
+          ),
+
+        lineName:
+          mairixCleanText(
+            effect["Line Name"]
+          ),
+
+        effectType:
+          mairixCleanText(
+            effect["Effect Type"]
+          ),
+
+        amount:
+          mairixFinancialNumber(
+            effect["Amount"]
+          ),
+
+        signedAmount:
+          mairixFinancialNumber(
+            effect["Signed Amount"]
+          ),
+
+        cashEffect:
+          mairixFinancialNumber(
+            effect["Cash Effect"]
+          ),
+
+        receivableEffect:
+          mairixFinancialNumber(
+            effect["Receivable Effect"]
+          ),
+
+        payableEffect:
+          mairixFinancialNumber(
+            effect["Payable Effect"]
+          ),
+
+        inventoryEffect:
+          mairixFinancialNumber(
+            effect["Inventory Effect"]
+          ),
+
+        taxEffect:
+          mairixFinancialNumber(
+            effect["Tax Effect"]
+          ),
+
+        taxCode:
+          mairixCleanText(
+            effect["Tax Code"]
+          ),
+
+        userId:
+          mairixCleanText(
+            effect["User ID"]
+          ),
+
+        warehouseId:
+          mairixCleanText(
+            effect["Warehouse ID"]
+          ),
+
+        createdAt:
+          effect["Created At"]
+
+      };
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * FULL FINANCIAL DASHBOARD
+ ************************************************/
+
+function getMAIRIXFinancialStatementsDashboard(
+  startDate,
+  endDate
+) {
+
+  const income =
+    getMAIRIXIncomeStatement(
+      startDate,
+      endDate
+    );
+
+
+  const cash =
+    getMAIRIXCashPosition(
+      startDate,
+      endDate
+    );
+
+
+  const receivables =
+    getMAIRIXReceivablesPosition(
+      startDate,
+      endDate
+    );
+
+
+  const payables =
+    getMAIRIXPayablesPosition(
+      startDate,
+      endDate
+    );
+
+
+  const inventory =
+    getMAIRIXInventoryPosition(
+      startDate,
+      endDate
+    );
+
+
+  const taxes =
+    getMAIRIXTaxPosition(
+      startDate,
+      endDate
+    );
+
+
+  const balance =
+    getMAIRIXBalanceSheet(
+      endDate
+    );
+
+
+  return {
+
+    period: {
+
+      startDate:
+        startDate,
+
+      endDate:
+        endDate
+
+    },
+
+    incomeStatement:
+      income,
+
+    balanceSheet:
+      balance,
+
+    cash:
+      cash,
+
+    receivables:
+      receivables,
+
+    payables:
+      payables,
+
+    inventory:
+      inventory,
+
+    taxes:
+      taxes
+
+  };
+
+}
+
+
+/************************************************
+ * TEST FINANCIAL STATEMENTS
+ ************************************************/
+
+function testMAIRIXFinancialStatements() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX FINANCIAL STATEMENTS TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const today =
+    new Date();
+
+
+  const start =
+    new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      1
+    );
+
+
+  const result =
+    getMAIRIXFinancialStatementsDashboard(
+      start,
+      today
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "FINANCIAL STATEMENTS TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

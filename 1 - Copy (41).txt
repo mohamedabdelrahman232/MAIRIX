@@ -1,0 +1,1057 @@
+<!--
+============================================================
+MAIRIX ERP
+DATA DROPDOWNS
+
+FILE:
+37-MAIRIX_UI_Dropdowns.html
+
+PURPOSE:
+
+Reusable database-backed selectors.
+
+RULE:
+
+If a value already exists in MAIRIX Master Data:
+
+USER
+  ↓
+SEARCH
+  ↓
+SERVER API
+  ↓
+MASTER DATA
+  ↓
+SELECT EXISTING RECORD
+
+The UI never creates master-data records implicitly.
+
+IMPORTANT:
+
+This file is presentation / interaction only.
+
+It does NOT:
+- access Sheets directly
+- calculate business values
+- modify inventory
+- modify ledgers
+- modify taxes
+- modify balances
+- authorize transactions
+============================================================
+-->
+
+<script>
+
+/************************************************************
+ * DROPDOWN DATA CACHE
+ *
+ * UI cache only.
+ *
+ * This cache is NEVER the source of truth.
+ ************************************************************/
+
+var MAIRIX_UI_DROPDOWN_CACHE = {
+
+  products: {},
+
+  customers: {},
+
+  vendors: {},
+
+  warehouses: {}
+
+};
+
+
+/************************************************************
+ * NORMALIZE SEARCH
+ ************************************************************/
+
+function mairixUIDropdownNormalizeSearch(
+  value
+) {
+
+  return String(
+    value ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+}
+
+
+/************************************************************
+ * GENERIC SERVER RESULT NORMALIZER
+ ************************************************************/
+
+function mairixUIDropdownExtractResults(
+  result
+) {
+
+  if (!result) {
+
+    return [];
+
+  }
+
+
+  if (
+    result.success === true
+  ) {
+
+    if (
+      Array.isArray(
+        result.data
+      )
+    ) {
+
+      return result.data;
+
+    }
+
+
+    if (
+      result.data &&
+      Array.isArray(
+        result.data.results
+      )
+    ) {
+
+      return result.data.results;
+
+    }
+
+
+    if (
+      Array.isArray(
+        result.results
+      )
+    ) {
+
+      return result.results;
+
+    }
+
+  }
+
+
+  return [];
+
+}
+
+
+/************************************************************
+ * PRODUCT DROPDOWN
+ *
+ * Search:
+ *
+ * Product Code
+ * Barcode
+ * Product Name
+ ************************************************************/
+
+function mairixUICreateProductDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  return mairixUICreateDropdown(
+    {
+
+      placeholder:
+        options.placeholder ||
+        "ابحث بالباركود أو اسم الصنف",
+
+
+      emptyMessage:
+        "الصنف غير موجود.",
+
+
+      getPrimary:
+        function(item) {
+
+          return (
+            item.productName ||
+            item.name ||
+            item.itemName ||
+            ""
+          );
+
+        },
+
+
+      getSecondary:
+        function(item) {
+
+          var productCode =
+            item.productCode ||
+            item.itemCode ||
+            item.code ||
+            "";
+
+          var barcode =
+            item.barcode ||
+            "";
+
+          var category =
+            item.categoryName ||
+            item.category ||
+            "";
+
+
+          var parts = [];
+
+
+          if (
+            productCode
+          ) {
+
+            parts.push(
+              "كود: " +
+              productCode
+            );
+
+          }
+
+
+          if (
+            barcode
+          ) {
+
+            parts.push(
+              "باركود: " +
+              barcode
+            );
+
+          }
+
+
+          if (
+            category
+          ) {
+
+            parts.push(
+              category
+            );
+
+          }
+
+
+          return parts.join(
+            " — "
+          );
+
+        },
+
+
+      getDisplayValue:
+        function(item) {
+
+          return (
+            item.productName ||
+            item.name ||
+            item.itemName ||
+            ""
+          );
+
+        },
+
+
+      onSearch:
+        function(
+          query,
+          render
+        ) {
+
+          mairixUIDropdownSearchProducts(
+            query,
+            render
+          );
+
+        },
+
+
+      onSelect:
+        function(item) {
+
+          if (
+            typeof options.onSelect ===
+            "function"
+          ) {
+
+            options.onSelect(
+              item
+            );
+
+          }
+
+        }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * PRODUCT SEARCH
+ ************************************************************/
+
+function mairixUIDropdownSearchProducts(
+  query,
+  render
+) {
+
+  var normalized =
+    mairixUIDropdownNormalizeSearch(
+      query
+    );
+
+
+  if (
+    normalized.length === 0
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  if (
+    typeof mairixUIApiSearchProducts !==
+    "function"
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  mairixUIApiSearchProducts(
+    normalized,
+    function(result) {
+
+      var results =
+        mairixUIDropdownExtractResults(
+          result
+        );
+
+
+      render(
+        results
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * CUSTOMER DROPDOWN
+ *
+ * Search:
+ *
+ * Customer Code
+ * Customer Name
+ ************************************************************/
+
+function mairixUICreateCustomerDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  return mairixUICreateDropdown(
+    {
+
+      placeholder:
+        options.placeholder ||
+        "ابحث باسم العميل أو الكود",
+
+
+      emptyMessage:
+        "العميل غير موجود.",
+
+
+      getPrimary:
+        function(item) {
+
+          return (
+            item.customerName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      getSecondary:
+        function(item) {
+
+          var code =
+            item.customerCode ||
+            item.code ||
+            "";
+
+          var phone =
+            item.phone ||
+            "";
+
+
+          if (
+            code &&
+            phone
+          ) {
+
+            return (
+              "كود: " +
+              code +
+              " — " +
+              phone
+            );
+
+          }
+
+
+          if (
+            code
+          ) {
+
+            return (
+              "كود: " +
+              code
+            );
+
+          }
+
+
+          return phone;
+
+        },
+
+
+      getDisplayValue:
+        function(item) {
+
+          return (
+            item.customerName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      onSearch:
+        function(
+          query,
+          render
+        ) {
+
+          mairixUIDropdownSearchCustomers(
+            query,
+            render
+          );
+
+        },
+
+
+      onSelect:
+        function(item) {
+
+          if (
+            typeof options.onSelect ===
+            "function"
+          ) {
+
+            options.onSelect(
+              item
+            );
+
+          }
+
+        }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * CUSTOMER SEARCH
+ ************************************************************/
+
+function mairixUIDropdownSearchCustomers(
+  query,
+  render
+) {
+
+  var normalized =
+    mairixUIDropdownNormalizeSearch(
+      query
+    );
+
+
+  if (
+    normalized.length === 0
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  if (
+    typeof mairixUIApiSearchCustomers !==
+    "function"
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  mairixUIApiSearchCustomers(
+    normalized,
+    function(result) {
+
+      render(
+        mairixUIDropdownExtractResults(
+          result
+        )
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * VENDOR DROPDOWN
+ ************************************************************/
+
+function mairixUICreateVendorDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  return mairixUICreateDropdown(
+    {
+
+      placeholder:
+        options.placeholder ||
+        "ابحث باسم المورد أو الكود",
+
+
+      emptyMessage:
+        "المورد غير موجود.",
+
+
+      getPrimary:
+        function(item) {
+
+          return (
+            item.vendorName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      getSecondary:
+        function(item) {
+
+          var code =
+            item.vendorCode ||
+            item.code ||
+            "";
+
+          var phone =
+            item.phone ||
+            "";
+
+
+          if (
+            code &&
+            phone
+          ) {
+
+            return (
+              "كود: " +
+              code +
+              " — " +
+              phone
+            );
+
+          }
+
+
+          if (
+            code
+          ) {
+
+            return (
+              "كود: " +
+              code
+            );
+
+          }
+
+
+          return phone;
+
+        },
+
+
+      getDisplayValue:
+        function(item) {
+
+          return (
+            item.vendorName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      onSearch:
+        function(
+          query,
+          render
+        ) {
+
+          mairixUIDropdownSearchVendors(
+            query,
+            render
+          );
+
+        },
+
+
+      onSelect:
+        function(item) {
+
+          if (
+            typeof options.onSelect ===
+            "function"
+          ) {
+
+            options.onSelect(
+              item
+            );
+
+          }
+
+        }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * VENDOR SEARCH
+ ************************************************************/
+
+function mairixUIDropdownSearchVendors(
+  query,
+  render
+) {
+
+  var normalized =
+    mairixUIDropdownNormalizeSearch(
+      query
+    );
+
+
+  if (
+    normalized.length === 0
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  if (
+    typeof mairixUIApiSearchVendors !==
+    "function"
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  mairixUIApiSearchVendors(
+    normalized,
+    function(result) {
+
+      render(
+        mairixUIDropdownExtractResults(
+          result
+        )
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * WAREHOUSE DROPDOWN
+ ************************************************************/
+
+function mairixUICreateWarehouseDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  return mairixUICreateDropdown(
+    {
+
+      placeholder:
+        options.placeholder ||
+        "اختر المخزن",
+
+
+      emptyMessage:
+        "المخزن غير موجود.",
+
+
+      getPrimary:
+        function(item) {
+
+          return (
+            item.warehouseName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      getSecondary:
+        function(item) {
+
+          var code =
+            item.warehouseCode ||
+            item.code ||
+            "";
+
+
+          return code
+            ? "كود: " + code
+            : "";
+
+        },
+
+
+      getDisplayValue:
+        function(item) {
+
+          return (
+            item.warehouseName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      onSearch:
+        function(
+          query,
+          render
+        ) {
+
+          mairixUIDropdownSearchWarehouses(
+            query,
+            render
+          );
+
+        },
+
+
+      onSelect:
+        function(item) {
+
+          if (
+            typeof options.onSelect ===
+            "function"
+          ) {
+
+            options.onSelect(
+              item
+            );
+
+          }
+
+        }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * WAREHOUSE SEARCH
+ ************************************************************/
+
+function mairixUIDropdownSearchWarehouses(
+  query,
+  render
+) {
+
+  var normalized =
+    mairixUIDropdownNormalizeSearch(
+      query
+    );
+
+
+  if (
+    typeof mairixUIApiSearchWarehouses !==
+    "function"
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  mairixUIApiSearchWarehouses(
+    normalized,
+    function(result) {
+
+      render(
+        mairixUIDropdownExtractResults(
+          result
+        )
+      );
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * SELECTED RECORD VALIDATION
+ *
+ * Prevents the UI from treating typed text
+ * as a selected Master Data record.
+ ************************************************************/
+
+function mairixUIDropdownRequireSelection(
+  dropdown,
+  message
+) {
+
+  if (
+    !dropdown ||
+    typeof dropdown.getSelected !==
+    "function"
+  ) {
+
+    throw new Error(
+      message ||
+      "يجب اختيار سجل من القائمة."
+    );
+
+  }
+
+
+  var selected =
+    dropdown.getSelected();
+
+
+  if (
+    !selected
+  ) {
+
+    throw new Error(
+      message ||
+      "يجب اختيار سجل من القائمة."
+    );
+
+  }
+
+
+  return selected;
+
+}
+
+
+/************************************************************
+ * PRODUCT CODE FROM SELECTION
+ ************************************************************/
+
+function mairixUIDropdownGetProductCode(
+  product
+) {
+
+  if (!product) {
+
+    return "";
+
+  }
+
+
+  return String(
+    product.productCode ||
+    product.itemCode ||
+    product.code ||
+    ""
+  ).trim();
+
+}
+
+
+/************************************************************
+ * CUSTOMER CODE FROM SELECTION
+ ************************************************************/
+
+function mairixUIDropdownGetCustomerCode(
+  customer
+) {
+
+  if (!customer) {
+
+    return "";
+
+  }
+
+
+  return String(
+    customer.customerCode ||
+    customer.code ||
+    ""
+  ).trim();
+
+}
+
+
+/************************************************************
+ * VENDOR CODE FROM SELECTION
+ ************************************************************/
+
+function mairixUIDropdownGetVendorCode(
+  vendor
+) {
+
+  if (!vendor) {
+
+    return "";
+
+  }
+
+
+  return String(
+    vendor.vendorCode ||
+    vendor.code ||
+    ""
+  ).trim();
+
+}
+
+
+/************************************************************
+ * WAREHOUSE CODE FROM SELECTION
+ ************************************************************/
+
+function mairixUIDropdownGetWarehouseCode(
+  warehouse
+) {
+
+  if (!warehouse) {
+
+    return "";
+
+  }
+
+
+  return String(
+    warehouse.warehouseCode ||
+    warehouse.code ||
+    ""
+  ).trim();
+
+}
+
+
+/************************************************************
+ * CLEAR DROPDOWN CACHE
+ *
+ * UI cache only.
+ ************************************************************/
+
+function mairixUIClearDropdownCache() {
+
+  MAIRIX_UI_DROPDOWN_CACHE = {
+
+    products: {},
+
+    customers: {},
+
+    vendors: {},
+
+    warehouses: {}
+
+  };
+
+}
+
+</script>

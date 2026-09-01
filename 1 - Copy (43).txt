@@ -1,0 +1,769 @@
+/************************************************
+ * MAIRIX ERP
+ * SECURITY HARDENING LAYER
+ *
+ * Protects:
+ * 1) 4-MAIRIX_Users.gs
+ * 2) 5-A-MAIRIX_RolesPermissions.gs
+ * 3) 27-MAIRIX_UI_API.gs
+ *
+ * IMPORTANT:
+ * This file does NOT replace the existing engines.
+ * It adds a strict security boundary around them.
+ ************************************************/
+
+
+/************************************************
+ * SECURITY CONFIGURATION
+ ************************************************/
+
+const MAIRIX_SECURITY_CONFIG = {
+
+  MAX_SEARCH_LENGTH: 100,
+
+  MAX_PAYLOAD_KEYS: 100,
+
+  FORBIDDEN_UI_IDENTITY_FIELDS: [
+
+    "userId",
+    "userid",
+    "currentUser",
+    "currentUserId",
+    "authenticatedUser",
+    "authenticatedUserId",
+    "Gmail",
+    "role",
+    "permissions",
+    "isAdmin"
+
+  ],
+
+  SENSITIVE_ACTIONS: [
+
+    "CREATE_USER",
+    "UPDATE_USER",
+    "SET_USER_ACTIVE",
+
+    "CREATE_ROLE",
+    "UPDATE_ROLE",
+    "DELETE_ROLE",
+
+    "SET_PERMISSION",
+    "SET_USER_PERMISSION",
+
+    "SET_WAREHOUSE_PERMISSION",
+
+    "DELETE",
+
+    "EXPORT"
+
+  ]
+
+};
+
+
+/************************************************
+ * SAFE TEXT
+ ************************************************/
+
+function mairixSecurityCleanText(value) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return "";
+  }
+
+  return String(value).trim();
+
+}
+
+
+/************************************************
+ * REQUIRE ACTIVE USER
+ *
+ * Compatibility function required by the
+ * central architecture and permission tests.
+ ************************************************/
+
+function requireActiveUser() {
+
+  if (
+    typeof mairixRequireCurrentUser !== "function"
+  ) {
+
+    throw new Error(
+      "Security error: current-user engine is unavailable."
+    );
+
+  }
+
+  const user =
+    mairixRequireCurrentUser();
+
+  if (!user) {
+
+    throw new Error(
+      "Security error: authenticated MAIRIX user is required."
+    );
+
+  }
+
+  if (user.active !== true) {
+
+    throw new Error(
+      "Security error: inactive user."
+    );
+
+  }
+
+  if (!user.userId) {
+
+    throw new Error(
+      "Security error: authenticated user ID is missing."
+    );
+
+  }
+
+  return user;
+
+}
+
+
+/************************************************
+ * REQUIRE AUTHENTICATED SERVER USER
+ ************************************************/
+
+function mairixSecurityCurrentUser() {
+
+  const user =
+    requireActiveUser();
+
+  return {
+
+    userId:
+      mairixSecurityCleanText(
+        user.userId
+      ),
+
+    email:
+      mairixSecurityCleanText(
+        user.email
+      ).toLowerCase(),
+
+    role:
+      mairixSecurityCleanText(
+        user.role
+      ).toUpperCase(),
+
+    active:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * BLOCK UI IDENTITY SPOOFING
+ *
+ * UI must never decide:
+ *
+ * - userId
+ * - email
+ * - role
+ * - permissions
+ * - admin status
+ ************************************************/
+
+function mairixSecurityRejectUiIdentity(
+  payload
+) {
+
+  if (!payload) {
+    return {};
+  }
+
+  if (
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+
+    throw new Error(
+      "Invalid API payload."
+    );
+
+  }
+
+  const cleanPayload =
+    Object.assign(
+      {},
+      payload
+    );
+
+  MAIRIX_SECURITY_CONFIG
+    .FORBIDDEN_UI_IDENTITY_FIELDS
+    .forEach(
+      function(field) {
+
+        if (
+          Object.prototype.hasOwnProperty.call(
+            cleanPayload,
+            field
+          )
+        ) {
+
+          delete cleanPayload[field];
+
+        }
+
+      }
+    );
+
+  return cleanPayload;
+
+}
+
+
+/************************************************
+ * PAYLOAD SIZE GUARD
+ ************************************************/
+
+function mairixSecurityValidatePayload(
+  payload
+) {
+
+  if (
+    payload === null ||
+    payload === undefined
+  ) {
+    return {};
+  }
+
+  if (
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+
+    throw new Error(
+      "Invalid request payload."
+    );
+
+  }
+
+  const keys =
+    Object.keys(payload);
+
+  if (
+    keys.length >
+    MAIRIX_SECURITY_CONFIG.MAX_PAYLOAD_KEYS
+  ) {
+
+    throw new Error(
+      "Request payload exceeds the allowed size."
+    );
+
+  }
+
+  return payload;
+
+}
+
+
+/************************************************
+ * SAFE SEARCH TEXT
+ ************************************************/
+
+function mairixSecuritySearchText(
+  value
+) {
+
+  const text =
+    mairixSecurityCleanText(
+      value
+    );
+
+  if (
+    text.length >
+    MAIRIX_SECURITY_CONFIG.MAX_SEARCH_LENGTH
+  ) {
+
+    throw new Error(
+      "Search text is too long."
+    );
+
+  }
+
+  return text;
+
+}
+
+
+/************************************************
+ * REQUIRE PERMISSION
+ *
+ * No ADMIN bypass.
+ *
+ * USER_PERMISSIONS remains the final authority.
+ ************************************************/
+
+function mairixSecurityRequirePermission(
+  permissionCode,
+  action
+) {
+
+  const user =
+    requireActiveUser();
+
+  if (
+    typeof mairixRuntimeRequirePermission ===
+    "function"
+  ) {
+
+    return mairixRuntimeRequirePermission(
+      user.userId,
+      permissionCode,
+      action
+    );
+
+  }
+
+
+  if (
+    typeof mairixRequirePermission ===
+    "function"
+  ) {
+
+    return mairixRequirePermission(
+      user.userId,
+      permissionCode,
+      action
+    );
+
+  }
+
+
+  if (
+    typeof mairixRuntimeHasPermission ===
+    "function"
+  ) {
+
+    const allowed =
+      mairixRuntimeHasPermission(
+        user.userId,
+        permissionCode,
+        action
+      );
+
+    if (allowed !== true) {
+
+      throw new Error(
+        "Permission denied."
+      );
+
+    }
+
+    return true;
+
+  }
+
+
+  throw new Error(
+    "Security error: permission engine unavailable."
+  );
+
+}
+
+
+/************************************************
+ * REQUIRE WAREHOUSE ACCESS
+ *
+ * Warehouse access is independent from
+ * module permission.
+ ************************************************/
+
+function mairixSecurityRequireWarehouseAccess(
+  warehouseCode,
+  action
+) {
+
+  const user =
+    requireActiveUser();
+
+  const warehouse =
+    mairixSecurityCleanText(
+      warehouseCode
+    );
+
+  if (!warehouse) {
+
+    throw new Error(
+      "Warehouse is required."
+    );
+
+  }
+
+
+  if (
+    typeof mairixRuntimeRequireWarehouseAccess ===
+    "function"
+  ) {
+
+    return mairixRuntimeRequireWarehouseAccess(
+      user.userId,
+      warehouse,
+      action
+    );
+
+  }
+
+
+  if (
+    typeof mairixRequireWarehouseAccess ===
+    "function"
+  ) {
+
+    return mairixRequireWarehouseAccess(
+      user.userId,
+      warehouse,
+      action
+    );
+
+  }
+
+
+  if (
+    typeof mairixRuntimeHasWarehouseAccess ===
+    "function"
+  ) {
+
+    const allowed =
+      mairixRuntimeHasWarehouseAccess(
+        user.userId,
+        warehouse,
+        action
+      );
+
+    if (allowed !== true) {
+
+      throw new Error(
+        "Warehouse access denied."
+      );
+
+    }
+
+    return true;
+
+  }
+
+
+  throw new Error(
+    "Security error: warehouse permission engine unavailable."
+  );
+
+}
+
+
+/************************************************
+ * SECURE API CONTEXT
+ ************************************************/
+
+function mairixSecurityApiContext() {
+
+  const user =
+    requireActiveUser();
+
+  return {
+
+    userId:
+      user.userId,
+
+    email:
+      user.email,
+
+    role:
+      user.role,
+
+    active:
+      true
+
+  };
+
+}
+
+
+/************************************************
+ * SANITIZE API REQUEST
+ *
+ * This function must be used before routing
+ * UI requests.
+ ************************************************/
+
+function mairixSecurityPrepareRequest(
+  action,
+  payload
+) {
+
+  const normalizedAction =
+    mairixSecurityCleanText(
+      action
+    ).toUpperCase();
+
+  if (!normalizedAction) {
+
+    throw new Error(
+      "API action is required."
+    );
+
+  }
+
+
+  const validatedPayload =
+    mairixSecurityValidatePayload(
+      payload
+    );
+
+  const safePayload =
+    mairixSecurityRejectUiIdentity(
+      validatedPayload
+    );
+
+
+  /*
+   * Authentication always happens server-side.
+   */
+
+  const user =
+    requireActiveUser();
+
+
+  return {
+
+    action:
+      normalizedAction,
+
+    payload:
+      safePayload,
+
+    context: {
+
+      userId:
+        user.userId,
+
+      email:
+        user.email,
+
+      role:
+        user.role,
+
+      active:
+        true
+
+    }
+
+  };
+
+}
+
+
+/************************************************
+ * SAFE API ERROR
+ *
+ * Prevent internal implementation details from
+ * being unnecessarily exposed to the UI.
+ ************************************************/
+
+function mairixSecurityPublicError(
+  error
+) {
+
+  const internalMessage =
+    error &&
+    error.message
+      ? String(error.message)
+      : "Unexpected server error.";
+
+  Logger.log(
+    "MAIRIX SECURITY ERROR: " +
+    internalMessage
+  );
+
+
+  const blockedPatterns = [
+
+    /spreadsheet/i,
+    /sheet/i,
+    /range/i,
+    /column/i,
+    /exception/i,
+    /stack/i,
+    /function/i
+
+  ];
+
+
+  for (
+    let i = 0;
+    i < blockedPatterns.length;
+    i++
+  ) {
+
+    if (
+      blockedPatterns[i].test(
+        internalMessage
+      )
+    ) {
+
+      return "The requested operation could not be completed.";
+
+    }
+
+  }
+
+
+  return internalMessage;
+
+}
+
+
+/************************************************
+ * SECURE AUDIT HELPER
+ ************************************************/
+
+function mairixSecurityAudit(
+  action,
+  reference,
+  details
+) {
+
+  try {
+
+    const user =
+      requireActiveUser();
+
+    if (
+      typeof mairixUsersAudit ===
+      "function"
+    ) {
+
+      return mairixUsersAudit(
+        action,
+        reference,
+        details
+      );
+
+    }
+
+
+    if (
+      typeof mairixAudit ===
+      "function"
+    ) {
+
+      return mairixAudit(
+        action,
+        reference,
+        details,
+        user.userId
+      );
+
+    }
+
+  }
+  catch (error) {
+
+    Logger.log(
+      "Audit fallback: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * SECURITY SELF TEST
+ ************************************************/
+
+function testMAIRIXSecurityHardening() {
+
+  const result = {
+
+    success:
+      true,
+
+    checks: {}
+
+  };
+
+
+  result.checks.requireActiveUser =
+    typeof requireActiveUser ===
+    "function";
+
+
+  result.checks.currentUserEngine =
+    typeof mairixRequireCurrentUser ===
+    "function";
+
+
+  result.checks.permissionEngine =
+    typeof mairixRuntimeHasPermission ===
+    "function" ||
+    typeof mairixRequirePermission ===
+    "function" ||
+    typeof mairixRuntimeRequirePermission ===
+    "function";
+
+
+  result.checks.warehouseEngine =
+    typeof mairixRuntimeHasWarehouseAccess ===
+    "function" ||
+    typeof mairixRequireWarehouseAccess ===
+    "function" ||
+    typeof mairixRuntimeRequireWarehouseAccess ===
+    "function";
+
+
+  Object.keys(
+    result.checks
+  ).forEach(
+    function(key) {
+
+      if (
+        result.checks[key] !== true
+      ) {
+
+        result.success = false;
+
+      }
+
+    }
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "MAIRIX SECURITY HARDENING TEST FAILED."
+    );
+
+  }
+
+
+  return result;
+
+}

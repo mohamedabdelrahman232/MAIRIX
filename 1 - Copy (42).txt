@@ -1,0 +1,3412 @@
+```html
+<!--
+============================================================
+MAIRIX ERP
+36-MAIRIX_UI_Components.html
+
+SHARED UI COMPONENT FOUNDATION
+
+RESPONSIBILITY:
+------------------------------------------------------------
+Reusable presentation / interaction components only.
+
+UI MUST NOT:
+- Access Sheets directly.
+- Create Master Data.
+- Calculate inventory.
+- Calculate taxes.
+- Calculate financial balances.
+- Decide permissions.
+- Create transactions directly.
+- Trust client-side identity.
+
+UI MAY:
+- Render server/API data.
+- Search server-side.
+- Display controlled selections.
+- Maintain temporary UI state.
+- Build transaction rows.
+- Display read-only information.
+- Trigger API calls through approved UI API functions.
+
+SECURITY CONTRACT:
+------------------------------------------------------------
+Server/API remains authoritative.
+
+DATABASE CONTRACT:
+------------------------------------------------------------
+Master Data must originate from server/API.
+
+SELECTION CONTRACT:
+------------------------------------------------------------
+When a value already exists in Master Data:
+USER
+  ↓
+SEARCH / DROPDOWN
+  ↓
+SERVER/API
+  ↓
+MASTER DATA
+  ↓
+SELECT EXISTING RECORD
+  ↓
+UI STATE
+
+No implicit Master Data creation.
+
+PRODUCT CONTRACT:
+------------------------------------------------------------
+Product selection supports:
+- Barcode
+- Product Name
+- Product Code
+
+The selected Product record is retained in UI state.
+
+QUANTITY CONTRACT:
+------------------------------------------------------------
+Quantity uses:
+- minus
+- current value
+- plus
+
+UI quantity is not authoritative.
+Final validation remains server-side.
+
+============================================================
+-->
+
+<style>
+
+/* =========================================================
+   BASE COMPONENTS
+   ========================================================= */
+
+.mairix-field {
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  gap:
+    6px;
+
+  margin-bottom:
+    14px;
+
+}
+
+
+.mairix-field-label {
+
+  font-size:
+    13px;
+
+  font-weight:
+    700;
+
+}
+
+
+.mairix-field-required {
+
+  color:
+    #b00020;
+
+  margin-right:
+    3px;
+
+}
+
+
+.mairix-input,
+.mairix-select {
+
+  width:
+    100%;
+
+  min-height:
+    42px;
+
+  padding:
+    9px 12px;
+
+  border:
+    1px solid #d5d5d5;
+
+  border-radius:
+    7px;
+
+  background:
+    #fff;
+
+  font-size:
+    14px;
+
+  box-sizing:
+    border-box;
+
+  outline:
+    none;
+
+}
+
+
+.mairix-input:focus,
+.mairix-select:focus {
+
+  border-color:
+    #777;
+
+}
+
+
+.mairix-input:disabled,
+.mairix-select:disabled {
+
+  background:
+    #f1f1f1;
+
+  cursor:
+    not-allowed;
+
+}
+
+
+.mairix-readonly {
+
+  background:
+    #f5f5f5 !important;
+
+}
+
+
+/* =========================================================
+   DATA CARD
+   ========================================================= */
+
+.mairix-data-card {
+
+  display:
+    grid;
+
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(
+        150px,
+        1fr
+      )
+    );
+
+  gap:
+    10px;
+
+  margin-top:
+    10px;
+
+  padding:
+    12px;
+
+  border:
+    1px solid #e1e1e1;
+
+  border-radius:
+    8px;
+
+  background:
+    #fafafa;
+
+}
+
+
+.mairix-data-cell {
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  gap:
+    3px;
+
+}
+
+
+.mairix-data-label {
+
+  font-size:
+    11px;
+
+  color:
+    #777;
+
+}
+
+
+.mairix-data-value {
+
+  font-size:
+    14px;
+
+  font-weight:
+    600;
+
+}
+
+
+/* =========================================================
+   VALIDATION
+   ========================================================= */
+
+.mairix-invalid {
+
+  border-color:
+    #b00020 !important;
+
+}
+
+
+.mairix-validation-message {
+
+  min-height:
+    16px;
+
+  font-size:
+    12px;
+
+  color:
+    #b00020;
+
+}
+
+
+/* =========================================================
+   BUTTONS
+   ========================================================= */
+
+.mairix-button {
+
+  min-height:
+    40px;
+
+  padding:
+    8px 16px;
+
+  border:
+    1px solid #ccc;
+
+  border-radius:
+    7px;
+
+  background:
+    #fff;
+
+  cursor:
+    pointer;
+
+  font-weight:
+    600;
+
+}
+
+
+.mairix-button:hover {
+
+  background:
+    #f7f7f7;
+
+}
+
+
+.mairix-button:disabled {
+
+  opacity:
+    0.5;
+
+  cursor:
+    not-allowed;
+
+}
+
+
+.mairix-button-small {
+
+  min-height:
+    32px;
+
+  padding:
+    5px 10px;
+
+  font-size:
+    12px;
+
+}
+
+
+/* =========================================================
+   QUANTITY STEPPER
+   ========================================================= */
+
+.mairix-stepper {
+
+  display:
+    inline-flex;
+
+  align-items:
+    center;
+
+  gap:
+    6px;
+
+}
+
+
+.mairix-stepper-button {
+
+  width:
+    34px;
+
+  height:
+    34px;
+
+  border:
+    1px solid #ccc;
+
+  border-radius:
+    6px;
+
+  background:
+    #fff;
+
+  cursor:
+    pointer;
+
+  font-size:
+    18px;
+
+  line-height:
+    1;
+
+}
+
+
+.mairix-stepper-button:disabled {
+
+  opacity:
+    0.5;
+
+  cursor:
+    not-allowed;
+
+}
+
+
+.mairix-stepper-value {
+
+  min-width:
+    45px;
+
+  text-align:
+    center;
+
+  font-weight:
+    700;
+
+}
+
+
+/* =========================================================
+   DROPDOWN
+   ========================================================= */
+
+.mairix-dropdown {
+
+  position:
+    relative;
+
+  width:
+    100%;
+
+}
+
+
+.mairix-dropdown-menu {
+
+  position:
+    absolute;
+
+  top:
+    calc(
+      100% + 4px
+    );
+
+  right:
+    0;
+
+  left:
+    0;
+
+  z-index:
+    1000;
+
+  display:
+    none;
+
+  max-height:
+    280px;
+
+  overflow-y:
+    auto;
+
+  border:
+    1px solid #ddd;
+
+  border-radius:
+    7px;
+
+  background:
+    #fff;
+
+  box-shadow:
+    0 6px 20px rgba(
+      0,
+      0,
+      0,
+      0.10
+    );
+
+}
+
+
+.mairix-dropdown-menu.is-open {
+
+  display:
+    block;
+
+}
+
+
+.mairix-dropdown-item {
+
+  display:
+    block;
+
+  width:
+    100%;
+
+  padding:
+    10px 12px;
+
+  border:
+    0;
+
+  border-bottom:
+    1px solid #eee;
+
+  background:
+    #fff;
+
+  text-align:
+    right;
+
+  cursor:
+    pointer;
+
+}
+
+
+.mairix-dropdown-item:last-child {
+
+  border-bottom:
+    0;
+
+}
+
+
+.mairix-dropdown-item:hover {
+
+  background:
+    #f7f7f7;
+
+}
+
+
+.mairix-dropdown-primary {
+
+  font-size:
+    14px;
+
+  font-weight:
+    700;
+
+}
+
+
+.mairix-dropdown-secondary {
+
+  margin-top:
+    3px;
+
+  font-size:
+    11px;
+
+  color:
+    #777;
+
+}
+
+
+.mairix-dropdown-empty {
+
+  padding:
+    14px;
+
+  color:
+    #777;
+
+  text-align:
+    center;
+
+}
+
+
+/* =========================================================
+   UTILITY
+   ========================================================= */
+
+.mairix-hidden {
+
+  display:
+    none !important;
+
+}
+
+</style>
+
+
+<script>
+
+/************************************************************
+ * COMPONENT FACTORY
+ *
+ * Central DOM creation helper.
+ ************************************************************/
+
+function mairixUIComponentCreate(
+  tagName,
+  className
+) {
+
+  var element =
+    document.createElement(
+      tagName
+    );
+
+
+  if (
+    className
+  ) {
+
+    element.className =
+      className;
+
+  }
+
+
+  return element;
+
+}
+
+
+/************************************************************
+ * SAFE TEXT
+ *
+ * Database values are inserted as text.
+ *
+ * Never use innerHTML for Master Data.
+ ************************************************************/
+
+function mairixUISetText(
+  element,
+  value
+) {
+
+  if (
+    !element
+  ) {
+
+    return;
+
+  }
+
+
+  element.textContent =
+    value === null ||
+    value === undefined
+      ? ""
+      : String(
+          value
+        );
+
+}
+
+
+/************************************************************
+ * CLEAR ELEMENT
+ ************************************************************/
+
+function mairixUIClear(
+  element
+) {
+
+  if (
+    !element
+  ) {
+
+    return;
+
+  }
+
+
+  while (
+    element.firstChild
+  ) {
+
+    element.removeChild(
+      element.firstChild
+    );
+
+  }
+
+}
+
+
+/************************************************************
+ * CREATE STANDARD INPUT
+ ************************************************************/
+
+function mairixUICreateInput(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  var input =
+    mairixUIComponentCreate(
+      "input",
+      "mairix-input"
+    );
+
+
+  input.type =
+    options.type ||
+    "text";
+
+
+  if (
+    options.id
+  ) {
+
+    input.id =
+      options.id;
+
+  }
+
+
+  if (
+    options.name
+  ) {
+
+    input.name =
+      options.name;
+
+  }
+
+
+  if (
+    options.placeholder
+  ) {
+
+    input.placeholder =
+      options.placeholder;
+
+  }
+
+
+  if (
+    options.autocomplete
+  ) {
+
+    input.autocomplete =
+      options.autocomplete;
+
+  }
+
+
+  if (
+    options.value !== undefined
+  ) {
+
+    input.value =
+      options.value;
+
+  }
+
+
+  if (
+    options.readonly === true
+  ) {
+
+    input.readOnly =
+      true;
+
+    input.classList.add(
+      "mairix-readonly"
+    );
+
+  }
+
+
+  if (
+    options.disabled === true
+  ) {
+
+    input.disabled =
+      true;
+
+  }
+
+
+  if (
+    options.required === true
+  ) {
+
+    input.required =
+      true;
+
+  }
+
+
+  return input;
+
+}
+
+
+/************************************************************
+ * CREATE FIELD
+ ************************************************************/
+
+function mairixUICreateField(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  var wrapper =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-field"
+    );
+
+
+  if (
+    options.id
+  ) {
+
+    wrapper.id =
+      options.id;
+
+  }
+
+
+  var label =
+    mairixUIComponentCreate(
+      "label",
+      "mairix-field-label"
+    );
+
+
+  mairixUISetText(
+    label,
+    options.label ||
+    ""
+  );
+
+
+  if (
+    options.required === true
+  ) {
+
+    var required =
+      mairixUIComponentCreate(
+        "span",
+        "mairix-field-required"
+      );
+
+
+    mairixUISetText(
+      required,
+      "*"
+    );
+
+
+    label.appendChild(
+      required
+    );
+
+  }
+
+
+  wrapper.appendChild(
+    label
+  );
+
+
+  if (
+    options.control
+  ) {
+
+    wrapper.appendChild(
+      options.control
+    );
+
+  }
+
+
+  if (
+    options.message
+  ) {
+
+    wrapper.appendChild(
+      options.message
+    );
+
+  }
+
+
+  return wrapper;
+
+}
+
+
+/************************************************************
+ * READ-ONLY DATA CELL
+ ************************************************************/
+
+function mairixUICreateDataCell(
+  label,
+  value
+) {
+
+  var cell =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-data-cell"
+    );
+
+
+  var labelElement =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-data-label"
+    );
+
+
+  var valueElement =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-data-value"
+    );
+
+
+  mairixUISetText(
+    labelElement,
+    label
+  );
+
+
+  mairixUISetText(
+    valueElement,
+    value
+  );
+
+
+  cell.appendChild(
+    labelElement
+  );
+
+  cell.appendChild(
+    valueElement
+  );
+
+
+  return cell;
+
+}
+
+
+/************************************************************
+ * DATA CARD
+ ************************************************************/
+
+function mairixUICreateDataCard(
+  data,
+  fields
+) {
+
+  var card =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-data-card"
+    );
+
+
+  if (
+    !data ||
+    !Array.isArray(
+      fields
+    )
+  ) {
+
+    return card;
+
+  }
+
+
+  fields.forEach(
+    function(field) {
+
+      if (
+        !field ||
+        !field.key
+      ) {
+
+        return;
+
+      }
+
+
+      card.appendChild(
+
+        mairixUICreateDataCell(
+          field.label ||
+          field.key,
+          data[
+            field.key
+          ]
+        )
+
+      );
+
+    }
+  );
+
+
+  return card;
+
+}
+
+
+/************************************************************
+ * VALIDATION MESSAGE
+ ************************************************************/
+
+function mairixUICreateValidationMessage()
+{
+
+  return mairixUIComponentCreate(
+    "div",
+    "mairix-validation-message"
+  );
+
+}
+
+
+/************************************************************
+ * SET VALIDATION ERROR
+ ************************************************************/
+
+function mairixUISetValidationError(
+  input,
+  messageElement,
+  message
+) {
+
+  if (
+    input
+  ) {
+
+    input.classList.add(
+      "mairix-invalid"
+    );
+
+  }
+
+
+  if (
+    messageElement
+  ) {
+
+    mairixUISetText(
+      messageElement,
+      message
+    );
+
+  }
+
+}
+
+
+/************************************************************
+ * CLEAR VALIDATION ERROR
+ ************************************************************/
+
+function mairixUIClearValidationError(
+  input,
+  messageElement
+) {
+
+  if (
+    input
+  ) {
+
+    input.classList.remove(
+      "mairix-invalid"
+    );
+
+  }
+
+
+  if (
+    messageElement
+  ) {
+
+    mairixUISetText(
+      messageElement,
+      ""
+    );
+
+  }
+
+}
+
+
+/************************************************************
+ * BUTTON
+ ************************************************************/
+
+function mairixUICreateButton(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  var button =
+    mairixUIComponentCreate(
+      "button",
+      "mairix-button"
+    );
+
+
+  button.type =
+    options.type ||
+    "button";
+
+
+  if (
+    options.id
+  ) {
+
+    button.id =
+      options.id;
+
+  }
+
+
+  if (
+    options.small === true
+  ) {
+
+    button.classList.add(
+      "mairix-button-small"
+    );
+
+  }
+
+
+  if (
+    options.disabled === true
+  ) {
+
+    button.disabled =
+      true;
+
+  }
+
+
+  mairixUISetText(
+    button,
+    options.label ||
+    ""
+  );
+
+
+  if (
+    typeof options.onClick ===
+    "function"
+  ) {
+
+    button.addEventListener(
+      "click",
+      options.onClick
+    );
+
+  }
+
+
+  return button;
+
+}
+
+
+/************************************************************
+ * QUANTITY STEPPER
+ *
+ * UI state only.
+ *
+ * Final quantity validation belongs to the
+ * transaction engine.
+ ************************************************************/
+
+function mairixUICreateQuantityStepper(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  var min =
+    Number.isFinite(
+      Number(
+        options.min
+      )
+    )
+      ? Number(
+          options.min
+        )
+      : 1;
+
+
+  var max =
+    Number.isFinite(
+      Number(
+        options.max
+      )
+    )
+      ? Number(
+          options.max
+        )
+      : null;
+
+
+  var step =
+    Number.isFinite(
+      Number(
+        options.step
+      )
+    ) &&
+    Number(
+      options.step
+    ) > 0
+      ? Number(
+          options.step
+        )
+      : 1;
+
+
+  var initial =
+    Number.isFinite(
+      Number(
+        options.value
+      )
+    )
+      ? Number(
+          options.value
+        )
+      : min;
+
+
+  var wrapper =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-stepper"
+    );
+
+
+  var minus =
+    mairixUICreateButton(
+      {
+
+        label:
+          "−",
+
+        small:
+          true
+
+      }
+    );
+
+
+  minus.classList.add(
+    "mairix-stepper-button"
+  );
+
+
+  var valueElement =
+    mairixUIComponentCreate(
+      "span",
+      "mairix-stepper-value"
+    );
+
+
+  var plus =
+    mairixUICreateButton(
+      {
+
+        label:
+          "+",
+
+        small:
+          true
+
+      }
+    );
+
+
+  plus.classList.add(
+    "mairix-stepper-button"
+  );
+
+
+  var value =
+    initial;
+
+
+  function normalize() {
+
+    if (
+      value < min
+    ) {
+
+      value =
+        min;
+
+    }
+
+
+    if (
+      max !== null &&
+      value > max
+    ) {
+
+      value =
+        max;
+
+    }
+
+  }
+
+
+  function render() {
+
+    normalize();
+
+
+    mairixUISetText(
+      valueElement,
+      value
+    );
+
+
+    minus.disabled =
+      value <= min;
+
+
+    plus.disabled =
+      max !== null &&
+      value >= max;
+
+
+    if (
+      typeof options.onChange ===
+      "function"
+    ) {
+
+      options.onChange(
+        value
+      );
+
+    }
+
+  }
+
+
+  minus.addEventListener(
+    "click",
+    function() {
+
+      value -=
+        step;
+
+      render();
+
+    }
+  );
+
+
+  plus.addEventListener(
+    "click",
+    function() {
+
+      value +=
+        step;
+
+      render();
+
+    }
+  );
+
+
+  wrapper.appendChild(
+    minus
+  );
+
+  wrapper.appendChild(
+    valueElement
+  );
+
+  wrapper.appendChild(
+    plus
+  );
+
+
+  render();
+
+
+  wrapper.getValue =
+    function() {
+
+      return value;
+
+    };
+
+
+  wrapper.setValue =
+    function(newValue) {
+
+      var parsed =
+        Number(
+          newValue
+        );
+
+
+      if (
+        !Number.isFinite(
+          parsed
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      value =
+        parsed;
+
+
+      render();
+
+    };
+
+
+  wrapper.getMin =
+    function() {
+
+      return min;
+
+    };
+
+
+  wrapper.getMax =
+    function() {
+
+      return max;
+
+    };
+
+
+  return wrapper;
+
+}
+
+
+/************************************************************
+ * GENERIC DROPDOWN FACTORY
+ *
+ * Important:
+ *
+ * Selecting an item does NOT create anything.
+ *
+ * The selected object is temporary UI state.
+ ************************************************************/
+
+function mairixUICreateDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  var wrapper =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-dropdown"
+    );
+
+
+  var input =
+    mairixUICreateInput(
+      {
+
+        placeholder:
+          options.placeholder ||
+          "اختار...",
+
+        autocomplete:
+          "off"
+
+      }
+    );
+
+
+  var menu =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-dropdown-menu"
+    );
+
+
+  wrapper.appendChild(
+    input
+  );
+
+  wrapper.appendChild(
+    menu
+  );
+
+
+  var selected =
+    null;
+
+
+  var requestSequence =
+    0;
+
+
+  function close() {
+
+    menu.classList.remove(
+      "is-open"
+    );
+
+  }
+
+
+  function open() {
+
+    menu.classList.add(
+      "is-open"
+    );
+
+  }
+
+
+  function clearMenu() {
+
+    mairixUIClear(
+      menu
+    );
+
+  }
+
+
+  function renderItems(
+    results
+  ) {
+
+    clearMenu();
+
+
+    if (
+      !results ||
+      results.length === 0
+    ) {
+
+      var empty =
+        mairixUIComponentCreate(
+          "div",
+          "mairix-dropdown-empty"
+        );
+
+
+      mairixUISetText(
+        empty,
+        options.emptyMessage ||
+        "لا توجد نتائج."
+      );
+
+
+      menu.appendChild(
+        empty
+      );
+
+
+      open();
+
+      return;
+
+    }
+
+
+    results.forEach(
+      function(item) {
+
+        var button =
+          mairixUIComponentCreate(
+            "button",
+            "mairix-dropdown-item"
+          );
+
+
+        button.type =
+          "button";
+
+
+        var primary =
+          mairixUIComponentCreate(
+            "div",
+            "mairix-dropdown-primary"
+          );
+
+
+        var secondary =
+          mairixUIComponentCreate(
+            "div",
+            "mairix-dropdown-secondary"
+          );
+
+
+        var primaryValue =
+          typeof options.getPrimary ===
+          "function"
+
+            ? options.getPrimary(
+                item
+              )
+
+            : item;
+
+
+        var secondaryValue =
+          typeof options.getSecondary ===
+          "function"
+
+            ? options.getSecondary(
+                item
+              )
+
+            : "";
+
+
+        mairixUISetText(
+          primary,
+          primaryValue
+        );
+
+
+        mairixUISetText(
+          secondary,
+          secondaryValue
+        );
+
+
+        button.appendChild(
+          primary
+        );
+
+
+        if (
+          secondaryValue
+        ) {
+
+          button.appendChild(
+            secondary
+          );
+
+        }
+
+
+        button.addEventListener(
+          "click",
+          function() {
+
+            selected =
+              item;
+
+
+            var displayValue =
+              typeof options.getDisplayValue ===
+              "function"
+
+                ? options.getDisplayValue(
+                    item
+                  )
+
+                : primaryValue;
+
+
+            input.value =
+              displayValue ||
+              "";
+
+
+            close();
+
+
+            if (
+              typeof options.onSelect ===
+              "function"
+            ) {
+
+              options.onSelect(
+                item
+              );
+
+            }
+
+          }
+        );
+
+
+        menu.appendChild(
+          button
+        );
+
+      }
+    );
+
+
+    open();
+
+  }
+
+
+  function search(
+    query
+  ) {
+
+    if (
+      typeof options.onSearch !==
+      "function"
+    ) {
+
+      renderItems(
+        []
+      );
+
+      return;
+
+    }
+
+
+    var sequence =
+      ++requestSequence;
+
+
+    options.onSearch(
+      query,
+      function(results) {
+
+        /*
+         * Ignore an older response if the
+         * user already typed another query.
+         */
+
+        if (
+          sequence !==
+          requestSequence
+        ) {
+
+          return;
+
+        }
+
+
+        renderItems(
+          Array.isArray(
+            results
+          )
+            ? results
+            : []
+        );
+
+      }
+    );
+
+  }
+
+
+  input.addEventListener(
+    "input",
+    function() {
+
+      selected =
+        null;
+
+
+      search(
+        input.value
+      );
+
+    }
+  );
+
+
+  input.addEventListener(
+    "focus",
+    function() {
+
+      if (
+        input.value
+      ) {
+
+        search(
+          input.value
+        );
+
+      }
+
+    }
+  );
+
+
+  document.addEventListener(
+    "click",
+    function(event) {
+
+      if (
+        !wrapper.contains(
+          event.target
+        )
+      ) {
+
+        close();
+
+      }
+
+    }
+  );
+
+
+  wrapper.getValue =
+    function() {
+
+      return selected;
+
+    };
+
+
+  wrapper.getSelected =
+    function() {
+
+      return selected;
+
+    };
+
+
+  wrapper.getInput =
+    function() {
+
+      return input;
+
+    };
+
+
+  wrapper.clear =
+    function() {
+
+      selected =
+        null;
+
+      input.value =
+        "";
+
+      clearMenu();
+
+      close();
+
+    };
+
+
+  wrapper.setSelected =
+    function(item) {
+
+      selected =
+        item || null;
+
+
+      if (
+        selected
+      ) {
+
+        var displayValue =
+          typeof options.getDisplayValue ===
+          "function"
+
+            ? options.getDisplayValue(
+                selected
+              )
+
+            : selected.name ||
+              selected.productName ||
+              selected.customerName ||
+              selected.vendorName ||
+              selected.warehouseName ||
+              "";
+
+
+        input.value =
+          displayValue;
+
+      } else {
+
+        input.value =
+          "";
+
+      }
+
+    };
+
+
+  return wrapper;
+
+}
+
+
+/************************************************************
+ * STATIC SELECT
+ *
+ * Controlled values only.
+ *
+ * Example:
+ * Discount:
+ * 0 / 5 / 7 / 10
+ *
+ * This is NOT Master Data.
+ ************************************************************/
+
+function mairixUICreateStaticSelect(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  var select =
+    mairixUIComponentCreate(
+      "select",
+      "mairix-select"
+    );
+
+
+  if (
+    options.id
+  ) {
+
+    select.id =
+      options.id;
+
+  }
+
+
+  if (
+    options.name
+  ) {
+
+    select.name =
+      options.name;
+
+  }
+
+
+  if (
+    options.disabled === true
+  ) {
+
+    select.disabled =
+      true;
+
+  }
+
+
+  if (
+    options.required === true
+  ) {
+
+    select.required =
+      true;
+
+  }
+
+
+  if (
+    options.placeholder
+  ) {
+
+    var placeholder =
+      mairixUIComponentCreate(
+        "option"
+      );
+
+
+    placeholder.value =
+      "";
+
+
+    placeholder.disabled =
+      true;
+
+
+    placeholder.selected =
+      true;
+
+
+    mairixUISetText(
+      placeholder,
+      options.placeholder
+    );
+
+
+    select.appendChild(
+      placeholder
+    );
+
+  }
+
+
+  var items =
+    Array.isArray(
+      options.items
+    )
+      ? options.items
+      : [];
+
+
+  items.forEach(
+    function(item) {
+
+      var option =
+        mairixUIComponentCreate(
+          "option"
+        );
+
+
+      var value =
+        item &&
+        typeof item ===
+        "object"
+
+          ? item.value
+
+          : item;
+
+
+      var label =
+        item &&
+        typeof item ===
+        "object"
+
+          ? item.label
+
+          : item;
+
+
+      option.value =
+        value === undefined ||
+        value === null
+          ? ""
+          : String(
+              value
+            );
+
+
+      mairixUISetText(
+        option,
+        label
+      );
+
+
+      if (
+        options.value !==
+          undefined &&
+        String(
+          options.value
+        ) ===
+        option.value
+      ) {
+
+        option.selected =
+          true;
+
+      }
+
+
+      select.appendChild(
+        option
+      );
+
+    }
+  );
+
+
+  if (
+    typeof options.onChange ===
+    "function"
+  ) {
+
+    select.addEventListener(
+      "change",
+      function() {
+
+        options.onChange(
+          select.value
+        );
+
+      }
+    );
+
+  }
+
+
+  return select;
+
+}
+
+
+/************************************************************
+ * PRODUCT SELECTOR
+ *
+ * Supported search keys:
+ *
+ * 1. Barcode
+ * 2. Product Name
+ * 3. Product Code
+ *
+ * The server/API returns the actual product
+ * record.
+ ************************************************************/
+
+function mairixUICreateProductDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  return mairixUICreateDropdown(
+    {
+
+      placeholder:
+        options.placeholder ||
+        "ابحث بالباركود أو اسم الصنف",
+
+      emptyMessage:
+        "الصنف غير موجود.",
+
+
+      getPrimary:
+        function(item) {
+
+          return (
+            item.productName ||
+            item.name ||
+            item.itemName ||
+            ""
+          );
+
+        },
+
+
+      getSecondary:
+        function(item) {
+
+          var barcode =
+            item.barcode ||
+            "";
+
+
+          var productCode =
+            item.productCode ||
+            item.itemCode ||
+            "";
+
+
+          var category =
+            item.categoryName ||
+            item.category ||
+            "";
+
+
+          var parts =
+            [];
+
+
+          if (
+            barcode
+          ) {
+
+            parts.push(
+              "باركود: " +
+              barcode
+            );
+
+          }
+
+
+          if (
+            productCode
+          ) {
+
+            parts.push(
+              "كود: " +
+              productCode
+            );
+
+          }
+
+
+          if (
+            category
+          ) {
+
+            parts.push(
+              category
+            );
+
+          }
+
+
+          return parts.join(
+            " — "
+          );
+
+        },
+
+
+      getDisplayValue:
+        function(item) {
+
+          return (
+            item.productName ||
+            item.name ||
+            item.itemName ||
+            ""
+          );
+
+        },
+
+
+      onSearch:
+        function(
+          query,
+          render
+        ) {
+
+          mairixUIComponentSearchProducts(
+            query,
+            render,
+            options
+          );
+
+        },
+
+
+      onSelect:
+        function(item) {
+
+          if (
+            typeof options.onSelect ===
+            "function"
+          ) {
+
+            options.onSelect(
+              item
+            );
+
+          }
+
+        }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * PRODUCT SEARCH BRIDGE
+ *
+ * Preferred contract:
+ *
+ * Existing UI API facade:
+ * mairixUIApiSearchProducts()
+ *
+ * Fallback:
+ * apiSearch({
+ *   type: "PRODUCT"
+ * })
+ *
+ * No Sheet access here.
+ ************************************************************/
+
+function mairixUIComponentSearchProducts(
+  query,
+  render,
+  options
+) {
+
+  var normalized =
+    String(
+      query ||
+      ""
+    )
+      .trim();
+
+
+  if (
+    !normalized
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  if (
+    typeof mairixUIApiSearchProducts ===
+    "function"
+  ) {
+
+    mairixUIApiSearchProducts(
+      normalized,
+      function(result) {
+
+        if (
+          !result ||
+          result.success !== true
+        ) {
+
+          render(
+            []
+          );
+
+          return;
+
+        }
+
+
+        render(
+          Array.isArray(
+            result.data
+          )
+            ? result.data
+            : []
+        );
+
+      }
+    );
+
+    return;
+
+  }
+
+
+  /*
+   * Generic API router fallback.
+   */
+
+  if (
+    typeof google !==
+      "undefined" &&
+    google.script &&
+    google.script.run &&
+    typeof google.script.run
+      .apiSearch ===
+      "function"
+  ) {
+
+    google
+      .script
+      .run
+      .withSuccessHandler(
+        function(result) {
+
+          if (
+            !result ||
+            result.success !== true
+          ) {
+
+            render(
+              []
+            );
+
+            return;
+
+          }
+
+
+          render(
+            Array.isArray(
+              result.data
+            )
+              ? result.data
+              : []
+          );
+
+        }
+      )
+      .withFailureHandler(
+        function() {
+
+          render(
+            []
+          );
+
+        }
+      )
+      .apiSearch(
+        {
+
+          type:
+            "PRODUCT",
+
+          query:
+            normalized
+
+        }
+      );
+
+    return;
+
+  }
+
+
+  render(
+    []
+  );
+
+}
+
+
+/************************************************************
+ * CUSTOMER SELECTOR
+ ************************************************************/
+
+function mairixUICreateCustomerDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  return mairixUICreateDropdown(
+    {
+
+      placeholder:
+        options.placeholder ||
+        "ابحث باسم العميل أو الكود",
+
+      emptyMessage:
+        "العميل غير موجود.",
+
+
+      getPrimary:
+        function(item) {
+
+          return (
+            item.customerName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      getSecondary:
+        function(item) {
+
+          return (
+            item.customerCode ||
+            item.code ||
+            ""
+          );
+
+        },
+
+
+      getDisplayValue:
+        function(item) {
+
+          return (
+            item.customerName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      onSearch:
+        function(
+          query,
+          render
+        ) {
+
+          mairixUIComponentSearchCustomers(
+            query,
+            render,
+            options
+          );
+
+        },
+
+
+      onSelect:
+        function(item) {
+
+          if (
+            typeof options.onSelect ===
+            "function"
+          ) {
+
+            options.onSelect(
+              item
+            );
+
+          }
+
+        }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * CUSTOMER SEARCH BRIDGE
+ ************************************************************/
+
+function mairixUIComponentSearchCustomers(
+  query,
+  render,
+  options
+) {
+
+  var normalized =
+    String(
+      query ||
+      ""
+    )
+      .trim();
+
+
+  if (
+    !normalized
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  if (
+    typeof mairixUIApiSearchCustomers ===
+    "function"
+  ) {
+
+    mairixUIApiSearchCustomers(
+      normalized,
+      function(result) {
+
+        render(
+          result &&
+          result.success === true &&
+          Array.isArray(
+            result.data
+          )
+            ? result.data
+            : []
+        );
+
+      }
+    );
+
+    return;
+
+  }
+
+
+  render(
+    []
+  );
+
+}
+
+
+/************************************************************
+ * VENDOR SELECTOR
+ ************************************************************/
+
+function mairixUICreateVendorDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  return mairixUICreateDropdown(
+    {
+
+      placeholder:
+        options.placeholder ||
+        "ابحث باسم المورد أو الكود",
+
+      emptyMessage:
+        "المورد غير موجود.",
+
+
+      getPrimary:
+        function(item) {
+
+          return (
+            item.vendorName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      getSecondary:
+        function(item) {
+
+          return (
+            item.vendorCode ||
+            item.code ||
+            ""
+          );
+
+        },
+
+
+      getDisplayValue:
+        function(item) {
+
+          return (
+            item.vendorName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      onSearch:
+        function(
+          query,
+          render
+        ) {
+
+          mairixUIComponentSearchVendors(
+            query,
+            render,
+            options
+          );
+
+        },
+
+
+      onSelect:
+        function(item) {
+
+          if (
+            typeof options.onSelect ===
+            "function"
+          ) {
+
+            options.onSelect(
+              item
+            );
+
+          }
+
+        }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * VENDOR SEARCH BRIDGE
+ ************************************************************/
+
+function mairixUIComponentSearchVendors(
+  query,
+  render,
+  options
+) {
+
+  var normalized =
+    String(
+      query ||
+      ""
+    )
+      .trim();
+
+
+  if (
+    !normalized
+  ) {
+
+    render(
+      []
+    );
+
+    return;
+
+  }
+
+
+  if (
+    typeof mairixUIApiSearchVendors ===
+    "function"
+  ) {
+
+    mairixUIApiSearchVendors(
+      normalized,
+      function(result) {
+
+        render(
+          result &&
+          result.success === true &&
+          Array.isArray(
+            result.data
+          )
+            ? result.data
+            : []
+        );
+
+      }
+    );
+
+    return;
+
+  }
+
+
+  render(
+    []
+  );
+
+}
+
+
+/************************************************************
+ * WAREHOUSE SELECTOR
+ *
+ * Warehouse visibility is still subject to
+ * server-side warehouse authorization.
+ ************************************************************/
+
+function mairixUICreateWarehouseDropdown(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  return mairixUICreateDropdown(
+    {
+
+      placeholder:
+        options.placeholder ||
+        "اختار المخزن",
+
+      emptyMessage:
+        "لا توجد مخازن متاحة.",
+
+
+      getPrimary:
+        function(item) {
+
+          return (
+            item.warehouseName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      getSecondary:
+        function(item) {
+
+          return (
+            item.warehouseCode ||
+            item.code ||
+            ""
+          );
+
+        },
+
+
+      getDisplayValue:
+        function(item) {
+
+          return (
+            item.warehouseName ||
+            item.name ||
+            ""
+          );
+
+        },
+
+
+      onSearch:
+        function(
+          query,
+          render
+        ) {
+
+          mairixUIComponentSearchWarehouses(
+            query,
+            render,
+            options
+          );
+
+        },
+
+
+      onSelect:
+        function(item) {
+
+          if (
+            typeof options.onSelect ===
+            "function"
+          ) {
+
+            options.onSelect(
+              item
+            );
+
+          }
+
+        }
+
+    }
+  );
+
+}
+
+
+/************************************************************
+ * WAREHOUSE SEARCH BRIDGE
+ ************************************************************/
+
+function mairixUIComponentSearchWarehouses(
+  query,
+  render,
+  options
+) {
+
+  var normalized =
+    String(
+      query ||
+      ""
+    )
+      .trim();
+
+
+  if (
+    typeof mairixUIApiSearchWarehouses ===
+    "function"
+  ) {
+
+    mairixUIApiSearchWarehouses(
+      normalized,
+      function(result) {
+
+        render(
+          result &&
+          result.success === true &&
+          Array.isArray(
+            result.data
+          )
+            ? result.data
+            : []
+        );
+
+      }
+    );
+
+    return;
+
+  }
+
+
+  render(
+    []
+  );
+
+}
+
+
+/************************************************************
+ * MASTER DATA DISPLAY HELPER
+ *
+ * Used after selection to display server-returned
+ * information without allowing free-text identity.
+ ************************************************************/
+
+function mairixUICreateMasterDataSummary(
+  item,
+  fields
+) {
+
+  return mairixUICreateDataCard(
+    item,
+    fields || []
+  );
+
+}
+
+
+/************************************************************
+ * SAFE SELECTED RECORD ACCESS
+ ************************************************************/
+
+function mairixUIGetSelectedCode(
+  component,
+  keys
+) {
+
+  if (
+    !component ||
+    typeof component.getSelected !==
+    "function"
+  ) {
+
+    return "";
+
+  }
+
+
+  var item =
+    component.getSelected();
+
+
+  if (
+    !item
+  ) {
+
+    return "";
+
+  }
+
+
+  var candidateKeys =
+    Array.isArray(
+      keys
+    )
+      ? keys
+      : [];
+
+
+  for (
+    var i = 0;
+    i < candidateKeys.length;
+    i++
+  ) {
+
+    var value =
+      item[
+        candidateKeys[i]
+      ];
+
+
+    if (
+      value !==
+        undefined &&
+      value !==
+        null &&
+      String(
+        value
+      ).trim()
+    ) {
+
+      return String(
+        value
+      ).trim();
+
+    }
+
+  }
+
+
+  return "";
+
+}
+
+
+/************************************************************
+ * TRANSACTION ROW FACTORY
+ *
+ * Foundation for Sales / Purchases.
+ *
+ * The transaction screen decides the exact fields.
+ *
+ * This component only creates reusable row structure.
+ ************************************************************/
+
+function mairixUICreateTransactionItemRow(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  var row =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-transaction-item-row"
+    );
+
+
+  row.dataset =
+    row.dataset ||
+    {};
+
+
+  var product =
+    mairixUICreateProductDropdown(
+      {
+
+        placeholder:
+          options.productPlaceholder ||
+          "ابحث بالباركود أو اسم الصنف",
+
+        onSelect:
+          function(item) {
+
+            row._selectedProduct =
+              item;
+
+
+            if (
+              typeof options.onProductSelect ===
+              "function"
+            ) {
+
+              options.onProductSelect(
+                item,
+                row
+              );
+
+            }
+
+          }
+
+      }
+    );
+
+
+  var quantity =
+    mairixUICreateQuantityStepper(
+      {
+
+        min:
+          options.minQuantity ||
+          1,
+
+        max:
+          options.maxQuantity,
+
+        value:
+          options.quantity ||
+          1,
+
+        onChange:
+          function(value) {
+
+            if (
+              typeof options.onQuantityChange ===
+              "function"
+            ) {
+
+              options.onQuantityChange(
+                value,
+                row
+              );
+
+            }
+
+          }
+
+      }
+    );
+
+
+  row.appendChild(
+    product
+  );
+
+
+  row.appendChild(
+    quantity
+  );
+
+
+  row.productSelector =
+    product;
+
+
+  row.quantityStepper =
+    quantity;
+
+
+  row.getSelectedProduct =
+    function() {
+
+      return (
+        typeof product.getSelected ===
+        "function"
+          ? product.getSelected()
+          : null
+      );
+
+    };
+
+
+  row.getQuantity =
+    function() {
+
+      return (
+        typeof quantity.getValue ===
+        "function"
+          ? quantity.getValue()
+          : 0
+      );
+
+    };
+
+
+  row.clear =
+    function() {
+
+      if (
+        typeof product.clear ===
+        "function"
+      ) {
+
+        product.clear();
+
+      }
+
+
+      if (
+        typeof quantity.setValue ===
+        "function"
+      ) {
+
+        quantity.setValue(
+          options.quantity ||
+          1
+        );
+
+      }
+
+
+      row._selectedProduct =
+        null;
+
+    };
+
+
+  return row;
+
+}
+
+
+/************************************************************
+ * TRANSACTION ROW COLLECTION
+ *
+ * Used by future Sales/Purchase screens.
+ *
+ * Minimum rows can be set by caller.
+ *
+ * No business calculations are performed here.
+ ************************************************************/
+
+function mairixUICreateTransactionRowCollection(
+  options
+) {
+
+  options =
+    options ||
+    {};
+
+
+  var container =
+    mairixUIComponentCreate(
+      "div",
+      "mairix-transaction-rows"
+    );
+
+
+  var minimumRows =
+    Number.isFinite(
+      Number(
+        options.minimumRows
+      )
+    )
+      ? Number(
+          options.minimumRows
+        )
+      : 5;
+
+
+  var rows =
+    [];
+
+
+  function createRow() {
+
+    var row =
+      mairixUICreateTransactionItemRow(
+        options
+      );
+
+
+    rows.push(
+      row
+    );
+
+
+    container.appendChild(
+      row
+    );
+
+
+    if (
+      typeof options.onRowCreate ===
+      "function"
+    ) {
+
+      options.onRowCreate(
+        row,
+        rows.length
+      );
+
+    }
+
+
+    return row;
+
+  }
+
+
+  function ensureMinimumRows() {
+
+    while (
+      rows.length <
+      minimumRows
+    ) {
+
+      createRow();
+
+    }
+
+  }
+
+
+  container.addRow =
+    function() {
+
+      return createRow();
+
+    };
+
+
+  container.getRows =
+    function() {
+
+      return rows.slice();
+
+    };
+
+
+  container.getSelectedRows =
+    function() {
+
+      return rows.filter(
+        function(row) {
+
+          return !!row.getSelectedProduct();
+
+        }
+      );
+
+    };
+
+
+  container.clear =
+    function() {
+
+      rows.forEach(
+        function(row) {
+
+          row.clear();
+
+        }
+      );
+
+    };
+
+
+  ensureMinimumRows();
+
+
+  return container;
+
+}
+
+
+/************************************************************
+ * COMPONENT CONTRACT
+ *
+ * Small diagnostic helper.
+ ************************************************************/
+
+function mairixUIComponentsHealthCheck() {
+
+  var required =
+    [
+
+      "mairixUIComponentCreate",
+      "mairixUISetText",
+      "mairixUIClear",
+      "mairixUICreateInput",
+      "mairixUICreateField",
+      "mairixUICreateButton",
+      "mairixUICreateQuantityStepper",
+      "mairixUICreateDropdown",
+      "mairixUICreateStaticSelect",
+      "mairixUICreateProductDropdown",
+      "mairixUICreateCustomerDropdown",
+      "mairixUICreateVendorDropdown",
+      "mairixUICreateWarehouseDropdown",
+      "mairixUICreateTransactionItemRow",
+      "mairixUICreateTransactionRowCollection"
+
+    ];
+
+
+  var missing =
+    [];
+
+
+  required.forEach(
+    function(name) {
+
+      if (
+        typeof window[
+          name
+        ] !==
+        "function"
+      ) {
+
+        missing.push(
+          name
+        );
+
+      }
+
+    }
+  );
+
+
+  return {
+
+    success:
+      missing.length === 0,
+
+    missing:
+      missing
+
+  };
+
+}
+
+</script>
+```

@@ -1,0 +1,1060 @@
+/************************************************
+ * MAIRIX ERP
+ * 19-MAIRIX_AccountingMapping
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Central mapping layer between:
+ *
+ *   ERP transactions
+ *        ↓
+ *   Financial Effects
+ *        ↓
+ *   Financial Statement Lines
+ *
+ * IMPORTANT:
+ * ------------------------------------------------
+ * 1. This file does NOT create transactions.
+ * 2. This file does NOT calculate inventory.
+ * 3. This file does NOT calculate taxes.
+ * 4. This file defines WHERE financial effects
+ *    appear in the financial statements.
+ *
+ * The mapping is configurable through the
+ * ACCOUNTING_MAPPING sheet.
+ *
+ * The system name is MAIRIX and must NEVER
+ * be hard-coded inside accounting rules.
+ ************************************************/
+
+
+/************************************************
+ * SHEET
+ ************************************************/
+
+const MAIRIX_ACCOUNTING_MAPPING_SHEET =
+  "ACCOUNTING_MAPPING";
+
+
+/************************************************
+ * REQUIRED HEADERS
+ ************************************************/
+
+const MAIRIX_ACCOUNTING_MAPPING_HEADERS = [
+
+  "Mapping Code",
+  "Mapping Name",
+
+  "Statement",
+  "Section",
+  "Line Code",
+  "Line Name",
+
+  "Transaction Type",
+  "Effect Type",
+
+  "Debit Account",
+  "Credit Account",
+
+  "Active",
+  "Notes"
+
+];
+
+
+/************************************************
+ * STATEMENT TYPES
+ ************************************************/
+
+const MAIRIX_STATEMENTS = {
+
+  INCOME_STATEMENT:
+    "INCOME_STATEMENT",
+
+  BALANCE_SHEET:
+    "BALANCE_SHEET",
+
+  CASH_FLOW:
+    "CASH_FLOW",
+
+  EQUITY:
+    "EQUITY"
+
+};
+
+
+/************************************************
+ * EFFECT TYPES
+ ************************************************/
+
+const MAIRIX_ACCOUNTING_EFFECTS = {
+
+  REVENUE:
+    "REVENUE",
+
+  SALES_RETURN:
+    "SALES_RETURN",
+
+  COGS:
+    "COGS",
+
+  INVENTORY:
+    "INVENTORY",
+
+  CUSTOMER_RECEIVABLE:
+    "CUSTOMER_RECEIVABLE",
+
+  VENDOR_PAYABLE:
+    "VENDOR_PAYABLE",
+
+  CASH:
+    "CASH",
+
+  EXPENSE:
+    "EXPENSE",
+
+  COMMISSION:
+    "COMMISSION",
+
+  TAX_PAYABLE:
+    "TAX_PAYABLE",
+
+  TAX_RECEIVABLE:
+    "TAX_RECEIVABLE",
+
+  LOYALTY:
+    "LOYALTY",
+
+  EQUITY:
+    "EQUITY"
+
+};
+
+
+/************************************************
+ * SETUP ACCOUNTING MAPPING SHEET
+ ************************************************/
+
+function setupMAIRIXAccountingMapping() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_ACCOUNTING_MAPPING_SHEET
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_ACCOUNTING_MAPPING_SHEET
+      );
+
+  }
+
+
+  sheet.clear();
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      MAIRIX_ACCOUNTING_MAPPING_HEADERS.length
+    )
+    .setValues([
+      MAIRIX_ACCOUNTING_MAPPING_HEADERS
+    ]);
+
+
+  formatMAIRIXAccountingMapping();
+
+
+  return {
+
+    success: true,
+
+    sheet:
+      MAIRIX_ACCOUNTING_MAPPING_SHEET,
+
+    columns:
+      MAIRIX_ACCOUNTING_MAPPING_HEADERS.length
+
+  };
+
+}
+
+
+/************************************************
+ * FORMAT SHEET
+ ************************************************/
+
+function formatMAIRIXAccountingMapping() {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        MAIRIX_ACCOUNTING_MAPPING_SHEET
+      );
+
+
+  if (!sheet) {
+    return;
+  }
+
+
+  sheet.setFrozenRows(1);
+
+
+  const lastColumn =
+    MAIRIX_ACCOUNTING_MAPPING_HEADERS.length;
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      lastColumn
+    )
+    .setFontWeight("bold");
+
+
+  const activeColumn =
+    MAIRIX_ACCOUNTING_MAPPING_HEADERS
+      .indexOf("Active") + 1;
+
+
+  if (
+    sheet.getMaxRows() >= 2 &&
+    activeColumn > 0
+  ) {
+
+    sheet
+      .getRange(
+        2,
+        activeColumn,
+        Math.max(
+          sheet.getMaxRows() - 1,
+          1
+        ),
+        1
+      )
+      .insertCheckboxes();
+
+  }
+
+
+  sheet.autoResizeColumns(
+    1,
+    lastColumn
+  );
+
+}
+
+
+/************************************************
+ * GET MAIRIX ACCOUNTING MAPPINGS
+ *
+ * Central MAIRIX financial mapping source.
+ ************************************************/
+
+function getMAIRIXAccountingMappings() {
+
+  const sheet =
+    getMairixSchemaSheet(
+      "FINANCIAL_MAPPINGS"
+    );
+
+
+  const headers =
+    getSheetHeaders(
+      sheet
+    );
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return [];
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+
+  return values.map(
+    function(row) {
+
+      const item = {};
+
+      headers.forEach(
+        function(header, index) {
+
+          item[header] =
+            row[index];
+
+        }
+      );
+
+      return item;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * FIND MAPPING
+ ************************************************/
+
+function getMAIRIXAccountingMapping(
+  transactionType,
+  effectType
+) {
+
+  const normalizedTransaction =
+    mairixCleanText(
+      transactionType
+    ).toUpperCase();
+
+
+  const normalizedEffect =
+    mairixCleanText(
+      effectType
+    ).toUpperCase();
+
+
+  if (
+    !normalizedTransaction ||
+    !normalizedEffect
+  ) {
+
+    return null;
+
+  }
+
+
+  const mappings =
+    getMAIRIXAccountingMappings();
+
+
+  for (
+    let i = 0;
+    i < mappings.length;
+    i++
+  ) {
+
+    const mapping =
+      mappings[i];
+
+
+    const active =
+      isTrueValue(
+        mapping["Active"]
+      );
+
+
+    if (!active) {
+      continue;
+    }
+
+
+    const mappingTransaction =
+      mairixCleanText(
+        mapping["Transaction Type"]
+      ).toUpperCase();
+
+
+    const mappingEffect =
+      mairixCleanText(
+        mapping["Effect Type"]
+      ).toUpperCase();
+
+
+    if (
+      mappingTransaction ===
+        normalizedTransaction &&
+      mappingEffect ===
+        normalizedEffect
+    ) {
+
+      return mapping;
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * REQUIRE MAPPING
+ *
+ * Financial transactions must NEVER
+ * silently enter the financial engine
+ * without a valid mapping.
+ ************************************************/
+
+function requireMAIRIXAccountingMapping(
+  transactionType,
+  effectType
+) {
+
+  const mapping =
+    getMAIRIXAccountingMapping(
+      transactionType,
+      effectType
+    );
+
+
+  if (!mapping) {
+
+    throw new Error(
+      "Accounting mapping not found for transaction: " +
+      transactionType +
+      " | Effect: " +
+      effectType
+    );
+
+  }
+
+
+  return mapping;
+
+}
+
+
+/************************************************
+ * GET STATEMENT LINE
+ ************************************************/
+
+function getMAIRIXStatementLine(
+  transactionType,
+  effectType
+) {
+
+  const mapping =
+    requireMAIRIXAccountingMapping(
+      transactionType,
+      effectType
+    );
+
+
+  return {
+
+    statement:
+      mairixCleanText(
+        mapping["Statement"]
+      ).toUpperCase(),
+
+    section:
+      mairixCleanText(
+        mapping["Section"]
+      ),
+
+    lineCode:
+      mairixCleanText(
+        mapping["Line Code"]
+      ),
+
+    lineName:
+      mairixCleanText(
+        mapping["Line Name"]
+      ),
+
+    mappingCode:
+      mairixCleanText(
+        mapping["Mapping Code"]
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * VALIDATE ACCOUNTING MAPPING
+ ************************************************/
+
+function validateMAIRIXAccountingMappings() {
+
+  const mappings =
+    getMAIRIXAccountingMappings();
+
+
+  const errors = [];
+
+
+  const seen =
+    {};
+
+
+  mappings.forEach(
+    function(mapping, index) {
+
+      const rowNumber =
+        index + 2;
+
+
+      const mappingCode =
+        mairixCleanText(
+          mapping["Mapping Code"]
+        );
+
+
+      const statement =
+        mairixCleanText(
+          mapping["Statement"]
+        ).toUpperCase();
+
+
+      const lineCode =
+        mairixCleanText(
+          mapping["Line Code"]
+        );
+
+
+      const transactionType =
+        mairixCleanText(
+          mapping["Transaction Type"]
+        ).toUpperCase();
+
+
+      const effectType =
+        mairixCleanText(
+          mapping["Effect Type"]
+        ).toUpperCase();
+
+
+      if (!mappingCode) {
+
+        errors.push(
+          "Row " +
+          rowNumber +
+          ": Mapping Code is missing."
+        );
+
+      }
+
+
+      if (!statement) {
+
+        errors.push(
+          "Row " +
+          rowNumber +
+          ": Statement is missing."
+        );
+
+      }
+
+
+      if (!lineCode) {
+
+        errors.push(
+          "Row " +
+          rowNumber +
+          ": Line Code is missing."
+        );
+
+      }
+
+
+      if (!transactionType) {
+
+        errors.push(
+          "Row " +
+          rowNumber +
+          ": Transaction Type is missing."
+        );
+
+      }
+
+
+      if (!effectType) {
+
+        errors.push(
+          "Row " +
+          rowNumber +
+          ": Effect Type is missing."
+        );
+
+      }
+
+
+      const key =
+        transactionType +
+        "|" +
+        effectType;
+
+
+      if (
+        seen[key]
+      ) {
+
+        errors.push(
+          "Duplicate active/defined mapping: " +
+          key
+        );
+
+      }
+
+
+      seen[key] =
+        true;
+
+    }
+  );
+
+
+  return {
+
+    valid:
+      errors.length === 0,
+
+    errors:
+      errors,
+
+    count:
+      mappings.length
+
+  };
+
+}
+
+
+/************************************************
+ * ACCOUNTING EFFECT RESOLUTION
+ *
+ * This function converts a financial effect
+ * into its configured financial statement line.
+ *
+ * It does NOT calculate the amount.
+ ************************************************/
+
+function resolveMAIRIXAccountingEffect(
+  transactionType,
+  effectType
+) {
+
+  const mapping =
+    requireMAIRIXAccountingMapping(
+      transactionType,
+      effectType
+    );
+
+
+  return {
+
+    mappingCode:
+      mairixCleanText(
+        mapping["Mapping Code"]
+      ),
+
+    mappingName:
+      mairixCleanText(
+        mapping["Mapping Name"]
+      ),
+
+    statement:
+      mairixCleanText(
+        mapping["Statement"]
+      ).toUpperCase(),
+
+    section:
+      mairixCleanText(
+        mapping["Section"]
+      ),
+
+    lineCode:
+      mairixCleanText(
+        mapping["Line Code"]
+      ),
+
+    lineName:
+      mairixCleanText(
+        mapping["Line Name"]
+      ),
+
+    debitAccount:
+      mairixCleanText(
+        mapping["Debit Account"]
+      ),
+
+    creditAccount:
+      mairixCleanText(
+        mapping["Credit Account"]
+      ),
+
+    transactionType:
+      mairixCleanText(
+        mapping["Transaction Type"]
+      ).toUpperCase(),
+
+    effectType:
+      mairixCleanText(
+        mapping["Effect Type"]
+      ).toUpperCase()
+
+  };
+
+}
+
+
+/************************************************
+ * CREATE MAPPING
+ ************************************************/
+
+function createMAIRIXAccountingMapping(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Accounting mapping data is required."
+    );
+
+  }
+
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_ACCOUNTING_MAPPING_SHEET
+    );
+
+
+  const mappingCode =
+    requireValue(
+      data.mappingCode,
+      "Mapping Code"
+    );
+
+
+  const mappingName =
+    requireValue(
+      data.mappingName,
+      "Mapping Name"
+    );
+
+
+  const statement =
+    requireValue(
+      data.statement,
+      "Statement"
+    )
+      .toUpperCase();
+
+
+  const section =
+    requireValue(
+      data.section,
+      "Section"
+    );
+
+
+  const lineCode =
+    requireValue(
+      data.lineCode,
+      "Line Code"
+    );
+
+
+  const lineName =
+    requireValue(
+      data.lineName,
+      "Line Name"
+    );
+
+
+  const transactionType =
+    requireValue(
+      data.transactionType,
+      "Transaction Type"
+    )
+      .toUpperCase();
+
+
+  const effectType =
+    requireValue(
+      data.effectType,
+      "Effect Type"
+    )
+      .toUpperCase();
+
+
+  const debitAccount =
+    mairixCleanText(
+      data.debitAccount
+    );
+
+
+  const creditAccount =
+    mairixCleanText(
+      data.creditAccount
+    );
+
+
+  const active =
+    data.active === undefined
+      ? true
+      : Boolean(data.active);
+
+
+  const mappings =
+    getMAIRIXAccountingMappings();
+
+
+  const duplicate =
+    mappings.some(
+      function(mapping) {
+
+        return (
+          mairixCleanText(
+            mapping["Mapping Code"]
+          ) === mappingCode
+        );
+
+      }
+    );
+
+
+  if (duplicate) {
+
+    throw new Error(
+      "Mapping Code already exists: " +
+      mappingCode
+    );
+
+  }
+
+
+  const row = [
+
+    mappingCode,
+
+    mappingName,
+
+    statement,
+
+    section,
+
+    lineCode,
+
+    lineName,
+
+    transactionType,
+
+    effectType,
+
+    debitAccount,
+
+    creditAccount,
+
+    active,
+
+    mairixCleanText(
+      data.notes
+    )
+
+  ];
+
+
+  sheet
+    .appendRow(row);
+
+
+  return {
+
+    success: true,
+
+    mappingCode:
+      mappingCode
+
+  };
+
+}
+
+
+/************************************************
+ * UPDATE MAPPING ACTIVE STATUS
+ ************************************************/
+
+function setMAIRIXAccountingMappingActive(
+  mappingCode,
+  active
+) {
+
+  const normalizedCode =
+    mairixCleanText(
+      mappingCode
+    );
+
+
+  if (!normalizedCode) {
+
+    throw new Error(
+      "Mapping Code is required."
+    );
+
+  }
+
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_ACCOUNTING_MAPPING_SHEET
+    );
+
+
+  const codeColumn =
+    mairixgetColumnNumber(
+      sheet,
+      "Mapping Code"
+    );
+
+
+  const activeColumn =
+    mairixgetColumnNumber(
+      sheet,
+      "Active"
+    );
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  for (
+    let row = 2;
+    row <= lastRow;
+    row++
+  ) {
+
+    const code =
+      mairixCleanText(
+        sheet
+          .getRange(
+            row,
+            codeColumn
+          )
+          .getDisplayValue()
+      );
+
+
+    if (
+      code !== normalizedCode
+    ) {
+
+      continue;
+
+    }
+
+
+    sheet
+      .getRange(
+        row,
+        activeColumn
+      )
+      .setValue(
+        Boolean(active)
+      );
+
+
+    return {
+
+      success: true,
+
+      mappingCode:
+        normalizedCode,
+
+      active:
+        Boolean(active)
+
+    };
+
+  }
+
+
+  throw new Error(
+    "Accounting mapping not found: " +
+    normalizedCode
+  );
+
+}
+
+
+/************************************************
+ * TEST ACCOUNTING MAPPING
+ ************************************************/
+
+function testMAIRIXAccountingMapping() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX ACCOUNTING MAPPING TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const validation =
+    validateMAIRIXAccountingMappings();
+
+
+  Logger.log(
+    JSON.stringify(
+      validation,
+      null,
+      2
+    )
+  );
+
+
+  if (!validation.valid) {
+
+    throw new Error(
+      "Accounting mapping validation failed:\n" +
+      validation.errors.join("\n")
+    );
+
+  }
+
+
+  Logger.log(
+    "ACCOUNTING MAPPING TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

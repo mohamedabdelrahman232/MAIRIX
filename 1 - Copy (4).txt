@@ -1,0 +1,2257 @@
+/************************************************
+ * MAIRIX ERP
+ * 14 - COLLECTIONS ENGINE
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Customer collections / receivables settlement.
+ *
+ * DESIGN PRINCIPLES
+ * ------------------------------------------------
+ * 1. No legacy-data dependency.
+ * 2. Every collection gets a central reference.
+ * 3. Cash balance and credit balances are separated.
+ * 4. Collection reduces customer receivable.
+ * 5. Collection increases cash when cash is received.
+ * 6. Every financial movement carries explicit signs.
+ * 7. Every operation is auditable.
+ * 8. Source transaction remains traceable.
+ * 9. Multi-warehouse architecture is supported.
+ * 10. Tax effects are delegated to MAIRIX_TaxEngine.
+ * 11. Financial posting is delegated to
+ *     MAIRIX_FinancialEngine.
+ * 12. No UI-supplied user identity is trusted.
+ ************************************************/
+
+
+/************************************************
+ * COLLECTION CONFIGURATION
+ ************************************************/
+
+const MAIRIX_COLLECTIONS = {
+
+  SHEET:
+    "COLLECTIONS",
+
+  MOVEMENT_TYPE:
+    "CUSTOMER_COLLECTION",
+
+  PAYMENT_METHODS: [
+    "CASH",
+    "BANK",
+    "TRANSFER",
+    "OTHER"
+  ],
+
+  STATUS: [
+    "POSTED",
+    "VOID"
+  ]
+
+};
+
+
+/************************************************
+ * COLLECTION SHEET HEADERS
+ ************************************************/
+
+const MAIRIX_COLLECTION_HEADERS = [
+
+  "Collection ID",
+  "Reference No",
+  "Date",
+  "Customer ID",
+  "Customer Name",
+
+  "Sales Invoice ID",
+  "Sales Invoice Reference",
+
+  "Warehouse ID",
+  "Warehouse Name",
+
+  "Payment Method",
+
+  "Amount",
+
+  /*
+   * Explicit financial signs
+   */
+
+  "Cash Effect",
+  "Customer Credit Effect",
+
+  /*
+   * Tax engine integration
+   */
+
+  "Taxable Amount",
+  "Tax Effect",
+
+  /*
+   * Central movement
+   */
+
+  "Movement ID",
+  "Movement Type",
+
+  /*
+   * Security / audit
+   */
+
+  "User ID",
+  "User Name",
+
+  "Status",
+  "Notes",
+  "Created At"
+
+];
+
+
+/************************************************
+ * SETUP COLLECTIONS SHEET
+ ************************************************/
+
+function setupMAIRIXCollections() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_COLLECTIONS.SHEET
+    );
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_COLLECTIONS.SHEET
+      );
+
+  }
+
+  sheet.clear();
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      MAIRIX_COLLECTION_HEADERS.length
+    )
+    .setValues([
+      MAIRIX_COLLECTION_HEADERS
+    ]);
+
+  sheet
+    .setFrozenRows(1);
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      MAIRIX_COLLECTION_HEADERS.length
+    )
+    .setFontWeight("bold");
+
+  sheet.autoResizeColumns(
+    1,
+    MAIRIX_COLLECTION_HEADERS.length
+  );
+
+  return {
+
+    success:
+      true,
+
+    sheet:
+      MAIRIX_COLLECTIONS.SHEET,
+
+    columns:
+      MAIRIX_COLLECTION_HEADERS.length
+
+  };
+
+}
+
+
+/************************************************
+ * CREATE COLLECTION
+ *
+ * Main public operation.
+ *
+ * Example:
+ *
+ * createMAIRIXCollection({
+ *
+ *   customerId: "CUS-00001",
+ *
+ *   invoiceId: "SAL-20260822-0001",
+ *
+ *   warehouseId: "WH-001",
+ *
+ *   paymentMethod: "CASH",
+ *
+ *   amount: 1500,
+ *
+ *   notes: "Customer payment"
+ *
+ * });
+ ************************************************/
+
+function createMAIRIXCollection(data) {
+
+  /**********************************************
+   * SECURITY
+   **********************************************/
+
+  const currentUser =
+    requireCurrentUser();
+
+  requireCollectionsCreate(
+    currentUser.userId
+  );
+
+
+  if (!data) {
+
+    throw new Error(
+      "Collection data is required."
+    );
+
+  }
+
+
+  /**********************************************
+   * VALIDATION
+   **********************************************/
+
+  const customerId =
+    requireCollectionValue(
+      data.customerId,
+      "Customer ID"
+    );
+
+
+  const amount =
+    Number(
+      data.amount
+    );
+
+
+  if (
+    !isFinite(amount) ||
+    amount <= 0
+  ) {
+
+    throw new Error(
+      "Collection amount must be greater than zero."
+    );
+
+  }
+
+
+  const paymentMethod =
+    String(
+      data.paymentMethod || ""
+    )
+      .trim()
+      .toUpperCase();
+
+
+  if (
+    MAIRIX_COLLECTIONS
+      .PAYMENT_METHODS
+      .indexOf(paymentMethod) === -1
+  ) {
+
+    throw new Error(
+      "Invalid collection payment method: " +
+      paymentMethod
+    );
+
+  }
+
+
+  /**********************************************
+   * CUSTOMER
+   **********************************************/
+
+  const customer =
+    mairixGetCustomerForCollection(
+      customerId
+    );
+
+
+  if (!customer) {
+
+    throw new Error(
+      "Customer not found: " +
+      customerId
+    );
+
+  }
+
+
+  /**********************************************
+   * OPTIONAL INVOICE
+   **********************************************/
+
+  const invoiceId =
+    mairixCleanText(
+      data.invoiceId
+    );
+
+
+  let invoice =
+    null;
+
+
+  if (invoiceId) {
+
+    invoice =
+      mairixGetInvoiceForCollection(
+        invoiceId
+      );
+
+
+    if (!invoice) {
+
+      throw new Error(
+        "Sales invoice not found: " +
+        invoiceId
+      );
+
+    }
+
+
+    const invoiceCustomerId =
+      mairixCleanText(
+        invoice.customerId ||
+        invoice["Customer ID"]
+      );
+
+
+    if (
+      invoiceCustomerId &&
+      invoiceCustomerId !== customerId
+    ) {
+
+      throw new Error(
+        "Collection customer does not match the selected invoice."
+      );
+
+    }
+
+
+    /*
+     * Prevent over-collection.
+     */
+
+    const outstanding =
+      mairixGetInvoiceOutstandingAmount(
+        invoiceId
+      );
+
+
+    if (
+      outstanding !== null &&
+      amount > outstanding
+    ) {
+
+      throw new Error(
+        "Collection exceeds invoice outstanding balance. " +
+        "Outstanding: " +
+        outstanding
+      );
+
+    }
+
+  }
+
+
+  /**********************************************
+   * WAREHOUSE
+   **********************************************/
+
+  const warehouseId =
+    mairixCleanText(
+      data.warehouseId
+    );
+
+
+  let warehouse =
+    null;
+
+
+  if (warehouseId) {
+
+    warehouse =
+      mairixGetWarehouseForCollection(
+        warehouseId
+      );
+
+  }
+
+
+  /**********************************************
+   * CENTRAL IDS
+   **********************************************/
+
+  const collectionId =
+    generateMAIRIXCollectionId();
+
+
+  const referenceNo =
+    generateMAIRIXCollectionReference();
+
+
+  const movementId =
+    generateMAIRIXCollectionMovementId();
+
+
+  /**********************************************
+   * FINANCIAL SIGNS
+   *
+   * Collection:
+   *
+   * Cash:
+   *     POSITIVE
+   *
+   * Customer receivable:
+   *     NEGATIVE
+   *
+   * The customer's outstanding debt decreases.
+   **********************************************/
+
+  const cashEffect =
+    amount;
+
+
+  const customerCreditEffect =
+    -amount;
+
+
+  /**********************************************
+   * TAX EFFECT
+   *
+   * Collections normally do not create a new
+   * sales tax event.
+   *
+   * Tax engine is asked to evaluate the movement
+   * rather than allowing the collection engine
+   * to duplicate tax logic.
+   **********************************************/
+
+  const taxResult =
+    mairixEvaluateCollectionTax(
+      {
+        collectionId:
+          collectionId,
+
+        customerId:
+          customerId,
+
+        invoiceId:
+          invoiceId,
+
+        amount:
+          amount,
+
+        movementType:
+          MAIRIX_COLLECTIONS.MOVEMENT_TYPE
+      }
+    );
+
+
+  const taxableAmount =
+    Number(
+      taxResult.taxableAmount || 0
+    );
+
+
+  const taxEffect =
+    Number(
+      taxResult.taxEffect || 0
+    );
+
+
+  /**********************************************
+   * SAVE COLLECTION
+   **********************************************/
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_COLLECTIONS.SHEET
+    );
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Collection ID",
+    collectionId
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Reference No",
+    referenceNo
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Date",
+    data.date
+      ? new Date(data.date)
+      : new Date()
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Customer ID",
+    customerId
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Customer Name",
+    mairixCleanText(
+      customer.name ||
+      customer["Customer Name"]
+    )
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Sales Invoice ID",
+    invoiceId
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Sales Invoice Reference",
+    invoice
+      ? mairixCleanText(
+          invoice.referenceNo ||
+          invoice["Reference No"]
+        )
+      : ""
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Warehouse ID",
+    warehouseId
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Warehouse Name",
+    warehouse
+      ? mairixCleanText(
+          warehouse.name ||
+          warehouse["Warehouse Name"]
+        )
+      : ""
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Payment Method",
+    paymentMethod
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Amount",
+    amount
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Cash Effect",
+    cashEffect
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Customer Credit Effect",
+    customerCreditEffect
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Taxable Amount",
+    taxableAmount
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Tax Effect",
+    taxEffect
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Movement ID",
+    movementId
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Movement Type",
+    MAIRIX_COLLECTIONS.MOVEMENT_TYPE
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "User ID",
+    currentUser.userId
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "User Name",
+    currentUser.name
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Status",
+    "POSTED"
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Notes",
+    mairixCleanText(
+      data.notes
+    )
+  );
+
+
+  mairixSetCollectionField(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+
+  const newRow =
+    sheet.getLastRow() + 1;
+
+
+  sheet
+    .getRange(
+      newRow,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  /**********************************************
+   * FINANCIAL ENGINE
+   **********************************************/
+
+  const financialResult =
+    mairixPostCollectionFinancialMovement(
+      {
+        collectionId:
+          collectionId,
+
+        referenceNo:
+          referenceNo,
+
+        customerId:
+          customerId,
+
+        invoiceId:
+          invoiceId,
+
+        paymentMethod:
+          paymentMethod,
+
+        amount:
+          amount,
+
+        cashEffect:
+          cashEffect,
+
+        customerCreditEffect:
+          customerCreditEffect,
+
+        taxEffect:
+          taxEffect,
+
+        movementId:
+          movementId,
+
+        userId:
+          currentUser.userId
+      }
+    );
+
+
+  /**********************************************
+   * CUSTOMER BALANCE UPDATE
+   **********************************************/
+
+  const customerBalanceResult =
+    mairixApplyCustomerCollection(
+      {
+        customerId:
+          customerId,
+
+        invoiceId:
+          invoiceId,
+
+        amount:
+          amount,
+
+        collectionId:
+          collectionId,
+
+        referenceNo:
+          referenceNo,
+
+        movementId:
+          movementId,
+
+        userId:
+          currentUser.userId
+      }
+    );
+
+
+  /**********************************************
+   * AUDIT
+   **********************************************/
+
+  mairixWriteCollectionAudit(
+    "CREATE_COLLECTION",
+    collectionId,
+    "Reference: " +
+      referenceNo +
+      " | Customer: " +
+      customerId +
+      " | Amount: " +
+      amount +
+      " | Method: " +
+      paymentMethod +
+      " | Cash Effect: +" +
+      cashEffect +
+      " | Customer Credit Effect: " +
+      customerCreditEffect +
+      " | User: " +
+      currentUser.email
+  );
+
+
+  /**********************************************
+   * RETURN
+   **********************************************/
+
+  return {
+
+    success:
+      true,
+
+    collectionId:
+      collectionId,
+
+    referenceNo:
+      referenceNo,
+
+    movementId:
+      movementId,
+
+    customerId:
+      customerId,
+
+    invoiceId:
+      invoiceId,
+
+    amount:
+      amount,
+
+    paymentMethod:
+      paymentMethod,
+
+    signs: {
+
+      cashEffect:
+        cashEffect,
+
+      customerCreditEffect:
+        customerCreditEffect
+
+    },
+
+    tax: {
+
+      taxableAmount:
+        taxableAmount,
+
+      taxEffect:
+        taxEffect
+
+    },
+
+    financial:
+      financialResult,
+
+    customerBalance:
+      customerBalanceResult,
+
+    message:
+      "Customer collection posted successfully."
+
+  };
+
+}
+
+
+/************************************************
+ * APPLY CUSTOMER COLLECTION
+ *
+ * This function represents the receivable side.
+ ************************************************/
+
+function mairixApplyCustomerCollection(data) {
+
+  if (!data) {
+
+    throw new Error(
+      "Collection balance data is required."
+    );
+
+  }
+
+
+  /*
+   * If a dedicated customer ledger engine
+   * exists, use it.
+   */
+
+  if (
+    typeof createCustomerCollectionEntry ===
+    "function"
+  ) {
+
+    return createCustomerCollectionEntry(
+      data
+    );
+
+  }
+
+
+  /*
+   * Fallback:
+   *
+   * Do not mutate an unknown legacy structure.
+   * The financial engine remains the central
+   * source of financial posting.
+   */
+
+  return {
+
+    success:
+      true,
+
+    posted:
+      false,
+
+    delegated:
+      false,
+
+    message:
+      "Customer ledger engine not connected yet."
+
+  };
+
+}
+
+
+/************************************************
+ * POST FINANCIAL MOVEMENT
+ ************************************************/
+
+function mairixPostCollectionFinancialMovement(
+  data
+) {
+
+  /*
+   * Preferred integration point.
+   */
+
+  if (
+    typeof postFinancialMovement ===
+    "function"
+  ) {
+
+    return postFinancialMovement(
+      {
+        movementId:
+          data.movementId,
+
+        movementType:
+          MAIRIX_COLLECTIONS.MOVEMENT_TYPE,
+
+        referenceNo:
+          data.referenceNo,
+
+        customerId:
+          data.customerId,
+
+        invoiceId:
+          data.invoiceId,
+
+        paymentMethod:
+          data.paymentMethod,
+
+        amount:
+          data.amount,
+
+        cashEffect:
+          data.cashEffect,
+
+        creditEffect:
+          data.customerCreditEffect,
+
+        taxEffect:
+          data.taxEffect,
+
+        userId:
+          data.userId
+      }
+    );
+
+  }
+
+
+  return {
+
+    success:
+      true,
+
+    posted:
+      false,
+
+    delegated:
+      false,
+
+    message:
+      "Financial engine not connected yet."
+
+  };
+
+}
+
+
+/************************************************
+ * TAX ENGINE INTEGRATION
+ ************************************************/
+
+function mairixEvaluateCollectionTax(
+  data
+) {
+
+  /*
+   * Collections normally settle an existing
+   * receivable and should not duplicate the
+   * original sale tax.
+   *
+   * The Tax Engine remains the authority.
+   */
+
+  if (
+    typeof evaluateTaxForMovement ===
+    "function"
+  ) {
+
+    const result =
+      evaluateTaxForMovement(
+        {
+          movementType:
+            data.movementType,
+
+          movementId:
+            data.collectionId,
+
+          customerId:
+            data.customerId,
+
+          invoiceId:
+            data.invoiceId,
+
+          amount:
+            data.amount
+        }
+      );
+
+
+    return {
+
+      taxableAmount:
+        Number(
+          result.taxableAmount || 0
+        ),
+
+      taxEffect:
+        Number(
+          result.taxEffect || 0
+        )
+
+    };
+
+  }
+
+
+  return {
+
+    taxableAmount:
+      0,
+
+    taxEffect:
+      0
+
+  };
+
+}
+
+
+/************************************************
+ * GET CUSTOMER
+ ************************************************/
+
+function mairixGetCustomerForCollection(
+  customerId
+) {
+
+  /*
+   * Preferred customer master integration.
+   */
+
+  if (
+    typeof getCustomerById ===
+    "function"
+  ) {
+
+    return getCustomerById(
+      customerId
+    );
+
+  }
+
+
+  /*
+   * Generic master-data fallback.
+   */
+
+  const possibleSheets = [
+    "CUSTOMERS",
+    "MAIRIX_CUSTOMERS"
+  ];
+
+
+  for (
+    let i = 0;
+    i < possibleSheets.length;
+    i++
+  ) {
+
+    const sheet =
+      SpreadsheetApp
+        .getActiveSpreadsheet()
+        .getSheetByName(
+          possibleSheets[i]
+        );
+
+
+    if (!sheet) {
+      continue;
+    }
+
+
+    const data =
+      getSheetDataAsObjects(
+        sheet
+      );
+
+
+    for (
+      let j = 0;
+      j < data.length;
+      j++
+    ) {
+
+      const id =
+        mairixCleanText(
+          data[j]["Customer ID"] ||
+          data[j]["Code"]
+        );
+
+
+      if (
+        id === customerId
+      ) {
+
+        return data[j];
+
+      }
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET INVOICE
+ ************************************************/
+
+function mairixGetInvoiceForCollection(
+  invoiceId
+) {
+
+  if (
+    typeof getSaleById ===
+    "function"
+  ) {
+
+    return getSaleById(
+      invoiceId
+    );
+
+  }
+
+
+  const possibleSheets = [
+    "SALES",
+    "MAIRIX_SALES"
+  ];
+
+
+  for (
+    let i = 0;
+    i < possibleSheets.length;
+    i++
+  ) {
+
+    const sheet =
+      SpreadsheetApp
+        .getActiveSpreadsheet()
+        .getSheetByName(
+          possibleSheets[i]
+        );
+
+
+    if (!sheet) {
+      continue;
+    }
+
+
+    const data =
+      getSheetDataAsObjects(
+        sheet
+      );
+
+
+    for (
+      let j = 0;
+      j < data.length;
+      j++
+    ) {
+
+      const id =
+        mairixCleanText(
+          data[j]["Sale ID"] ||
+          data[j]["Invoice ID"] ||
+          data[j]["Reference No"]
+        );
+
+
+      if (
+        id === invoiceId
+      ) {
+
+        return data[j];
+
+      }
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * INVOICE OUTSTANDING
+ ************************************************/
+
+function mairixGetInvoiceOutstandingAmount(
+  invoiceId
+) {
+
+  if (
+    typeof getInvoiceOutstandingAmount ===
+    "function"
+  ) {
+
+    return Number(
+      getInvoiceOutstandingAmount(
+        invoiceId
+      )
+    );
+
+  }
+
+
+  /*
+   * If invoice balance engine is not connected,
+   * return null instead of guessing.
+   */
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET WAREHOUSE
+ ************************************************/
+
+function mairixGetWarehouseForCollection(
+  warehouseId
+) {
+
+  if (
+    typeof getWarehouseById ===
+    "function"
+  ) {
+
+    return getWarehouseById(
+      warehouseId
+    );
+
+  }
+
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "WAREHOUSES"
+      );
+
+
+  if (!sheet) {
+    return null;
+  }
+
+
+  const data =
+    getSheetDataAsObjects(
+      sheet
+    );
+
+
+  for (
+    let i = 0;
+    i < data.length;
+    i++
+  ) {
+
+    const id =
+      mairixCleanText(
+        data[i]["Warehouse ID"] ||
+        data[i]["Code"]
+      );
+
+
+    if (
+      id === warehouseId
+    ) {
+
+      return data[i];
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * SET COLLECTION FIELD
+ ************************************************/
+
+function mairixSetCollectionField(
+  row,
+  headers,
+  field,
+  value
+) {
+
+  const index =
+    headers.indexOf(
+      field
+    );
+
+
+  if (
+    index === -1
+  ) {
+
+    throw new Error(
+      "COLLECTIONS header not found: " +
+      field
+    );
+
+  }
+
+
+  row[index] =
+    value;
+
+}
+
+
+/************************************************
+ * REQUIRE VALUE
+ ************************************************/
+
+function requireCollectionValue(
+  value,
+  field
+) {
+
+  const normalized =
+    mairixCleanText(
+      value
+    );
+
+
+  if (!normalized) {
+
+    throw new Error(
+      field +
+      " is required."
+    );
+
+  }
+
+
+  return normalized;
+
+}
+
+
+/************************************************
+ * GENERATE COLLECTION ID
+ *
+ * Format:
+ *
+ * COL-YYYYMMDD-0001
+ ************************************************/
+
+function generateMAIRIXCollectionId() {
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_COLLECTIONS.SHEET
+    );
+
+
+  const dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  const prefix =
+    "COL-" +
+    dateKey +
+    "-";
+
+
+  let counter =
+    1;
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    const idColumn =
+      mairixgetColumnNumber(
+        sheet,
+        "Collection ID"
+      );
+
+
+    const values =
+      sheet
+        .getRange(
+          2,
+          idColumn,
+          lastRow - 1,
+          1
+        )
+        .getDisplayValues();
+
+
+    values.forEach(
+      function(row) {
+
+        const value =
+          mairixCleanText(
+            row[0]
+          );
+
+
+        if (
+          value.indexOf(prefix) !== 0
+        ) {
+
+          return;
+
+        }
+
+
+        const number =
+          parseInt(
+            value.substring(
+              prefix.length
+            ),
+            10
+          );
+
+
+        if (
+          !isNaN(number) &&
+          number >= counter
+        ) {
+
+          counter =
+            number + 1;
+
+        }
+
+      }
+    );
+
+  }
+
+
+  return (
+    prefix +
+    String(counter)
+      .padStart(
+        4,
+        "0"
+      )
+  );
+
+}
+
+
+/************************************************
+ * GENERATE REFERENCE
+ ************************************************/
+
+function generateMAIRIXCollectionReference() {
+
+  return (
+    "RCV-" +
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd-HHmmss"
+    ) +
+    "-" +
+    Utilities.getUuid()
+      .substring(
+        0,
+        6
+      )
+      .toUpperCase()
+  );
+
+}
+
+
+/************************************************
+ * GENERATE CENTRAL MOVEMENT ID
+ ************************************************/
+
+function generateMAIRIXCollectionMovementId() {
+
+  return (
+    "MOV-" +
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd-HHmmss"
+    ) +
+    "-" +
+    Utilities.getUuid()
+      .substring(
+        0,
+        8
+      )
+      .toUpperCase()
+  );
+
+}
+
+
+/************************************************
+ * AUDIT
+ ************************************************/
+
+function mairixWriteCollectionAudit(
+  action,
+  reference,
+  details
+) {
+
+  try {
+
+    if (
+      typeof logAction ===
+      "function"
+    ) {
+
+      logAction(
+        action,
+        reference,
+        details
+      );
+
+      return;
+
+    }
+
+
+    const sheet =
+      SpreadsheetApp
+        .getActiveSpreadsheet()
+        .getSheetByName(
+          "LOGS"
+        );
+
+
+    if (!sheet) {
+      return;
+    }
+
+
+    sheet.appendRow([
+
+      new Date(),
+
+      Session
+        .getActiveUser()
+        .getEmail() ||
+        "SYSTEM",
+
+      action,
+
+      reference,
+
+      details
+
+    ]);
+
+  } catch (error) {
+
+    Logger.log(
+      "Collection audit failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * GET COLLECTION BY ID
+ ************************************************/
+
+function getMAIRIXCollection(
+  collectionId
+) {
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_COLLECTIONS.SHEET
+    );
+
+
+  const idColumn =
+    mairixgetColumnNumber(
+      sheet,
+      "Collection ID"
+    );
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        idColumn,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      mairixCleanText(
+        values[i][0]
+      ) ===
+      mairixCleanText(
+        collectionId
+      )
+    ) {
+
+      const rowNumber =
+        i + 2;
+
+
+      const headers =
+        sheet
+          .getRange(
+            1,
+            1,
+            1,
+            sheet.getLastColumn()
+          )
+          .getDisplayValues()[0];
+
+
+      const row =
+        sheet
+          .getRange(
+            rowNumber,
+            1,
+            1,
+            headers.length
+          )
+          .getValues()[0];
+
+
+      const result = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          result[
+            mairixCleanText(header)
+          ] =
+            row[index];
+
+        }
+      );
+
+
+      return result;
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * VOID COLLECTION
+ *
+ * We do not physically delete financial history.
+ ************************************************/
+
+function voidMAIRIXCollection(
+  collectionId,
+  reason
+) {
+
+  const currentUser =
+    requireCurrentUser();
+
+
+  requireCollectionsEdit(
+    currentUser.userId
+  );
+
+
+  const collection =
+    getMAIRIXCollection(
+      collectionId
+    );
+
+
+  if (!collection) {
+
+    throw new Error(
+      "Collection not found: " +
+      collectionId
+    );
+
+  }
+
+
+  const status =
+    mairixCleanText(
+      collection["Status"]
+    ).toUpperCase();
+
+
+  if (
+    status === "VOID"
+  ) {
+
+    throw new Error(
+      "Collection is already void."
+    );
+
+  }
+
+
+  /*
+   * Financial reversal must go through
+   * the financial engine.
+   */
+
+  const reversal =
+    mairixReverseCollectionFinancialMovement(
+      collection,
+      reason,
+      currentUser
+    );
+
+
+  const sheet =
+    mairixgetSheet(
+      MAIRIX_COLLECTIONS.SHEET
+    );
+
+
+  const collectionIdColumn =
+    mairixgetColumnNumber(
+      sheet,
+      "Collection ID"
+    );
+
+
+  const statusColumn =
+    mairixgetColumnNumber(
+      sheet,
+      "Status"
+    );
+
+
+  const notesColumn =
+    mairixgetColumnNumber(
+      sheet,
+      "Notes"
+    );
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  for (
+    let r = 2;
+    r <= lastRow;
+    r++
+  ) {
+
+    const id =
+      mairixCleanText(
+        sheet
+          .getRange(
+            r,
+            collectionIdColumn
+          )
+          .getDisplayValue()
+      );
+
+
+    if (
+      id !==
+      mairixCleanText(collectionId)
+    ) {
+
+      continue;
+
+    }
+
+
+    sheet
+      .getRange(
+        r,
+        statusColumn
+      )
+      .setValue(
+        "VOID"
+      );
+
+
+    sheet
+      .getRange(
+        r,
+        notesColumn
+      )
+      .setValue(
+        mairixCleanText(
+          collection["Notes"]
+        ) +
+        " | VOID: " +
+        mairixCleanText(reason)
+      );
+
+
+    break;
+
+  }
+
+
+  mairixWriteCollectionAudit(
+    "VOID_COLLECTION",
+    collectionId,
+    "Reason: " +
+      mairixCleanText(reason) +
+      " | User: " +
+      currentUser.email
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    collectionId:
+      collectionId,
+
+    status:
+      "VOID",
+
+    reversal:
+      reversal
+
+  };
+
+}
+
+
+/************************************************
+ * REVERSE FINANCIAL MOVEMENT
+ ************************************************/
+
+function mairixReverseCollectionFinancialMovement(
+  collection,
+  reason,
+  currentUser
+) {
+
+  if (
+    typeof reverseFinancialMovement ===
+    "function"
+  ) {
+
+    return reverseFinancialMovement(
+      {
+        movementId:
+          collection["Movement ID"],
+
+        referenceNo:
+          collection["Reference No"],
+
+        reason:
+          reason,
+
+        userId:
+          currentUser.userId
+      }
+    );
+
+  }
+
+
+  return {
+
+    success:
+      true,
+
+    reversed:
+      false,
+
+    delegated:
+      false,
+
+    message:
+      "Financial reversal engine not connected yet."
+
+  };
+
+}
+
+
+/************************************************
+ * TEST SETUP
+ ************************************************/
+
+function testMAIRIXCollectionsSetup() {
+
+  const result =
+    setupMAIRIXCollections();
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "Collections setup failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX COLLECTIONS SETUP: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST COLLECTION SIGN LOGIC
+ *
+ * No database write.
+ ************************************************/
+
+function testMAIRIXCollectionSigns() {
+
+  const amount =
+    1000;
+
+
+  const cashEffect =
+    amount;
+
+
+  const customerCreditEffect =
+    -amount;
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX COLLECTION SIGN TEST"
+  );
+
+  Logger.log(
+    "Amount: " +
+    amount
+  );
+
+  Logger.log(
+    "Cash Effect: " +
+    cashEffect
+  );
+
+  Logger.log(
+    "Customer Credit Effect: " +
+    customerCreditEffect
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  if (
+    cashEffect !== amount
+  ) {
+
+    throw new Error(
+      "Cash effect sign is incorrect."
+    );
+
+  }
+
+
+  if (
+    customerCreditEffect !==
+    -amount
+  ) {
+
+    throw new Error(
+      "Customer credit effect sign is incorrect."
+    );
+
+  }
+
+
+  Logger.log(
+    "COLLECTION SIGN TEST: PASS"
+  );
+
+}
+
+
+/************************************************
+ * TEST COLLECTION CREATION
+ *
+ * WARNING:
+ * This writes a real collection.
+ *
+ * Use only on a test customer.
+ ************************************************/
+
+function testMAIRIXCollectionCreation() {
+
+  const currentUser =
+    requireCurrentUser();
+
+
+  Logger.log(
+    "Current user: " +
+    currentUser.email
+  );
+
+
+  /*
+   * Replace these test values before running.
+   */
+
+  const testData = {
+
+    customerId:
+      "TEST-CUSTOMER",
+
+    invoiceId:
+      "",
+
+    warehouseId:
+      "",
+
+    paymentMethod:
+      "CASH",
+
+    amount:
+      100,
+
+    notes:
+      "MAIRIX COLLECTION TEST"
+
+  };
+
+
+  const result =
+    createMAIRIXCollection(
+      testData
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "Collection creation test failed."
+    );
+
+  }
+
+
+  if (
+    result.signs.cashEffect !==
+    testData.amount
+  ) {
+
+    throw new Error(
+      "Cash effect test failed."
+    );
+
+  }
+
+
+  if (
+    result.signs.customerCreditEffect !==
+    -testData.amount
+  ) {
+
+    throw new Error(
+      "Customer credit effect test failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX COLLECTION CREATION TEST: PASS"
+  );
+
+  Logger.log(
+    "Collection ID: " +
+    result.collectionId
+  );
+
+  Logger.log(
+    "Reference No: " +
+    result.referenceNo
+  );
+
+  Logger.log(
+    "Movement ID: " +
+    result.movementId
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

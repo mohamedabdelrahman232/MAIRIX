@@ -1,0 +1,1376 @@
+/************************************************
+ * MAIRIX ERP
+ * USER WAREHOUSE ASSIGNMENT ENGINE
+ *
+ * FILE:
+ * 6-A-MAIRIX_UserWarehouses.gs
+ *
+ * PURPOSE:
+ *
+ * 1. Assign warehouses to users systematically.
+ * 2. Validate User ID.
+ * 3. Validate Employee Code.
+ * 4. Prevent duplicate warehouse assignments.
+ * 5. Allow multiple warehouses per employee/user.
+ * 6. Provide runtime warehouse access validation.
+ *
+ * IMPORTANT ARCHITECTURE:
+ *
+ * ROLE PERMISSION
+ * = WHAT the user can do.
+ *
+ * USER_WAREHOUSES
+ * = WHERE the user can do it.
+ ************************************************/
+
+
+/************************************************
+ * CONFIGURATION
+ ************************************************/
+
+const MAIRIX_USER_WAREHOUSES_CONFIG = Object.freeze({
+
+  SHEET_NAME: "USER_WAREHOUSES",
+
+  HEADERS: [
+
+    "User ID",
+
+    "Employee Code",
+
+    "Warehouse Code",
+
+    "Warehouse Name",
+
+    "Active",
+
+    "Assigned At",
+
+    "Assigned By"
+
+  ]
+
+});
+
+
+/************************************************
+ * GET SHEET
+ ************************************************/
+
+function mairixGetUserWarehousesSheet() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_USER_WAREHOUSES_CONFIG.SHEET_NAME
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_USER_WAREHOUSES_CONFIG.SHEET_NAME
+      );
+
+  }
+
+
+  const headers =
+    MAIRIX_USER_WAREHOUSES_CONFIG.HEADERS;
+
+
+  const existingHeaders =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        headers.length
+      )
+      .getDisplayValues()[0];
+
+
+  let needsHeaders = false;
+
+
+  for (
+    let i = 0;
+    i < headers.length;
+    i++
+  ) {
+
+    if (
+      existingHeaders[i] !==
+      headers[i]
+    ) {
+
+      needsHeaders = true;
+
+      break;
+
+    }
+
+  }
+
+
+  if (needsHeaders) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        headers.length
+      )
+      .setValues([
+        headers
+      ]);
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * NORMALIZE TEXT
+ ************************************************/
+
+function mairixWarehouseCleanText(
+  value
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(value).trim();
+
+}
+
+
+/************************************************
+ * BOOLEAN PARSER
+ ************************************************/
+
+function mairixWarehouseIsTrue(
+  value
+) {
+
+  if (
+    value === true ||
+    value === 1
+  ) {
+
+    return true;
+
+  }
+
+
+  const normalized =
+    mairixWarehouseCleanText(
+      value
+    ).toUpperCase();
+
+
+  return (
+
+    normalized === "TRUE" ||
+    normalized === "1" ||
+    normalized === "YES" ||
+    normalized === "Y"
+
+  );
+
+}
+
+
+/************************************************
+ * FIND USER
+ *
+ * Uses central USERS identity.
+ ************************************************/
+
+function mairixGetWarehouseUserById(
+  userId
+) {
+
+  const normalizedUserId =
+    mairixWarehouseCleanText(
+      userId
+    );
+
+
+  if (!normalizedUserId) {
+
+    return null;
+
+  }
+
+
+  if (
+    typeof findMAIRIXUserById ===
+    "function"
+  ) {
+
+    return findMAIRIXUserById(
+      normalizedUserId
+    );
+
+  }
+
+
+  throw new Error(
+    "MAIRIX user identity engine is unavailable."
+  );
+
+}
+
+
+/************************************************
+ * GET USER EMPLOYEE CODE
+ ************************************************/
+
+function mairixGetEmployeeCodeForUser(
+  userId
+) {
+
+  const usersSheet =
+    getMAIRIXUsersSheet();
+
+
+  const lastRow =
+    usersSheet.getLastRow();
+
+
+  if (lastRow < 2) {
+
+    return "";
+
+  }
+
+
+  const lastColumn =
+    usersSheet.getLastColumn();
+
+
+  const headers =
+    usersSheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const userIdIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+
+  const employeeCodeIndex =
+    headers.indexOf(
+      "Employee Code"
+    );
+
+
+  if (
+    userIdIndex === -1 ||
+    employeeCodeIndex === -1
+  ) {
+
+    throw new Error(
+      "USERS sheet is missing User ID or Employee Code."
+    );
+
+  }
+
+
+  const values =
+    usersSheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getDisplayValues();
+
+
+  const normalizedUserId =
+    mairixWarehouseCleanText(
+      userId
+    );
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      mairixWarehouseCleanText(
+        values[i][userIdIndex]
+      ) === normalizedUserId
+    ) {
+
+      return mairixWarehouseCleanText(
+        values[i][employeeCodeIndex]
+      );
+
+    }
+
+  }
+
+
+  return "";
+
+}
+
+
+/************************************************
+ * GET WAREHOUSE
+ *
+ * Dynamically supports the central
+ * warehouse master-data engine.
+ ************************************************/
+
+function mairixFindWarehouseByCode(
+  warehouseCode
+) {
+
+  const normalizedCode =
+    mairixWarehouseCleanText(
+      warehouseCode
+    );
+
+
+  if (!normalizedCode) {
+
+    return null;
+
+  }
+
+
+  const possibleSheets = [
+
+    "WAREHOUSES",
+
+    "Warehouses"
+
+  ];
+
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  let sheet = null;
+
+
+  for (
+    let i = 0;
+    i < possibleSheets.length;
+    i++
+  ) {
+
+    sheet =
+      ss.getSheetByName(
+        possibleSheets[i]
+      );
+
+    if (sheet) {
+
+      break;
+
+    }
+
+  }
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "WAREHOUSES sheet was not found."
+    );
+
+  }
+
+
+  if (
+    sheet.getLastRow() < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const codeIndex =
+    headers.indexOf(
+      "Warehouse Code"
+    );
+
+
+  const nameIndex =
+    headers.indexOf(
+      "Warehouse Name"
+    );
+
+
+  const activeIndex =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  if (codeIndex === -1) {
+
+    throw new Error(
+      'WAREHOUSES is missing "Warehouse Code".'
+    );
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        lastColumn
+      )
+      .getDisplayValues();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const rowCode =
+      mairixWarehouseCleanText(
+        values[i][codeIndex]
+      );
+
+
+    if (
+      rowCode !== normalizedCode
+    ) {
+
+      continue;
+
+    }
+
+
+    return {
+
+      warehouseCode:
+        rowCode,
+
+      warehouseName:
+        nameIndex !== -1
+          ? mairixWarehouseCleanText(
+              values[i][nameIndex]
+            )
+          : "",
+
+      active:
+        activeIndex !== -1
+          ? mairixWarehouseIsTrue(
+              values[i][activeIndex]
+            )
+          : true
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * CHECK DUPLICATE ASSIGNMENT
+ ************************************************/
+
+function mairixFindUserWarehouseAssignment(
+  userId,
+  warehouseCode
+) {
+
+  const sheet =
+    mairixGetUserWarehousesSheet();
+
+
+  if (
+    sheet.getLastRow() < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        MAIRIX_USER_WAREHOUSES_CONFIG.HEADERS.length
+      )
+      .getDisplayValues();
+
+
+  const normalizedUserId =
+    mairixWarehouseCleanText(
+      userId
+    );
+
+
+  const normalizedWarehouseCode =
+    mairixWarehouseCleanText(
+      warehouseCode
+    );
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+
+      mairixWarehouseCleanText(
+        values[i][0]
+      ) === normalizedUserId
+
+      &&
+
+      mairixWarehouseCleanText(
+        values[i][2]
+      ) === normalizedWarehouseCode
+
+    ) {
+
+      return {
+
+        rowNumber:
+          i + 2,
+
+        userId:
+          values[i][0],
+
+        employeeCode:
+          values[i][1],
+
+        warehouseCode:
+          values[i][2],
+
+        warehouseName:
+          values[i][3],
+
+        active:
+          mairixWarehouseIsTrue(
+            values[i][4]
+          )
+
+      };
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * ASSIGN WAREHOUSE TO USER
+ ************************************************/
+
+function mairixAssignWarehouseToUser(
+  userId,
+  warehouseCode,
+  assignedBy
+) {
+
+  const normalizedUserId =
+    mairixWarehouseCleanText(
+      userId
+    );
+
+
+  const normalizedWarehouseCode =
+    mairixWarehouseCleanText(
+      warehouseCode
+    );
+
+
+  if (!normalizedUserId) {
+
+    throw new Error(
+      "User ID is required."
+    );
+
+  }
+
+
+  if (!normalizedWarehouseCode) {
+
+    throw new Error(
+      "Warehouse Code is required."
+    );
+
+  }
+
+
+  const user =
+    mairixGetWarehouseUserById(
+      normalizedUserId
+    );
+
+
+  if (!user) {
+
+    throw new Error(
+      "User does not exist: " +
+      normalizedUserId
+    );
+
+  }
+
+
+  if (
+    user.active !== true
+  ) {
+
+    throw new Error(
+      "Cannot assign warehouse to inactive user."
+    );
+
+  }
+
+
+  const warehouse =
+    mairixFindWarehouseByCode(
+      normalizedWarehouseCode
+    );
+
+
+  if (!warehouse) {
+
+    throw new Error(
+      "Warehouse does not exist: " +
+      normalizedWarehouseCode
+    );
+
+  }
+
+
+  if (
+    warehouse.active !== true
+  ) {
+
+    throw new Error(
+      "Cannot assign inactive warehouse."
+    );
+
+  }
+
+
+  const employeeCode =
+    mairixGetEmployeeCodeForUser(
+      normalizedUserId
+    );
+
+
+  const existing =
+    mairixFindUserWarehouseAssignment(
+      normalizedUserId,
+      normalizedWarehouseCode
+    );
+
+
+  const sheet =
+    mairixGetUserWarehousesSheet();
+
+
+  const now =
+    new Date();
+
+
+  /*
+   * If assignment already exists:
+   * reactivate it instead of creating duplicate.
+   */
+
+  if (existing) {
+
+    sheet
+      .getRange(
+        existing.rowNumber,
+        5
+      )
+      .setValue(true);
+
+
+    sheet
+      .getRange(
+        existing.rowNumber,
+        6
+      )
+      .setValue(now);
+
+
+    sheet
+      .getRange(
+        existing.rowNumber,
+        7
+      )
+      .setValue(
+        assignedBy || ""
+      );
+
+
+    return {
+
+      success: true,
+
+      action: "REACTIVATED",
+
+      userId:
+        normalizedUserId,
+
+      employeeCode:
+        employeeCode,
+
+      warehouseCode:
+        warehouse.warehouseCode,
+
+      warehouseName:
+        warehouse.warehouseName
+
+    };
+
+  }
+
+
+  sheet.appendRow([
+
+    normalizedUserId,
+
+    employeeCode,
+
+    warehouse.warehouseCode,
+
+    warehouse.warehouseName,
+
+    true,
+
+    now,
+
+    assignedBy || ""
+
+  ]);
+
+
+  return {
+
+    success: true,
+
+    action: "ASSIGNED",
+
+    userId:
+      normalizedUserId,
+
+    employeeCode:
+      employeeCode,
+
+    warehouseCode:
+      warehouse.warehouseCode,
+
+    warehouseName:
+      warehouse.warehouseName
+
+  };
+
+}
+
+
+/************************************************
+ * REMOVE USER WAREHOUSE ACCESS
+ *
+ * Soft deactivate only.
+ ************************************************/
+
+function mairixRemoveWarehouseFromUser(
+  userId,
+  warehouseCode
+) {
+
+  const assignment =
+    mairixFindUserWarehouseAssignment(
+      userId,
+      warehouseCode
+    );
+
+
+  if (!assignment) {
+
+    throw new Error(
+      "Warehouse assignment does not exist."
+    );
+
+  }
+
+
+  const sheet =
+    mairixGetUserWarehousesSheet();
+
+
+  sheet
+    .getRange(
+      assignment.rowNumber,
+      5
+    )
+    .setValue(false);
+
+
+  return {
+
+    success: true,
+
+    action: "REMOVED",
+
+    userId:
+      assignment.userId,
+
+    warehouseCode:
+      assignment.warehouseCode
+
+  };
+
+}
+
+
+/************************************************
+ * GET USER WAREHOUSES
+ ************************************************/
+
+function mairixGetUserWarehouses(
+  userId,
+  activeOnly
+) {
+
+  const normalizedUserId =
+    mairixWarehouseCleanText(
+      userId
+    );
+
+
+  const sheet =
+    mairixGetUserWarehousesSheet();
+
+
+  if (
+    sheet.getLastRow() < 2
+  ) {
+
+    return [];
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        MAIRIX_USER_WAREHOUSES_CONFIG.HEADERS.length
+      )
+      .getDisplayValues();
+
+
+  const result = [];
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const row =
+      values[i];
+
+
+    if (
+
+      mairixWarehouseCleanText(
+        row[0]
+      ) !== normalizedUserId
+
+    ) {
+
+      continue;
+
+    }
+
+
+    const active =
+      mairixWarehouseIsTrue(
+        row[4]
+      );
+
+
+    if (
+      activeOnly === true &&
+      active !== true
+    ) {
+
+      continue;
+
+    }
+
+
+    result.push({
+
+      userId:
+        mairixWarehouseCleanText(
+          row[0]
+        ),
+
+      employeeCode:
+        mairixWarehouseCleanText(
+          row[1]
+        ),
+
+      warehouseCode:
+        mairixWarehouseCleanText(
+          row[2]
+        ),
+
+      warehouseName:
+        mairixWarehouseCleanText(
+          row[3]
+        ),
+
+      active:
+        active
+
+    });
+
+  }
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * RUNTIME WAREHOUSE ACCESS CHECK
+ ************************************************/
+
+function mairixUserHasWarehouseAccess(
+  userId,
+  warehouseCode
+) {
+
+  const warehouses =
+    mairixGetUserWarehouses(
+      userId,
+      true
+    );
+
+
+  const normalizedWarehouseCode =
+    mairixWarehouseCleanText(
+      warehouseCode
+    );
+
+
+  for (
+    let i = 0;
+    i < warehouses.length;
+    i++
+  ) {
+
+    if (
+      warehouses[i].warehouseCode ===
+      normalizedWarehouseCode
+    ) {
+
+      return true;
+
+    }
+
+  }
+
+
+  return false;
+
+}
+
+
+/************************************************
+ * REQUIRE WAREHOUSE ACCESS
+ ************************************************/
+
+function mairixRequireWarehouseAccess(
+  userId,
+  warehouseCode
+) {
+
+  const allowed =
+    mairixUserHasWarehouseAccess(
+      userId,
+      warehouseCode
+    );
+
+
+  if (!allowed) {
+
+    throw new Error(
+
+      "Warehouse access denied. " +
+
+      "User: " +
+      userId +
+
+      " | Warehouse: " +
+      warehouseCode
+
+    );
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * ASSIGN MULTIPLE WAREHOUSES
+ *
+ * Used directly by Employee Creation UI.
+ ************************************************/
+
+function mairixAssignWarehousesToUser(
+  userId,
+  warehouseCodes,
+  assignedBy
+) {
+
+  if (
+    !Array.isArray(
+      warehouseCodes
+    )
+  ) {
+
+    throw new Error(
+      "warehouseCodes must be an array."
+    );
+
+  }
+
+
+  const results = [];
+
+
+  for (
+    let i = 0;
+    i < warehouseCodes.length;
+    i++
+  ) {
+
+    const warehouseCode =
+      mairixWarehouseCleanText(
+        warehouseCodes[i]
+      );
+
+
+    if (!warehouseCode) {
+
+      continue;
+
+    }
+
+
+    results.push(
+
+      mairixAssignWarehouseToUser(
+
+        userId,
+
+        warehouseCode,
+
+        assignedBy
+
+      )
+
+    );
+
+  }
+
+
+  return {
+
+    success: true,
+
+    userId:
+      userId,
+
+    assignments:
+      results
+
+  };
+
+}
+
+
+/************************************************
+ * TEST USER WAREHOUSE ENGINE
+ ************************************************/
+
+function testMAIRIXUserWarehouseAssignment() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX USER WAREHOUSE ASSIGNMENT TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /*
+   * Uses the first existing user
+   * and first existing warehouse.
+   */
+
+
+  const usersSheet =
+    getMAIRIXUsersSheet();
+
+
+  if (
+    usersSheet.getLastRow() < 2
+  ) {
+
+    throw new Error(
+      "No USERS available for warehouse test."
+    );
+
+  }
+
+
+  const headers =
+    usersSheet
+      .getRange(
+        1,
+        1,
+        1,
+        usersSheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const userIdIndex =
+    headers.indexOf(
+      "User ID"
+    );
+
+
+  const firstUserId =
+    mairixWarehouseCleanText(
+
+      usersSheet
+        .getRange(
+          2,
+          userIdIndex + 1
+        )
+        .getDisplayValue()
+
+    );
+
+
+  const warehouseSheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        "WAREHOUSES"
+      );
+
+
+  if (
+    !warehouseSheet ||
+    warehouseSheet.getLastRow() < 2
+  ) {
+
+    throw new Error(
+      "No WAREHOUSES available for test."
+    );
+
+  }
+
+
+  const warehouseHeaders =
+    warehouseSheet
+      .getRange(
+        1,
+        1,
+        1,
+        warehouseSheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const warehouseCodeIndex =
+    warehouseHeaders.indexOf(
+      "Warehouse Code"
+    );
+
+
+  const firstWarehouseCode =
+    mairixWarehouseCleanText(
+
+      warehouseSheet
+        .getRange(
+          2,
+          warehouseCodeIndex + 1
+        )
+        .getDisplayValue()
+
+    );
+
+
+  const result =
+    mairixAssignWarehouseToUser(
+
+      firstUserId,
+
+      firstWarehouseCode,
+
+      "SYSTEM_TEST"
+
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  const warehouses =
+    mairixGetUserWarehouses(
+      firstUserId,
+      true
+    );
+
+
+  Logger.log(
+    "USER WAREHOUSES:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      warehouses,
+      null,
+      2
+    )
+  );
+
+
+  const access =
+    mairixUserHasWarehouseAccess(
+
+      firstUserId,
+
+      firstWarehouseCode
+
+    );
+
+
+  if (!access) {
+
+    throw new Error(
+      "Warehouse access verification failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "WAREHOUSE ACCESS: PASS"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success: true,
+
+    assignment:
+      result,
+
+    warehouses:
+      warehouses
+
+  };
+
+}

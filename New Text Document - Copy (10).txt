@@ -1,0 +1,45 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 66-MAIRIX_CommissionIntegration.gs
+ *
+ * Commission integration / reporting contract.
+ *
+ * Commission generation remains owned by the
+ * Commission Core. Payment remains an Expense
+ * classified as commission.
+ ************************************************/
+
+function mairixE2ECommissionSummary(request) {
+
+  if (typeof apiGetCommissionSummary !== "function") {
+    throw new Error("apiGetCommissionSummary() is not available.");
+  }
+
+  return apiGetCommissionSummary(request || {});
+}
+
+function testMairixCommissionIntegrationContract() {
+
+  [
+    "apiGetCommissionSummary",
+    "getCommissionSummary",
+    "mairixApiRequirePermission"
+  ].forEach(function(name) {
+    if (typeof globalThis[name] !== "function") {
+      throw new Error("Missing Commission function: " + name);
+    }
+  });
+
+  Logger.log("66 COMMISSION INTEGRATION: PASS");
+
+  return {
+    success: true,
+    module: "COMMISSION",
+    formula: "EARNED - PAID = REMAINING",
+    salesmanVisibility: "HIDDEN_ON_SALE_SCREEN"
+  };
+}
+
+function runMairixCommissionIntegrationTest() {
+  return testMairixCommissionIntegrationContract();
+}

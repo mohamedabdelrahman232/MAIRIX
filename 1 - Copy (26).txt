@@ -1,0 +1,1048 @@
+/************************************************
+ * MAIRIX SECURITY ADAPTER
+ *
+ * CENTRAL AUTHENTICATION + SECURITY BRIDGE
+ *
+ * PURPOSE:
+ * 1. Resolve current authenticated MAIRIX user.
+ * 2. Validate user against USERS sheet.
+ * 3. Reject inactive or missing users.
+ * 4. Support current MAIRIX USERS schema.
+ * 5. Provide explicit TEST session helpers.
+ *
+ * IMPORTANT:
+ * - No SYSTEM fallback.
+ * - No permission bypass.
+ * - Production transactions require a valid user.
+ ************************************************/
+
+
+/************************************************
+ * SESSION PROPERTY
+ ************************************************/
+
+var MAIRIX_CURRENT_USER_PROPERTY =
+  "MAIRIX_CURRENT_USER_ID";
+
+
+/************************************************
+ * SAFE TEXT
+ ************************************************/
+
+function mairixSecurityCleanText(value) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return "";
+  }
+
+  return String(value).trim();
+
+}
+
+
+/************************************************
+ * BOOLEAN PARSER
+ ************************************************/
+
+function isMAIRIXTrueValue(value) {
+
+  if (value === true) {
+    return true;
+  }
+
+  if (value === 1) {
+    return true;
+  }
+
+  var normalized =
+    mairixSecurityCleanText(value)
+      .toUpperCase();
+
+  return (
+    normalized === "TRUE" ||
+    normalized === "1" ||
+    normalized === "YES" ||
+    normalized === "Y"
+  );
+
+}
+
+
+/************************************************
+ * GET USERS SHEET NAME
+ ************************************************/
+
+function getMAIRIXUsersSheetName() {
+
+  if (
+    typeof MAIRIX !== "undefined" &&
+    MAIRIX &&
+    MAIRIX.SHEETS &&
+    MAIRIX.SHEETS.USERS
+  ) {
+    return MAIRIX.SHEETS.USERS;
+  }
+
+  return "USERS";
+
+}
+
+
+/************************************************
+ * GET USERS SHEET
+ ************************************************/
+
+function getMAIRIXUsersSheet() {
+
+  var sheetName =
+    getMAIRIXUsersSheetName();
+
+  var sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(sheetName);
+
+  if (!sheet) {
+    throw new Error(
+      "MAIRIX USERS sheet not found: " +
+      sheetName
+    );
+  }
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * GET HEADER INDEX
+ *
+ * Supports alternative header names.
+ ************************************************/
+
+function mairixFindHeaderIndex(
+  headers,
+  candidates
+) {
+
+  for (
+    var i = 0;
+    i < candidates.length;
+    i++
+  ) {
+
+    var index =
+      headers.indexOf(
+        candidates[i]
+      );
+
+    if (index !== -1) {
+      return index;
+    }
+
+  }
+
+  return -1;
+
+}
+
+
+/************************************************
+ * NORMALIZE USER RECORD
+ ************************************************/
+
+function normalizeMAIRIXCurrentUser(user) {
+
+  if (!user) {
+    throw new Error(
+      "MAIRIX current user is invalid."
+    );
+  }
+
+
+  var userId =
+    user.userId ||
+    user["User ID"] ||
+    user.id ||
+    user["ID"] ||
+    "";
+
+
+  var employeeCode =
+    user.employeeCode ||
+    user["Employee Code"] ||
+    "";
+
+
+  var userName =
+    user.userName ||
+    user.name ||
+    user["Name"] ||
+    user["User Name"] ||
+    "";
+
+
+  var email =
+    user.email ||
+    user["Gmail"] ||
+    "";
+
+
+  var roleCode =
+    user.roleCode ||
+    user["Role Code"] ||
+    user.role ||
+    user["Role"] ||
+    "";
+
+
+  var roleName =
+    user.roleName ||
+    user["Role Name"] ||
+    "";
+
+
+  userId =
+    mairixSecurityCleanText(userId);
+
+  employeeCode =
+    mairixSecurityCleanText(employeeCode);
+
+  userName =
+    mairixSecurityCleanText(userName);
+
+  email =
+    mairixSecurityCleanText(email);
+
+  roleCode =
+    mairixSecurityCleanText(roleCode);
+
+  roleName =
+    mairixSecurityCleanText(roleName);
+
+
+  if (!userId) {
+    throw new Error(
+      "MAIRIX current user has no User ID."
+    );
+  }
+
+
+  return {
+
+    userId:
+      userId,
+
+    employeeCode:
+      employeeCode,
+
+    userName:
+      userName,
+
+    email:
+      email,
+
+    role:
+      roleCode,
+
+    roleCode:
+      roleCode,
+
+    roleName:
+      roleName
+
+  };
+
+}
+
+
+/************************************************
+ * FIND USER BY ID
+ *
+ * CURRENT USERS SCHEMA:
+ *
+ * User ID
+ * Employee Code
+ * Email
+ * Name
+ * Role Code
+ * Role Name
+ * Current Password
+ * Password Last Changed At
+ * Password Change Required
+ * Active
+ * Created At
+ * Created By
+ * Updated At
+ * Updated By
+ ************************************************/
+
+function findMAIRIXUserById(userId) {
+
+  var normalizedUserId =
+    mairixSecurityCleanText(userId);
+
+
+  if (!normalizedUserId) {
+    return null;
+  }
+
+
+  var sheet =
+    getMAIRIXUsersSheet();
+
+
+  if (sheet.getLastRow() < 2) {
+    return null;
+  }
+
+
+  var lastColumn =
+    sheet.getLastColumn();
+
+
+  var headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  var userIdIndex =
+    mairixFindHeaderIndex(
+      headers,
+      [
+        "User ID",
+        "UserId",
+        "USER_ID"
+      ]
+    );
+
+
+  var employeeCodeIndex =
+    mairixFindHeaderIndex(
+      headers,
+      [
+        "Employee Code",
+        "EmployeeCode"
+      ]
+    );
+
+
+  var emailIndex =
+    mairixFindHeaderIndex(
+      headers,
+      [
+        "Gmail",
+        "E-mail"
+      ]
+    );
+
+
+  var nameIndex =
+    mairixFindHeaderIndex(
+      headers,
+      [
+        "Name",
+        "User Name"
+      ]
+    );
+
+
+  var roleCodeIndex =
+    mairixFindHeaderIndex(
+      headers,
+      [
+        "Role Code",
+        "Role",
+        "RoleCode"
+      ]
+    );
+
+
+  var roleNameIndex =
+    mairixFindHeaderIndex(
+      headers,
+      [
+        "Role Name",
+        "RoleName"
+      ]
+    );
+
+
+  var activeIndex =
+    mairixFindHeaderIndex(
+      headers,
+      [
+        "Active",
+        "Is Active",
+        "IsActive"
+      ]
+    );
+
+
+  if (userIdIndex === -1) {
+
+    throw new Error(
+      'USERS is missing required header: "User ID".'
+    );
+
+  }
+
+
+  if (activeIndex === -1) {
+
+    throw new Error(
+      'USERS is missing required header: "Active".'
+    );
+
+  }
+
+
+  var values =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        lastColumn
+      )
+      .getDisplayValues();
+
+
+  for (
+    var i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    var row =
+      values[i];
+
+
+    var rowUserId =
+      mairixSecurityCleanText(
+        row[userIdIndex]
+      );
+
+
+    if (
+      rowUserId !==
+      normalizedUserId
+    ) {
+      continue;
+    }
+
+
+    return {
+
+      userId:
+        rowUserId,
+
+      employeeCode:
+        employeeCodeIndex !== -1
+          ? mairixSecurityCleanText(
+              row[employeeCodeIndex]
+            )
+          : "",
+
+      email:
+        emailIndex !== -1
+          ? mairixSecurityCleanText(
+              row[emailIndex]
+            )
+          : "",
+
+      userName:
+        nameIndex !== -1
+          ? mairixSecurityCleanText(
+              row[nameIndex]
+            )
+          : "",
+
+      role:
+        roleCodeIndex !== -1
+          ? mairixSecurityCleanText(
+              row[roleCodeIndex]
+            )
+          : "",
+
+      roleCode:
+        roleCodeIndex !== -1
+          ? mairixSecurityCleanText(
+              row[roleCodeIndex]
+            )
+          : "",
+
+      roleName:
+        roleNameIndex !== -1
+          ? mairixSecurityCleanText(
+              row[roleNameIndex]
+            )
+          : "",
+
+      active:
+        isMAIRIXTrueValue(
+          row[activeIndex]
+        )
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET ALL ACTIVE USERS
+ ************************************************/
+
+function getMAIRIXActiveUsers() {
+
+  var sheet =
+    getMAIRIXUsersSheet();
+
+
+  if (sheet.getLastRow() < 2) {
+    return [];
+  }
+
+
+  var headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  var userIdIndex =
+    mairixFindHeaderIndex(
+      headers,
+      ["User ID"]
+    );
+
+
+  var activeIndex =
+    mairixFindHeaderIndex(
+      headers,
+      ["Active"]
+    );
+
+
+  if (
+    userIdIndex === -1 ||
+    activeIndex === -1
+  ) {
+    throw new Error(
+      "USERS schema is missing User ID or Active."
+    );
+  }
+
+
+  var values =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues();
+
+
+  var users = [];
+
+
+  for (
+    var i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    var userId =
+      mairixSecurityCleanText(
+        values[i][userIdIndex]
+      );
+
+
+    var active =
+      isMAIRIXTrueValue(
+        values[i][activeIndex]
+      );
+
+
+    if (
+      userId &&
+      active
+    ) {
+
+      var user =
+        findMAIRIXUserById(
+          userId
+        );
+
+      if (user) {
+        users.push(user);
+      }
+
+    }
+
+  }
+
+
+  return users;
+
+}
+
+
+/************************************************
+ * SET CURRENT MAIRIX USER
+ ************************************************/
+
+function setCurrentMAIRIXUser(userId) {
+
+  var normalizedUserId =
+    mairixSecurityCleanText(userId);
+
+
+  if (!normalizedUserId) {
+
+    throw new Error(
+      "User ID is required."
+    );
+
+  }
+
+
+  var user =
+    findMAIRIXUserById(
+      normalizedUserId
+    );
+
+
+  if (!user) {
+
+    throw new Error(
+      "MAIRIX user not found: " +
+      normalizedUserId
+    );
+
+  }
+
+
+  if (user.active !== true) {
+
+    throw new Error(
+      "MAIRIX user is inactive: " +
+      normalizedUserId
+    );
+
+  }
+
+
+  PropertiesService
+    .getUserProperties()
+    .setProperty(
+      MAIRIX_CURRENT_USER_PROPERTY,
+      user.userId
+    );
+
+
+  return normalizeMAIRIXCurrentUser(
+    user
+  );
+
+}
+
+
+/************************************************
+ * CLEAR CURRENT USER
+ ************************************************/
+
+function clearCurrentMAIRIXUser() {
+
+  PropertiesService
+    .getUserProperties()
+    .deleteProperty(
+      MAIRIX_CURRENT_USER_PROPERTY
+    );
+
+
+  return {
+    success: true
+  };
+
+}
+
+
+/************************************************
+ * GET CURRENT MAIRIX USER
+ ************************************************/
+
+function getCurrentMAIRIXUser() {
+
+  var userId =
+    PropertiesService
+      .getUserProperties()
+      .getProperty(
+        MAIRIX_CURRENT_USER_PROPERTY
+      );
+
+
+  if (!userId) {
+    return null;
+  }
+
+
+  var user =
+    findMAIRIXUserById(
+      userId
+    );
+
+
+  if (
+    !user ||
+    user.active !== true
+  ) {
+
+    clearCurrentMAIRIXUser();
+
+    return null;
+
+  }
+
+
+  return normalizeMAIRIXCurrentUser(
+    user
+  );
+
+}
+
+
+/************************************************
+ * REQUIRE CURRENT USER
+ ************************************************/
+
+function requireCurrentUser() {
+
+  /*
+   * PRIMARY:
+   * MAIRIX authenticated session.
+   */
+
+  var mairixUser =
+    getCurrentMAIRIXUser();
+
+
+  if (
+    mairixUser &&
+    mairixUser.userId
+  ) {
+
+    return normalizeMAIRIXCurrentUser(
+      mairixUser
+    );
+
+  }
+
+
+  /*
+   * LEGACY COMPATIBILITY.
+   */
+
+  if (
+    typeof getCurrentUser ===
+    "function"
+  ) {
+
+    var legacyUser =
+      getCurrentUser();
+
+
+    if (legacyUser) {
+
+      var normalizedLegacy =
+        normalizeMAIRIXCurrentUser(
+          legacyUser
+        );
+
+
+      var verifiedLegacy =
+        findMAIRIXUserById(
+          normalizedLegacy.userId
+        );
+
+
+      if (
+        verifiedLegacy &&
+        verifiedLegacy.active === true
+      ) {
+
+        return normalizeMAIRIXCurrentUser(
+          verifiedLegacy
+        );
+
+      }
+
+    }
+
+  }
+
+
+  /*
+   * ALTERNATIVE COMPATIBILITY.
+   */
+
+  if (
+    typeof getMAIRIXCurrentUser ===
+    "function"
+  ) {
+
+    var securityUser =
+      getMAIRIXCurrentUser();
+
+
+    if (securityUser) {
+
+      var normalizedSecurity =
+        normalizeMAIRIXCurrentUser(
+          securityUser
+        );
+
+
+      var verifiedSecurity =
+        findMAIRIXUserById(
+          normalizedSecurity.userId
+        );
+
+
+      if (
+        verifiedSecurity &&
+        verifiedSecurity.active === true
+      ) {
+
+        return normalizeMAIRIXCurrentUser(
+          verifiedSecurity
+        );
+
+      }
+
+    }
+
+  }
+
+
+  throw new Error(
+    "MAIRIX authentication engine is not available. " +
+    "No valid active MAIRIX user session exists."
+  );
+
+}
+
+
+/************************************************
+ * TEST LOGIN
+ *
+ * Finds first ACTIVE user and creates session.
+ *
+ * IMPORTANT:
+ * USERS must contain at least one real active user.
+ ************************************************/
+
+function testSetCurrentMAIRIXUser() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TEST SESSION"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  var users =
+    getMAIRIXActiveUsers();
+
+
+  if (!users.length) {
+
+    throw new Error(
+      "No ACTIVE MAIRIX user was found in USERS sheet."
+    );
+
+  }
+
+
+  var user =
+    setCurrentMAIRIXUser(
+      users[0].userId
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      user,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "CURRENT USER SESSION: PASS"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return user;
+
+}
+
+
+/************************************************
+ * SECURITY ADAPTER TEST
+ ************************************************/
+
+function testMAIRIXSecurityAdapter() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SECURITY ADAPTER TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  var user =
+    requireCurrentUser();
+
+
+  if (
+    !user ||
+    !user.userId
+  ) {
+
+    throw new Error(
+      "Security adapter failed: current user missing."
+    );
+
+  }
+
+
+  Logger.log(
+    JSON.stringify(
+      user,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "CURRENT USER: PASS"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SECURITY ADAPTER: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+    success: true,
+    user: user
+  };
+
+}
+
+
+/************************************************
+ * SECURITY STATUS DIAGNOSTIC
+ ************************************************/
+
+function mairixSecurityStatus() {
+
+  var activeUsers =
+    getMAIRIXActiveUsers();
+
+
+  var currentUser =
+    getCurrentMAIRIXUser();
+
+
+  var result = {
+
+    usersSheet:
+      getMAIRIXUsersSheetName(),
+
+    activeUsersCount:
+      activeUsers.length,
+
+    activeUsers:
+      activeUsers,
+
+    currentSession:
+      currentUser
+
+  };
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX SECURITY STATUS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}

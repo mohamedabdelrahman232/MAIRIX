@@ -1,0 +1,30 @@
+==========================================================================================
+53-MAIRIX_UI_Security.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>53 - Security</title><style>
+:root{--bg:#f4f6f8;--card:#fff;--line:#dfe4ea;--text:#17202a;--muted:#667085;--accent:#1f6feb;--danger:#c62828;--ok:#16834a}*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--text);direction:rtl}.wrap{max-width:1200px;margin:24px auto;padding:0 16px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.title{font-size:24px;font-weight:700}.sub{color:var(--muted);font-size:13px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.04)}.span12{grid-column:span 12}.span8{grid-column:span 8}.span6{grid-column:span 6}.span4{grid-column:span 4}.span3{grid-column:span 3}@media(max-width:800px){.span8,.span6,.span4,.span3{grid-column:span 12}}label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}input,select,textarea{width:100%;padding:10px;border:1px solid #cfd6de;border-radius:8px;background:#fff;font:inherit}textarea{min-height:100px}.row{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;margin-bottom:10px}.field{grid-column:span 4}.field6{grid-column:span 6}.field12{grid-column:span 12}@media(max-width:800px){.field,.field6{grid-column:span 12}}button{border:0;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:700;background:var(--accent);color:#fff}button.secondary{background:#667085}button.danger{background:var(--danger)}button.ok{background:var(--ok)}button:disabled{opacity:.5;cursor:not-allowed}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.status{padding:10px;border-radius:8px;background:#f1f5f9;white-space:pre-wrap;font-family:monospace;font-size:12px;min-height:40px}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:9px;text-align:right;white-space:nowrap}th{background:#f8fafc}.metric{font-size:25px;font-weight:700}.muted{color:var(--muted)}.dangerText{color:var(--danger)}.okText{color:var(--ok)}</style></head>
+<body><div class="wrap">
+<div class="top"><div><div class="title">53 - Security</div><div class="sub">فحص Authorization وRole وWarehouse ورفض المحاولات غير المصرح بها.</div></div><div class="sub">MAIRIX ERP</div></div>
+<div class="grid"><div class="card span12"><div class="row"><div class="field4"><label>User ID</label><input id="userId"></div><div class="field4"><label>Role</label><input id="role"></div><div class="field4"><label>Warehouse</label><input id="warehouse"></div></div><div class="actions"><button onclick="check()">فحص الصلاحيات</button><button class="secondary" onclick="matrix()">Security Matrix</button><button class="danger" onclick="audit()">Audit Rejections</button></div></div><div class="card span12"><div id="result" class="status">—</div></div></div>
+<div class="card" style="margin-top:14px"><div class="sub">نتيجة آخر عملية</div><div id="status" class="status">جاهز</div></div>
+</div><script>
+const APP={};
+function $(id){return document.getElementById(id)}
+function val(id){return $(id)?.value?.trim()||""}
+function num(id){const n=Number($(id)?.value||0);return Number.isFinite(n)?n:0}
+function setStatus(x,err=false){const e=$("status");if(e){e.textContent=typeof x==='string'?x:JSON.stringify(x,null,2);e.className='status '+(err?'dangerText':'')}}
+function callServer(fn,payload,done){
+  setStatus('جاري التنفيذ...');
+  try{
+    const runner=google.script.run.withSuccessHandler(r=>{setStatus(r);if(done)done(r)}).withFailureHandler(e=>{setStatus(e&&e.message?e.message:String(e),true)});
+    if(!runner[fn]) throw new Error('Backend function غير موجودة: '+fn);
+    runner[fn](payload);
+  }catch(e){setStatus(e.message||String(e),true)}
+}
+function rowsToObjects(rows){return rows.map(r=>Object.fromEntries(r.map((v,i)=>['c'+i,v])))}
+</script><script>
+const API={CHECK:'checkMAIRIXSecurity',MATRIX:'getMAIRIXSecurityMatrix',AUDIT:'getSecurityRejectionAudit'};
+function check(){callServer(API.CHECK,{userId:val('userId'),role:val('role'),warehouseCode:val('warehouse')},r=>{$('result').textContent=JSON.stringify(r,null,2)})}function matrix(){callServer(API.MATRIX,{},r=>{$('result').textContent=JSON.stringify(r,null,2)})}function audit(){callServer(API.AUDIT,{userId:val('userId')},r=>{$('result').textContent=JSON.stringify(r,null,2)})}
+</script></body></html>

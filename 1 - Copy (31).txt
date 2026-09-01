@@ -1,0 +1,30 @@
+==========================================================================================
+47-MAIRIX_UI_Commissions.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>47 - Commissions</title><style>
+:root{--bg:#f4f6f8;--card:#fff;--line:#dfe4ea;--text:#17202a;--muted:#667085;--accent:#1f6feb;--danger:#c62828;--ok:#16834a}*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--text);direction:rtl}.wrap{max-width:1200px;margin:24px auto;padding:0 16px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.title{font-size:24px;font-weight:700}.sub{color:var(--muted);font-size:13px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.04)}.span12{grid-column:span 12}.span8{grid-column:span 8}.span6{grid-column:span 6}.span4{grid-column:span 4}.span3{grid-column:span 3}@media(max-width:800px){.span8,.span6,.span4,.span3{grid-column:span 12}}label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}input,select,textarea{width:100%;padding:10px;border:1px solid #cfd6de;border-radius:8px;background:#fff;font:inherit}textarea{min-height:100px}.row{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;margin-bottom:10px}.field{grid-column:span 4}.field6{grid-column:span 6}.field12{grid-column:span 12}@media(max-width:800px){.field,.field6{grid-column:span 12}}button{border:0;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:700;background:var(--accent);color:#fff}button.secondary{background:#667085}button.danger{background:var(--danger)}button.ok{background:var(--ok)}button:disabled{opacity:.5;cursor:not-allowed}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.status{padding:10px;border-radius:8px;background:#f1f5f9;white-space:pre-wrap;font-family:monospace;font-size:12px;min-height:40px}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:9px;text-align:right;white-space:nowrap}th{background:#f8fafc}.metric{font-size:25px;font-weight:700}.muted{color:var(--muted)}.dangerText{color:var(--danger)}.okText{color:var(--ok)}</style></head>
+<body><div class="wrap">
+<div class="top"><div><div class="title">47 - Commissions</div><div class="sub">حساب واستعراض وصرف العمولات.</div></div><div class="sub">MAIRIX ERP</div></div>
+<div class="grid"><div class="card span12"><div class="row"><div class="field4"><label>Salesman / User ID</label><input id="userId"></div><div class="field4"><label>From</label><input id="from" type="date"></div><div class="field4"><label>To</label><input id="to" type="date"></div></div><div class="row"><div class="field4"><label>Amount for Payment</label><input id="amount" type="number" step="0.001"></div><div class="field8"><label>Reference No</label><input id="referenceNo"></div></div><div class="actions"><button onclick="calculate()">حساب العمولات</button><button class="ok" onclick="pay()">تسجيل صرف عمولة</button><button class="secondary" onclick="summary()">ملخص</button></div></div><div class="card span12"><div class="tablewrap"><table><thead><tr><th>Employee</th><th>Sales</th><th>Commission</th><th>Paid</th><th>Remaining</th></tr></thead><tbody id="rows"><tr><td colspan="5" class="muted">لا توجد بيانات</td></tr></tbody></table></div></div></div>
+<div class="card" style="margin-top:14px"><div class="sub">نتيجة آخر عملية</div><div id="status" class="status">جاهز</div></div>
+</div><script>
+const APP={};
+function $(id){return document.getElementById(id)}
+function val(id){return $(id)?.value?.trim()||""}
+function num(id){const n=Number($(id)?.value||0);return Number.isFinite(n)?n:0}
+function setStatus(x,err=false){const e=$("status");if(e){e.textContent=typeof x==='string'?x:JSON.stringify(x,null,2);e.className='status '+(err?'dangerText':'')}}
+function callServer(fn,payload,done){
+  setStatus('جاري التنفيذ...');
+  try{
+    const runner=google.script.run.withSuccessHandler(r=>{setStatus(r);if(done)done(r)}).withFailureHandler(e=>{setStatus(e&&e.message?e.message:String(e),true)});
+    if(!runner[fn]) throw new Error('Backend function غير موجودة: '+fn);
+    runner[fn](payload);
+  }catch(e){setStatus(e.message||String(e),true)}
+}
+function rowsToObjects(rows){return rows.map(r=>Object.fromEntries(r.map((v,i)=>['c'+i,v])))}
+</script><script>
+const API={CALC:'calculateCommissions',SUMMARY:'getCommissionSummary',PAY:'payCommission'};
+function calculate(){callServer(API.CALC,{userId:val('userId'),from:val('from'),to:val('to')},render)}function summary(){callServer(API.SUMMARY,{userId:val('userId'),from:val('from'),to:val('to')},render)}function pay(){callServer(API.PAY,{userId:val('userId'),amount:num('amount'),referenceNo:val('referenceNo')},render)}function render(r){if(!r)return;const a=Array.isArray(r)?r:(r.rows||r.data||[]);$('rows').innerHTML=a.length?a.map(x=>`<tr><td>${x.employee||x.userName||x.userId||''}</td><td>${x.sales||x.salesTotal||0}</td><td>${x.commission||x.commissionAmount||0}</td><td>${x.paid||x.paidAmount||0}</td><td>${x.remaining||x.balance||0}</td></tr>`).join(''):'<tr><td colspan="5">لا توجد بيانات</td></tr>'}
+</script></body></html>

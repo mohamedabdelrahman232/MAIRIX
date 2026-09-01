@@ -1,0 +1,1540 @@
+/************************************************
+ * MAIRIX ERP
+ * 25-MAIRIX_Triggers.gs
+ *
+ * CENTRAL EVENT / TRIGGER CONTROLLER
+ *
+ * RESPONSIBILITIES:
+ *
+ * 1) Centralize spreadsheet edit events
+ * 2) Protect system-controlled sheets
+ * 3) React to configuration changes
+ * 4) React to user / role permission changes
+ * 5) Refresh derived views
+ * 6) Keep operational sheets synchronized
+ * 7) Never perform accounting calculations directly
+ *
+ * IMPORTANT ARCHITECTURE:
+ *
+ * TRIGGERS
+ *    |
+ *    +--> Master Data
+ *    +--> Users / Roles
+ *    +--> Tax Engine
+ *    +--> Inventory Engine
+ *    +--> Financial Engine
+ *    +--> Reports
+ *    +--> Audit Trail
+ *
+ * The Trigger layer coordinates.
+ *
+ * It does NOT become a second business engine.
+ ************************************************/
+
+
+/************************************************
+ * SYSTEM SHEETS
+ ************************************************/
+
+const MAIRIX_TRIGGER_SHEETS = {
+
+  SETTINGS:
+    "SETTINGS",
+
+  USERS:
+    "USERS",
+
+  ROLES:
+    "ROLES",
+
+  PERMISSIONS:
+    "PERMISSIONS",
+
+  WAREHOUSES:
+    "WAREHOUSES",
+
+  ITEMS:
+    "ITEMS",
+
+  CUSTOMERS:
+    "CUSTOMERS",
+
+  VENDORS:
+    "VENDORS",
+
+  EMPLOYEES:
+    "EMPLOYEES",
+
+  TAX_TYPES:
+    "TAX_TYPES",
+
+  TAX_SETTINGS:
+    "TAX_SETTINGS",
+
+  ACCOUNTING_MAPPING:
+    "ACCOUNTING_MAPPING"
+
+};
+
+
+/************************************************
+ * SYSTEM CONTROLLED SHEETS
+ *
+ * These sheets must not be modified by ordinary
+ * manual editing when the system owns the data.
+ ************************************************/
+
+const MAIRIX_SYSTEM_CONTROLLED_SHEETS = [
+
+  "INVENTORY_LEDGER",
+
+  "CUSTOMER_LEDGER",
+
+  "VENDOR_LEDGER",
+
+  "CASH_LEDGER",
+
+  "TAX_LEDGER",
+
+  "FINANCIAL_LEDGER",
+
+  "COMMISSIONS_LEDGER",
+
+  "LOYALTY_LEDGER",
+
+  "AUDIT_TRAIL"
+
+];
+
+
+/************************************************
+ * MAIN SIMPLE TRIGGER
+ *
+ * IMPORTANT:
+ *
+ * This function must remain lightweight.
+ *
+ * Heavy operations should be delegated to
+ * explicit server-side functions / installable
+ * triggers where required.
+ ************************************************/
+
+function onEdit(e) {
+
+  if (!e || !e.range) {
+    return;
+  }
+
+
+  try {
+
+    mairixHandleEditEvent(e);
+
+  } catch (error) {
+
+    Logger.log(
+      "MAIRIX onEdit error: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * CENTRAL EDIT ROUTER
+ ************************************************/
+
+function mairixHandleEditEvent(e) {
+
+  const range =
+    e.range;
+
+  const sheet =
+    range.getSheet();
+
+  const sheetName =
+    sheet.getName();
+
+
+  /*
+   * Ignore headers.
+   */
+
+  if (
+    range.getRow() < 2
+  ) {
+    return;
+  }
+
+
+  /*
+   * System-controlled sheets.
+   */
+
+  if (
+    MAIRIX_SYSTEM_CONTROLLED_SHEETS
+      .indexOf(sheetName) !== -1
+  ) {
+
+    mairixHandleProtectedSheetEdit(
+      e
+    );
+
+    return;
+  }
+
+
+  /*
+   * SETTINGS
+   */
+
+  if (
+    sheetName ===
+    MAIRIX_TRIGGER_SHEETS.SETTINGS
+  ) {
+
+    mairixHandleSettingsEdit(
+      e
+    );
+
+    return;
+  }
+
+
+  /*
+   * USERS
+   */
+
+  if (
+    sheetName ===
+    MAIRIX_TRIGGER_SHEETS.USERS
+  ) {
+
+    mairixHandleUsersEdit(
+      e
+    );
+
+    return;
+  }
+
+
+  /*
+   * PERMISSIONS
+   */
+
+  if (
+    sheetName ===
+    MAIRIX_TRIGGER_SHEETS.PERMISSIONS
+  ) {
+
+    mairixHandlePermissionsEdit(
+      e
+    );
+
+    return;
+  }
+
+
+  /*
+   * MASTER DATA
+   */
+
+  if (
+    sheetName ===
+      MAIRIX_TRIGGER_SHEETS.WAREHOUSES ||
+    sheetName ===
+      MAIRIX_TRIGGER_SHEETS.ITEMS ||
+    sheetName ===
+      MAIRIX_TRIGGER_SHEETS.CUSTOMERS ||
+    sheetName ===
+      MAIRIX_TRIGGER_SHEETS.VENDORS ||
+    sheetName ===
+      MAIRIX_TRIGGER_SHEETS.EMPLOYEES
+  ) {
+
+    mairixHandleMasterDataEdit(
+      e
+    );
+
+    return;
+  }
+
+
+  /*
+   * TAX CONFIGURATION
+   */
+
+  if (
+    sheetName ===
+      MAIRIX_TRIGGER_SHEETS.TAX_TYPES ||
+    sheetName ===
+      MAIRIX_TRIGGER_SHEETS.TAX_SETTINGS
+  ) {
+
+    mairixHandleTaxConfigurationEdit(
+      e
+    );
+
+    return;
+  }
+
+
+  /*
+   * ACCOUNTING MAPPING
+   */
+
+  if (
+    sheetName ===
+    MAIRIX_TRIGGER_SHEETS.ACCOUNTING_MAPPING
+  ) {
+
+    mairixHandleAccountingMappingEdit(
+      e
+    );
+
+    return;
+  }
+
+}
+
+
+/************************************************
+ * SETTINGS EDIT
+ *
+ * Settings are the central source of
+ * configurable system behavior.
+ *
+ * Examples:
+ *
+ * - Project name
+ * - MAIRIX display name
+ * - Warehouse names
+ * - Discount levels
+ * - Loyalty rules
+ * - Tax behavior
+ * - General configuration
+ ************************************************/
+
+function mairixHandleSettingsEdit(e) {
+
+  const sheet =
+    e.range.getSheet();
+
+
+  const row =
+    e.range.getRow();
+
+
+  const column =
+    e.range.getColumn();
+
+
+  Logger.log(
+    "MAIRIX SETTINGS CHANGED | Row: " +
+    row +
+    " | Column: " +
+    column
+  );
+
+
+  /*
+   * Do not hard-code configuration values here.
+   *
+   * Engines should read the current configuration
+   * when needed.
+   */
+
+
+  mairixWriteTriggerAudit(
+    "SETTINGS_CHANGED",
+    sheet.getName(),
+    "Configuration changed at row " +
+      row +
+      ", column " +
+      column
+  );
+
+}
+
+
+/************************************************
+ * USERS EDIT
+ *
+ * Activation/deactivation is an event that
+ * affects authorization.
+ ************************************************/
+
+function mairixHandleUsersEdit(e) {
+
+  const sheet =
+    e.range.getSheet();
+
+
+  const activeColumn =
+    mairixFindColumn(
+      sheet,
+      "Active"
+    );
+
+
+  if (
+    activeColumn === -1
+  ) {
+    return;
+  }
+
+
+  const firstColumn =
+    e.range.getColumn();
+
+  const lastColumn =
+    firstColumn +
+    e.range.getNumColumns() -
+    1;
+
+
+  if (
+    activeColumn < firstColumn ||
+    activeColumn > lastColumn
+  ) {
+
+    return;
+  }
+
+
+  const row =
+    e.range.getRow();
+
+
+  const userIdColumn =
+    mairixFindColumn(
+      sheet,
+      "User ID"
+    );
+
+
+  if (
+    userIdColumn === -1
+  ) {
+    return;
+  }
+
+
+  const userId =
+    mairixCleanText(
+      sheet
+        .getRange(
+          row,
+          userIdColumn
+        )
+        .getDisplayValue()
+    );
+
+
+  if (!userId) {
+    return;
+  }
+
+
+  const active =
+    sheet
+      .getRange(
+        row,
+        activeColumn
+      )
+      .getValue() === true;
+
+
+  /*
+   * IMPORTANT:
+   *
+   * The trigger does not create permissions
+   * directly.
+   *
+   * It delegates to the authorization layer.
+   */
+
+  if (
+    typeof setUserActive ===
+    "function"
+  ) {
+
+    try {
+
+      setUserActive(
+        userId,
+        active
+      );
+
+    } catch (error) {
+
+      Logger.log(
+        "User activation synchronization failed: " +
+        error.message
+      );
+
+    }
+
+  }
+
+
+  mairixWriteTriggerAudit(
+    active
+      ? "USER_ACTIVATED"
+      : "USER_DEACTIVATED",
+    userId,
+    "User Active changed to " +
+      active
+  );
+
+}
+
+
+/************************************************
+ * PERMISSIONS EDIT
+ ************************************************/
+
+function mairixHandlePermissionsEdit(e) {
+
+  const sheet =
+    e.range.getSheet();
+
+
+  const row =
+    e.range.getRow();
+
+
+  const userIdColumn =
+    mairixFindColumn(
+      sheet,
+      "User ID"
+    );
+
+
+  if (
+    userIdColumn === -1
+  ) {
+    return;
+  }
+
+
+  const userId =
+    mairixCleanText(
+      sheet
+        .getRange(
+          row,
+          userIdColumn
+        )
+        .getDisplayValue()
+    );
+
+
+  if (!userId) {
+    return;
+  }
+
+
+  /*
+   * ADMIN safety.
+   *
+   * ADMIN permissions are role-derived and
+   * should never be reduced through checkbox
+   * manipulation.
+   */
+
+  if (
+    typeof userHasAdminRole ===
+    "function"
+  ) {
+
+    try {
+
+      if (
+        userHasAdminRole(
+          userId
+        )
+      ) {
+
+        mairixRestoreAdminPermissions(
+          sheet,
+          row
+        );
+
+        return;
+      }
+
+    } catch (error) {
+
+      Logger.log(
+        "ADMIN permission verification failed: " +
+        error.message
+      );
+
+    }
+
+  }
+
+
+  /*
+   * Normal users:
+   *
+   * Checkbox values are the current
+   * effective permissions.
+   */
+
+  mairixWriteTriggerAudit(
+    "PERMISSION_CHANGED",
+    userId,
+    "Permission checkbox changed."
+  );
+
+}
+
+
+/************************************************
+ * RESTORE ADMIN PERMISSIONS
+ ************************************************/
+
+function mairixRestoreAdminPermissions(
+  sheet,
+  row
+) {
+
+  /*
+   * Standard permission layout:
+   *
+   * View
+   * Create
+   * Edit
+   * Delete
+   * Export
+   * Active
+   */
+
+  const firstPermissionColumn = 4;
+
+  const permissionCount = 6;
+
+
+  sheet
+    .getRange(
+      row,
+      firstPermissionColumn,
+      1,
+      permissionCount
+    )
+    .setValues([[
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]]);
+
+
+  Logger.log(
+    "ADMIN permissions restored."
+  );
+
+}
+
+
+/************************************************
+ * MASTER DATA EDIT
+ *
+ * Master data changes must not silently
+ * rewrite historical transactions.
+ *
+ * New configuration applies to future
+ * transactions unless an explicit migration
+ * operation is performed.
+ ************************************************/
+
+function mairixHandleMasterDataEdit(e) {
+
+  const sheet =
+    e.range.getSheet();
+
+  const sheetName =
+    sheet.getName();
+
+
+  Logger.log(
+    "MASTER DATA CHANGED: " +
+    sheetName
+  );
+
+
+  /*
+   * Important principle:
+   *
+   * Historical references remain tied to their
+   * transaction snapshot / central reference.
+   *
+   * Changing:
+   *
+   * - Item name
+   * - Customer name
+   * - Vendor name
+   * - Warehouse display name
+   *
+   * must not alter historical financial meaning.
+   */
+
+
+  mairixWriteTriggerAudit(
+    "MASTER_DATA_CHANGED",
+    sheetName,
+    "Master data edited. Historical transaction references remain unchanged."
+  );
+
+}
+
+
+/************************************************
+ * TAX CONFIGURATION EDIT
+ ************************************************/
+
+function mairixHandleTaxConfigurationEdit(e) {
+
+  const sheet =
+    e.range.getSheet();
+
+
+  Logger.log(
+    "TAX CONFIGURATION CHANGED: " +
+    sheet.getName()
+  );
+
+
+  /*
+   * Tax Engine owns:
+   *
+   * - Tax types
+   * - Rates
+   * - Tax bases
+   * - Transaction signs
+   * - Tax totals
+   * - Final taxable base
+   *
+   * Trigger only records the configuration
+   * change.
+   */
+
+
+  mairixWriteTriggerAudit(
+    "TAX_CONFIGURATION_CHANGED",
+    sheet.getName(),
+    "Tax configuration changed."
+  );
+
+}
+
+
+/************************************************
+ * ACCOUNTING MAPPING EDIT
+ ************************************************/
+
+function mairixHandleAccountingMappingEdit(e) {
+
+  const sheet =
+    e.range.getSheet();
+
+
+  Logger.log(
+    "ACCOUNTING MAPPING CHANGED"
+  );
+
+
+  /*
+   * Mapping changes affect future accounting
+   * classification.
+   *
+   * Historical transactions must remain
+   * traceable to their original reference.
+   */
+
+
+  mairixWriteTriggerAudit(
+    "ACCOUNTING_MAPPING_CHANGED",
+    sheet.getName(),
+    "Accounting mapping configuration changed."
+  );
+
+}
+
+
+/************************************************
+ * PROTECTED SHEET EDIT
+ ************************************************/
+
+function mairixHandleProtectedSheetEdit(e) {
+
+  const sheet =
+    e.range.getSheet();
+
+
+  const sheetName =
+    sheet.getName();
+
+
+  /*
+   * We do NOT blindly overwrite here.
+   *
+   * A protected ledger may be intentionally
+   * corrected through an authorized transaction
+   * or reversal workflow.
+   *
+   * Direct manual editing is therefore logged
+   * and should be prevented through sheet
+   * protection / permissions.
+   */
+
+
+  Logger.log(
+    "PROTECTED SHEET EDIT ATTEMPT: " +
+    sheetName
+  );
+
+
+  mairixWriteTriggerAudit(
+    "PROTECTED_SHEET_EDIT",
+    sheetName,
+    "Manual edit detected on system-controlled sheet."
+  );
+
+}
+
+
+/************************************************
+ * ON OPEN
+ *
+ * Used to prepare the user-facing environment.
+ ************************************************/
+
+function onOpen(e) {
+
+  try {
+
+    mairixInitializeUserInterface();
+
+  } catch (error) {
+
+    Logger.log(
+      "MAIRIX onOpen error: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * INITIALIZE USER INTERFACE
+ ************************************************/
+
+function mairixInitializeUserInterface() {
+
+  const ui =
+    SpreadsheetApp.getUi();
+
+
+  /*
+   * Do not expose administrative functions
+   * to unauthorized users.
+   *
+   * Menu items can improve UX, but they are
+   * NOT security.
+   *
+   * Server-side guards remain mandatory.
+   */
+
+  ui.createMenu(
+    "MAIRIX"
+  )
+
+    .addItem(
+      "Refresh Current Reports",
+      "mairixRefreshReports"
+    )
+
+    .addItem(
+      "Refresh Reference Views",
+      "mairixRefreshReferenceViews"
+    )
+
+    .addSeparator()
+
+    .addItem(
+      "System Health Check",
+      "mairixSystemHealthCheck"
+    )
+
+    .addToUi();
+
+}
+
+
+/************************************************
+ * REPORT REFRESH
+ ************************************************/
+
+function mairixRefreshReports() {
+
+  try {
+
+    if (
+      typeof refreshReports ===
+      "function"
+    ) {
+
+      return refreshReports();
+
+    }
+
+
+    if (
+      typeof buildReports ===
+      "function"
+    ) {
+
+      return buildReports();
+
+    }
+
+
+    Logger.log(
+      "Reports engine refresh function not found."
+    );
+
+
+  } catch (error) {
+
+    throw new Error(
+      "Report refresh failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * REFERENCE VIEW REFRESH
+ ************************************************/
+
+function mairixRefreshReferenceViews() {
+
+  try {
+
+    if (
+      typeof refreshReferenceViewer ===
+      "function"
+    ) {
+
+      return refreshReferenceViewer();
+
+    }
+
+
+    if (
+      typeof setupReferenceViewer ===
+      "function"
+    ) {
+
+      return setupReferenceViewer();
+
+    }
+
+
+    Logger.log(
+      "Reference Viewer refresh function not found."
+    );
+
+
+  } catch (error) {
+
+    throw new Error(
+      "Reference view refresh failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * SYSTEM HEALTH CHECK
+ ************************************************/
+
+function mairixSystemHealthCheck() {
+
+  const result = {
+
+    success:
+      true,
+
+    timestamp:
+      new Date(),
+
+    checks: {}
+
+  };
+
+
+  /**********************************************
+   * REQUIRED SHEETS
+   **********************************************/
+
+  const requiredSheets = [
+
+    "SETTINGS",
+
+    "USERS",
+
+    "ROLES",
+
+    "PERMISSIONS",
+
+    "WAREHOUSES",
+
+    "ITEMS",
+
+    "CUSTOMERS",
+
+    "VENDORS",
+
+    "EMPLOYEES",
+
+    "TAX_TYPES",
+
+    "INVENTORY_LEDGER",
+
+    "CUSTOMER_LEDGER",
+
+    "VENDOR_LEDGER",
+
+    "CASH_LEDGER",
+
+    "TAX_LEDGER",
+
+    "FINANCIAL_LEDGER",
+
+    "AUDIT_TRAIL"
+
+  ];
+
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  requiredSheets.forEach(
+    function(sheetName) {
+
+      result.checks[
+        sheetName
+      ] =
+        !!ss.getSheetByName(
+          sheetName
+        );
+
+    }
+  );
+
+
+  /**********************************************
+   * GLOBAL STATUS
+   **********************************************/
+
+  const missing =
+    requiredSheets.filter(
+      function(sheetName) {
+
+        return (
+          result.checks[
+            sheetName
+          ] !== true
+        );
+
+      }
+    );
+
+
+  if (
+    missing.length > 0
+  ) {
+
+    result.success =
+      false;
+
+    result.missingSheets =
+      missing;
+
+  }
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * COLUMN HELPER
+ *
+ * Local lightweight helper.
+ *
+ * Does not replace the global Utils helper.
+ ************************************************/
+
+function mairixFindColumn(
+  sheet,
+  header
+) {
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastColumn < 1
+  ) {
+
+    return -1;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  const target =
+    mairixCleanText(
+      header
+    ).toLowerCase();
+
+
+  for (
+    let i = 0;
+    i < headers.length;
+    i++
+  ) {
+
+    if (
+      mairixCleanText(
+        headers[i]
+      ).toLowerCase() ===
+      target
+    ) {
+
+      return i + 1;
+
+    }
+
+  }
+
+
+  return -1;
+
+}
+
+
+/************************************************
+ * TRIGGER AUDIT
+ *
+ * AuditTrail owns the permanent audit history.
+ *
+ * This function is intentionally tolerant:
+ * auditing must not destroy the primary event.
+ ************************************************/
+
+function mairixWriteTriggerAudit(
+  action,
+  reference,
+  details
+) {
+
+  try {
+
+    if (
+      typeof writeAuditTrail ===
+      "function"
+    ) {
+
+      writeAuditTrail({
+
+        action:
+          action,
+
+        reference:
+          reference,
+
+        details:
+          details,
+
+        source:
+          "TRIGGERS"
+
+      });
+
+      return;
+
+    }
+
+
+    /*
+     * Fallback only during early installation.
+     */
+
+    const ss =
+      SpreadsheetApp
+        .getActiveSpreadsheet();
+
+
+    const sheet =
+      ss.getSheetByName(
+        "AUDIT_TRAIL"
+      );
+
+
+    if (!sheet) {
+      return;
+    }
+
+
+    const email =
+      Session
+        .getActiveUser()
+        .getEmail();
+
+
+    sheet.appendRow([
+
+      new Date(),
+
+      email ||
+        "SYSTEM",
+
+      action,
+
+      reference,
+
+      details,
+
+      "TRIGGERS"
+
+    ]);
+
+
+  } catch (error) {
+
+    Logger.log(
+      "Trigger audit failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * INSTALLABLE TRIGGER SETUP
+ *
+ * Run ONCE manually after deploying the
+ * project.
+ ************************************************/
+
+function setupMairixTriggers() {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const existingTriggers =
+    ScriptApp
+      .getProjectTriggers();
+
+
+  /*
+   * Remove old MAIRIX trigger instances
+   * to prevent duplicates.
+   */
+
+  existingTriggers.forEach(
+    function(trigger) {
+
+      const handler =
+        trigger.getHandlerFunction();
+
+
+      if (
+        handler ===
+          "mairixInstallableEdit" ||
+        handler ===
+          "mairixInstallableOpen"
+      ) {
+
+        ScriptApp.deleteTrigger(
+          trigger
+        );
+
+      }
+
+    }
+  );
+
+
+  /*
+   * INSTALLABLE EDIT
+   */
+
+  ScriptApp
+    .newTrigger(
+      "mairixInstallableEdit"
+    )
+    .forSpreadsheet(
+      ss
+    )
+    .onEdit()
+    .create();
+
+
+  /*
+   * INSTALLABLE OPEN
+   */
+
+  ScriptApp
+    .newTrigger(
+      "mairixInstallableOpen"
+    )
+    .forSpreadsheet(
+      ss
+    )
+    .onOpen()
+    .create();
+
+
+  return {
+
+    success:
+      true,
+
+    message:
+      "MAIRIX installable triggers created."
+
+  };
+
+}
+
+
+/************************************************
+ * INSTALLABLE EDIT ENTRY POINT
+ ************************************************/
+
+function mairixInstallableEdit(e) {
+
+  if (!e || !e.range) {
+    return;
+  }
+
+
+  try {
+
+    mairixHandleEditEvent(
+      e
+    );
+
+  } catch (error) {
+
+    mairixWriteTriggerAudit(
+      "TRIGGER_ERROR",
+      e.range
+        .getSheet()
+        .getName(),
+      error.message
+    );
+
+    throw error;
+
+  }
+
+}
+
+
+/************************************************
+ * INSTALLABLE OPEN ENTRY POINT
+ ************************************************/
+
+function mairixInstallableOpen(e) {
+
+  try {
+
+    mairixInitializeUserInterface();
+
+  } catch (error) {
+
+    Logger.log(
+      "Installable open trigger error: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * TEST TRIGGER ROUTER
+ ************************************************/
+
+function testMairixTriggerSystem() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX TRIGGER SYSTEM TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const result =
+    mairixSystemHealthCheck();
+
+
+  Logger.log(
+    "SYSTEM HEALTH:"
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "MAIRIX trigger system health check failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "TRIGGER SYSTEM: PASS"
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST INSTALLABLE TRIGGERS
+ ************************************************/
+
+function testMairixInstallableTriggers() {
+
+  const triggers =
+    ScriptApp
+      .getProjectTriggers();
+
+
+  const result = {
+
+    edit:
+      false,
+
+    open:
+      false,
+
+    total:
+      triggers.length
+
+  };
+
+
+  triggers.forEach(
+    function(trigger) {
+
+      const handler =
+        trigger.getHandlerFunction();
+
+
+      if (
+        handler ===
+        "mairixInstallableEdit"
+      ) {
+
+        result.edit =
+          true;
+
+      }
+
+
+      if (
+        handler ===
+        "mairixInstallableOpen"
+      ) {
+
+        result.open =
+          true;
+
+      }
+
+    }
+  );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}

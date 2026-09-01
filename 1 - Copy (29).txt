@@ -1,0 +1,1325 @@
+/************************************************
+ * MAIRIX ERP
+ * 18-MAIRIX_Loyalty
+ *
+ * RESPONSIBILITIES
+ * 1. Calculate loyalty points from sales
+ * 2. Reverse loyalty points from sales returns
+ * 3. Maintain customer loyalty balance
+ * 4. Keep every movement traceable to a central reference
+ * 5. Prevent negative / duplicated loyalty movements
+ *
+ * DESIGN
+ * - 1 sold piece = 1 loyalty point
+ * - Sales add points
+ * - Sales returns subtract points
+ * - Loyalty has its own movement ledger
+ * - No financial balance is mixed with loyalty balance
+ * - Customer-facing screens may expose ONLY points balance
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+const MAIRIX_LOYALTY = {
+
+  SHEET:
+    "LOYALTY_LEDGER",
+
+  TYPE_SALE:
+    "SALE",
+
+  TYPE_SALES_RETURN:
+    "SALES_RETURN",
+
+  SOURCE_SALE:
+    "SALE",
+
+  SOURCE_RETURN:
+    "SALES_RETURN"
+
+};
+
+
+/************************************************
+ * SETUP LOYALTY SHEET
+ ************************************************/
+
+function setupLoyaltySheet() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      MAIRIX_LOYALTY.SHEET
+    );
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        MAIRIX_LOYALTY.SHEET
+      );
+
+  }
+
+  const headers = [
+
+    "Movement ID",
+    "Date",
+    "Movement Type",
+
+    "Reference ID",
+    "Source Type",
+
+    "Customer Code",
+    "Customer Name",
+
+    "User ID",
+
+    "Warehouse Code",
+
+    "Quantity",
+
+    "Points Sign",
+    "Points Effect",
+
+    "Running Points",
+
+    "Created At"
+
+  ];
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([
+      headers
+    ]);
+
+  sheet.setFrozenRows(1);
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setFontWeight("bold");
+
+  return {
+
+    success:
+      true,
+
+    sheet:
+      MAIRIX_LOYALTY.SHEET
+
+  };
+
+}
+
+
+/************************************************
+ * GET LOYALTY SHEET
+ ************************************************/
+
+function getLoyaltySheet() {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        MAIRIX_LOYALTY.SHEET
+      );
+
+  if (!sheet) {
+
+    throw new Error(
+      "LOYALTY_LEDGER sheet is not configured. " +
+      "Run setupLoyaltySheet() first."
+    );
+
+  }
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * NORMALIZE CUSTOMER CODE
+ ************************************************/
+
+function normalizeLoyaltyCustomerCode(
+  customerCode
+) {
+
+  const value =
+    mairixCleanText(
+      customerCode
+    );
+
+  if (!value) {
+
+    throw new Error(
+      "Customer Code is required for loyalty."
+    );
+
+  }
+
+  return value;
+
+}
+
+
+/************************************************
+ * VALIDATE QUANTITY
+ ************************************************/
+
+function validateLoyaltyQuantity(
+  quantity
+) {
+
+  const value =
+    Number(
+      quantity
+    );
+
+  if (
+    !isFinite(value) ||
+    value <= 0
+  ) {
+
+    throw new Error(
+      "Loyalty quantity must be greater than zero."
+    );
+
+  }
+
+  return value;
+
+}
+
+
+/************************************************
+ * GENERATE MOVEMENT ID
+ ************************************************/
+
+function generateLoyaltyMovementId() {
+
+  const dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+  const unique =
+    Utilities.getUuid()
+      .replace(
+        /-/g,
+        ""
+      )
+      .substring(
+        0,
+        8
+      )
+      .toUpperCase();
+
+  return (
+    "LYM-" +
+    dateKey +
+    "-" +
+    unique
+  );
+
+}
+
+
+/************************************************
+ * FIND EXISTING REFERENCE
+ ************************************************/
+
+function findLoyaltyReference(
+  referenceId,
+  sourceType
+) {
+
+  const sheet =
+    getLoyaltySheet();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (
+    lastRow < 2
+  ) {
+
+    return null;
+
+  }
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+  const referenceColumn =
+    headers.indexOf(
+      "Reference ID"
+    );
+
+  const sourceColumn =
+    headers.indexOf(
+      "Source Type"
+    );
+
+  if (
+    referenceColumn === -1 ||
+    sourceColumn === -1
+  ) {
+
+    throw new Error(
+      "LOYALTY_LEDGER headers are incomplete."
+    );
+
+  }
+
+  const rows =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getDisplayValues();
+
+  const normalizedReference =
+    mairixCleanText(
+      referenceId
+    );
+
+  const normalizedSource =
+    mairixCleanText(
+      sourceType
+    ).toUpperCase();
+
+  for (
+    let i = 0;
+    i < rows.length;
+    i++
+  ) {
+
+    if (
+      mairixCleanText(
+        rows[i][referenceColumn]
+      ) === normalizedReference &&
+      mairixCleanText(
+        rows[i][sourceColumn]
+      ).toUpperCase() ===
+      normalizedSource
+    ) {
+
+      return {
+
+        row:
+          i + 2,
+
+        movementId:
+          rows[i][0]
+
+      };
+
+    }
+
+  }
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET CUSTOMER LOYALTY BALANCE
+ ************************************************/
+
+function getCustomerLoyaltyBalance(
+  customerCode
+) {
+
+  const normalizedCode =
+    normalizeLoyaltyCustomerCode(
+      customerCode
+    );
+
+  const sheet =
+    getLoyaltySheet();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (
+    lastRow < 2
+  ) {
+
+    return 0;
+
+  }
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+  const customerColumn =
+    headers.indexOf(
+      "Customer Code"
+    );
+
+  const effectColumn =
+    headers.indexOf(
+      "Points Effect"
+    );
+
+  if (
+    customerColumn === -1 ||
+    effectColumn === -1
+  ) {
+
+    throw new Error(
+      "LOYALTY_LEDGER headers are incomplete."
+    );
+
+  }
+
+  const rows =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+  let balance = 0;
+
+  rows.forEach(
+    function(row) {
+
+      if (
+        mairixCleanText(
+          row[customerColumn]
+        ) !== normalizedCode
+      ) {
+
+        return;
+
+      }
+
+      balance +=
+        Number(
+          row[effectColumn]
+        ) || 0;
+
+    }
+  );
+
+  return balance;
+
+}
+
+
+/************************************************
+ * CREATE LOYALTY SALE MOVEMENT
+ *
+ * 1 PIECE = 1 POINT
+ ************************************************/
+
+function createLoyaltyForSale(
+  saleData
+) {
+
+  if (!saleData) {
+
+    throw new Error(
+      "Sale loyalty data is required."
+    );
+
+  }
+
+  const referenceId =
+    mairixCleanText(
+      saleData.referenceId ||
+      saleData.saleId
+    );
+
+  if (!referenceId) {
+
+    throw new Error(
+      "Sale Reference ID is required."
+    );
+
+  }
+
+  const customerCode =
+    normalizeLoyaltyCustomerCode(
+      saleData.customerCode
+    );
+
+  const quantity =
+    validateLoyaltyQuantity(
+      saleData.quantity
+    );
+
+  const userId =
+    mairixCleanText(
+      saleData.userId
+    );
+
+  const customerName =
+    mairixCleanText(
+      saleData.customerName
+    );
+
+  const warehouseCode =
+    mairixCleanText(
+      saleData.warehouseCode
+    );
+
+  /**********************************************
+   * DUPLICATE PROTECTION
+   **********************************************/
+
+  const existing =
+    findLoyaltyReference(
+      referenceId,
+      MAIRIX_LOYALTY.SOURCE_SALE
+    );
+
+  if (existing) {
+
+    return {
+
+      success:
+        true,
+
+      duplicate:
+        true,
+
+      movementId:
+        existing.movementId,
+
+      referenceId:
+        referenceId,
+
+      points:
+        0,
+
+      message:
+        "Loyalty already exists for this sale."
+
+    };
+
+  }
+
+  /**********************************************
+   * POINTS
+   **********************************************/
+
+  const points =
+    quantity;
+
+  const movementId =
+    generateLoyaltyMovementId();
+
+  const sheet =
+    getLoyaltySheet();
+
+  const runningBefore =
+    getCustomerLoyaltyBalance(
+      customerCode
+    );
+
+  const runningAfter =
+    runningBefore +
+    points;
+
+  sheet.appendRow([
+
+    movementId,
+
+    new Date(),
+
+    MAIRIX_LOYALTY.TYPE_SALE,
+
+    referenceId,
+
+    MAIRIX_LOYALTY.SOURCE_SALE,
+
+    customerCode,
+
+    customerName,
+
+    userId,
+
+    warehouseCode,
+
+    quantity,
+
+    "+",
+
+    points,
+
+    runningAfter,
+
+    new Date()
+
+  ]);
+
+  return {
+
+    success:
+      true,
+
+    duplicate:
+      false,
+
+    movementId:
+      movementId,
+
+    referenceId:
+      referenceId,
+
+    customerCode:
+      customerCode,
+
+    quantity:
+      quantity,
+
+    points:
+      points,
+
+    balanceBefore:
+      runningBefore,
+
+    balanceAfter:
+      runningAfter
+
+  };
+
+}
+
+
+/************************************************
+ * CREATE LOYALTY FOR SALES RETURN
+ *
+ * Returned quantity removes the same number
+ * of previously earned points.
+ ************************************************/
+
+function createLoyaltyForSalesReturn(
+  returnData
+) {
+
+  if (!returnData) {
+
+    throw new Error(
+      "Sales return loyalty data is required."
+    );
+
+  }
+
+  const referenceId =
+    mairixCleanText(
+      returnData.referenceId ||
+      returnData.returnId
+    );
+
+  if (!referenceId) {
+
+    throw new Error(
+      "Sales Return Reference ID is required."
+    );
+
+  }
+
+  const originalSaleId =
+    mairixCleanText(
+      returnData.originalSaleId ||
+      returnData.saleId
+    );
+
+  if (!originalSaleId) {
+
+    throw new Error(
+      "Original Sale Reference ID is required."
+    );
+
+  }
+
+  const customerCode =
+    normalizeLoyaltyCustomerCode(
+      returnData.customerCode
+    );
+
+  const quantity =
+    validateLoyaltyQuantity(
+      returnData.quantity
+    );
+
+  const userId =
+    mairixCleanText(
+      returnData.userId
+    );
+
+  const customerName =
+    mairixCleanText(
+      returnData.customerName
+    );
+
+  const warehouseCode =
+    mairixCleanText(
+      returnData.warehouseCode
+    );
+
+  /**********************************************
+   * DUPLICATE RETURN PROTECTION
+   **********************************************/
+
+  const existing =
+    findLoyaltyReference(
+      referenceId,
+      MAIRIX_LOYALTY.SOURCE_RETURN
+    );
+
+  if (existing) {
+
+    return {
+
+      success:
+        true,
+
+      duplicate:
+        true,
+
+      movementId:
+        existing.movementId,
+
+      referenceId:
+        referenceId,
+
+      points:
+        0,
+
+      message:
+        "Loyalty already exists for this return."
+
+    };
+
+  }
+
+  /**********************************************
+   * VERIFY ORIGINAL SALE
+   **********************************************/
+
+  const originalSale =
+    findLoyaltyReference(
+      originalSaleId,
+      MAIRIX_LOYALTY.SOURCE_SALE
+    );
+
+  if (!originalSale) {
+
+    throw new Error(
+      "Original sale loyalty movement was not found: " +
+      originalSaleId
+    );
+
+  }
+
+  /**********************************************
+   * CURRENT BALANCE
+   **********************************************/
+
+  const currentBalance =
+    getCustomerLoyaltyBalance(
+      customerCode
+    );
+
+  const pointsToRemove =
+    quantity;
+
+  /*
+   * Do not allow loyalty balance to become
+   * negative because of a return.
+   */
+
+  if (
+    currentBalance <
+    pointsToRemove
+  ) {
+
+    throw new Error(
+      "Insufficient loyalty points for this return. " +
+      "Current balance: " +
+      currentBalance +
+      " | Required: " +
+      pointsToRemove
+    );
+
+  }
+
+  const movementId =
+    generateLoyaltyMovementId();
+
+  const newBalance =
+    currentBalance -
+    pointsToRemove;
+
+  const sheet =
+    getLoyaltySheet();
+
+  sheet.appendRow([
+
+    movementId,
+
+    new Date(),
+
+    MAIRIX_LOYALTY.TYPE_SALES_RETURN,
+
+    referenceId,
+
+    MAIRIX_LOYALTY.SOURCE_RETURN,
+
+    customerCode,
+
+    customerName,
+
+    userId,
+
+    warehouseCode,
+
+    quantity,
+
+    "-",
+
+    -pointsToRemove,
+
+    newBalance,
+
+    new Date()
+
+  ]);
+
+  return {
+
+    success:
+      true,
+
+    duplicate:
+      false,
+
+    movementId:
+      movementId,
+
+    referenceId:
+      referenceId,
+
+    originalSaleId:
+      originalSaleId,
+
+    customerCode:
+      customerCode,
+
+    quantity:
+      quantity,
+
+    points:
+      -pointsToRemove,
+
+    balanceBefore:
+      currentBalance,
+
+    balanceAfter:
+      newBalance
+
+  };
+
+}
+
+
+/************************************************
+ * CUSTOMER LOYALTY SUMMARY
+ *
+ * Intended for sales UI.
+ *
+ * IMPORTANT:
+ * Return ONLY loyalty information.
+ * No financial information.
+ ************************************************/
+
+function getCustomerLoyaltySummary(
+  customerCode
+) {
+
+  const normalizedCode =
+    normalizeLoyaltyCustomerCode(
+      customerCode
+    );
+
+  const balance =
+    getCustomerLoyaltyBalance(
+      normalizedCode
+    );
+
+  return {
+
+    customerCode:
+      normalizedCode,
+
+    points:
+      balance
+
+  };
+
+}
+
+
+/************************************************
+ * GET LOYALTY MOVEMENTS
+ ************************************************/
+
+function getCustomerLoyaltyMovements(
+  customerCode
+) {
+
+  const normalizedCode =
+    normalizeLoyaltyCustomerCode(
+      customerCode
+    );
+
+  const sheet =
+    getLoyaltySheet();
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (
+    lastRow < 2
+  ) {
+
+    return [];
+
+  }
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+  const rows =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        headers.length
+      )
+      .getValues();
+
+  const result = [];
+
+  rows.forEach(
+    function(row) {
+
+      if (
+        mairixCleanText(
+          row[
+            headers.indexOf(
+              "Customer Code"
+            )
+          ]
+        ) !== normalizedCode
+      ) {
+
+        return;
+
+      }
+
+      const item = {};
+
+      headers.forEach(
+        function(header, index) {
+
+          item[
+            mairixCleanText(header)
+          ] =
+            row[index];
+
+        }
+      );
+
+      result.push(
+        item
+      );
+
+    }
+  );
+
+  return result;
+
+}
+
+
+/************************************************
+ * TEST SALE LOYALTY
+ ************************************************/
+
+function testLoyaltySale() {
+
+  setupLoyaltySheet();
+
+  const customerCode =
+    "TEST-CUSTOMER-" +
+    new Date().getTime();
+
+  const saleId =
+    "TEST-SALE-" +
+    new Date().getTime();
+
+  const result =
+    createLoyaltyForSale({
+
+      saleId:
+        saleId,
+
+      customerCode:
+        customerCode,
+
+      customerName:
+        "Test Customer",
+
+      userId:
+        "TEST-USER",
+
+      warehouseCode:
+        "WH-01",
+
+      quantity:
+        5
+
+    });
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  if (
+    result.points !== 5
+  ) {
+
+    throw new Error(
+      "Sale loyalty points test failed."
+    );
+
+  }
+
+  if (
+    result.balanceAfter !== 5
+  ) {
+
+    throw new Error(
+      "Customer loyalty balance test failed."
+    );
+
+  }
+
+  Logger.log(
+    "LOYALTY SALE TEST: PASS"
+  );
+
+}
+
+
+/************************************************
+ * TEST SALES RETURN LOYALTY
+ ************************************************/
+
+function testLoyaltySalesReturn() {
+
+  setupLoyaltySheet();
+
+  const timestamp =
+    new Date().getTime();
+
+  const customerCode =
+    "TEST-RETURN-CUSTOMER-" +
+    timestamp;
+
+  const saleId =
+    "TEST-RETURN-SALE-" +
+    timestamp;
+
+  const returnId =
+    "TEST-RETURN-" +
+    timestamp;
+
+  createLoyaltyForSale({
+
+    saleId:
+      saleId,
+
+    customerCode:
+      customerCode,
+
+    customerName:
+      "Test Customer",
+
+    userId:
+      "TEST-USER",
+
+    warehouseCode:
+      "WH-01",
+
+    quantity:
+      10
+
+  });
+
+  const result =
+    createLoyaltyForSalesReturn({
+
+      returnId:
+        returnId,
+
+      originalSaleId:
+        saleId,
+
+      customerCode:
+        customerCode,
+
+      customerName:
+        "Test Customer",
+
+      userId:
+        "TEST-USER",
+
+      warehouseCode:
+        "WH-01",
+
+      quantity:
+        3
+
+    });
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  if (
+    result.points !== -3
+  ) {
+
+    throw new Error(
+      "Sales return loyalty points test failed."
+    );
+
+  }
+
+  if (
+    result.balanceAfter !== 7
+  ) {
+
+    throw new Error(
+      "Sales return loyalty balance test failed."
+    );
+
+  }
+
+  Logger.log(
+    "LOYALTY SALES RETURN TEST: PASS"
+  );
+
+}
+
+
+/************************************************
+ * TEST DUPLICATE SALE PROTECTION
+ ************************************************/
+
+function testLoyaltyDuplicateProtection() {
+
+  setupLoyaltySheet();
+
+  const timestamp =
+    new Date().getTime();
+
+  const customerCode =
+    "TEST-DUP-" +
+    timestamp;
+
+  const saleId =
+    "TEST-DUP-SALE-" +
+    timestamp;
+
+  const first =
+    createLoyaltyForSale({
+
+      saleId:
+        saleId,
+
+      customerCode:
+        customerCode,
+
+      customerName:
+        "Test Customer",
+
+      userId:
+        "TEST-USER",
+
+      warehouseCode:
+        "WH-01",
+
+      quantity:
+        4
+
+    });
+
+  const second =
+    createLoyaltyForSale({
+
+      saleId:
+        saleId,
+
+      customerCode:
+        customerCode,
+
+      customerName:
+        "Test Customer",
+
+      userId:
+        "TEST-USER",
+
+      warehouseCode:
+        "WH-01",
+
+      quantity:
+        4
+
+    });
+
+  if (
+    first.duplicate === true
+  ) {
+
+    throw new Error(
+      "First loyalty movement was incorrectly treated as duplicate."
+    );
+
+  }
+
+  if (
+    second.duplicate !== true
+  ) {
+
+    throw new Error(
+      "Duplicate loyalty movement was not blocked."
+    );
+
+  }
+
+  const balance =
+    getCustomerLoyaltyBalance(
+      customerCode
+    );
+
+  if (
+    balance !== 4
+  ) {
+
+    throw new Error(
+      "Duplicate protection failed. " +
+      "Expected 4 points, got " +
+      balance
+    );
+
+  }
+
+  Logger.log(
+    "LOYALTY DUPLICATE PROTECTION: PASS"
+  );
+
+}
+
+
+/************************************************
+ * MASTER TEST
+ ************************************************/
+
+function testLoyaltyEngine() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX LOYALTY ENGINE TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  testLoyaltySale();
+
+  testLoyaltySalesReturn();
+
+  testLoyaltyDuplicateProtection();
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX LOYALTY ENGINE: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}

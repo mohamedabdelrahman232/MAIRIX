@@ -1,0 +1,3177 @@
+/************************************************
+ * MAIRIX ERP
+ * 4-A-MAIRIX_IdentitySchema.gs
+ *
+ * CLEAN IDENTITY & ACCESS SCHEMA RESET
+ *
+ * PURPOSE:
+ * Completely resets the MAIRIX Identity & Access layer
+ * and creates the official new schema.
+ *
+ * THIS MODULE RESETS ONLY:
+ *
+ * - JOB_TITLES
+ * - ROLES
+ * - EMPLOYEES
+ * - USERS
+ * - ROLE_PERMISSION_MATRIX
+ * - USER_PERMISSION_OVERRIDES
+ * - USER_WAREHOUSES
+ *
+ * ALSO REMOVES LEGACY PERMISSION TABLES:
+ *
+ * - PERMISSIONS
+ * - PERMISSION_CATALOG
+ * - ROLE_PERMISSIONS
+ * - USER_PERMISSIONS
+ *
+ * BUSINESS DATA IS NOT TOUCHED.
+ ************************************************/
+
+
+const MAIRIX_IDENTITY_SCHEMA = Object.freeze({
+
+  SHEETS: {
+
+    JOB_TITLES: "JOB_TITLES",
+
+    ROLES: "ROLES",
+
+    EMPLOYEES: "EMPLOYEES",
+
+    USERS: "USERS",
+
+    ROLE_PERMISSION_MATRIX:
+      "ROLE_PERMISSION_MATRIX",
+
+    USER_PERMISSION_OVERRIDES:
+      "USER_PERMISSION_OVERRIDES",
+
+    USER_WAREHOUSES:
+      "USER_WAREHOUSES"
+
+  },
+
+
+  LEGACY_SHEETS: [
+
+    "PERMISSIONS",
+
+    "PERMISSION_CATALOG",
+
+    "ROLE_PERMISSIONS",
+
+    "USER_PERMISSIONS"
+
+  ],
+
+
+  HEADERS: {
+
+
+    JOB_TITLES: [
+
+      "Job Title Code",
+      "Job Title",
+      "Department",
+      "Role Code",
+      "Role Name",
+      "Description",
+      "Active",
+      "Created At",
+      "Updated At"
+
+    ],
+
+
+    ROLES: [
+
+      "Role Code",
+      "Role Name",
+      "Department",
+      "Description",
+      "Active",
+      "Created At",
+      "Updated At"
+
+    ],
+
+
+    EMPLOYEES: [
+
+      "Employee Code",
+      "Employee Name",
+      "Gmail",
+      "Phone",
+      "Job Title Code",
+      "Job Title",
+      "Department",
+      "Active",
+      "Created At",
+      "Created By",
+      "Updated At",
+      "Updated By"
+
+    ],
+
+
+    USERS: [
+
+      "User ID",
+      "Employee Code",
+      "Gmail",
+      "Employee Name",
+      "Role Code",
+      "Role Name",
+      "Password Hash",
+      "Previous Password Hash",
+      "Password Last Changed At",
+      "Password Change Required",
+      "Active",
+      "Created At",
+      "Created By",
+      "Updated At",
+      "Updated By"
+
+    ],
+
+
+    ROLE_PERMISSION_MATRIX: [
+
+      "Role Code",
+      "Role Name",
+      "Module",
+      "Operation Code",
+      "Operation Name",
+      "View",
+      "Create",
+      "Edit",
+      "Delete",
+      "Export",
+      "Active",
+      "Created At",
+      "Updated At"
+
+    ],
+
+
+    USER_PERMISSION_OVERRIDES: [
+
+      "User ID",
+      "Employee Code",
+      "Operation Code",
+      "Operation Name",
+      "View Override",
+      "Create Override",
+      "Edit Override",
+      "Delete Override",
+      "Export Override",
+      "Active",
+      "Reason",
+      "Created At",
+      "Created By",
+      "Updated At",
+      "Updated By"
+
+    ],
+
+
+    USER_WAREHOUSES: [
+
+      "User ID",
+      "Employee Code",
+      "Employee Name",
+      "Warehouse Code",
+      "Warehouse Name",
+      "Active",
+      "Created At",
+      "Created By",
+      "Updated At",
+      "Updated By"
+
+    ]
+
+  }
+
+});
+
+
+/************************************************
+ * GET ACTIVE SPREADSHEET
+ ************************************************/
+
+function mairixGetIdentitySpreadsheet() {
+
+  return SpreadsheetApp.getActiveSpreadsheet();
+
+}
+
+
+/************************************************
+ * DELETE SHEET SAFELY
+ ************************************************/
+
+function mairixDeleteSheetIfExists(sheetName) {
+
+  const ss =
+    mairixGetIdentitySpreadsheet();
+
+  const sheet =
+    ss.getSheetByName(sheetName);
+
+
+  if (!sheet) {
+
+    return false;
+
+  }
+
+
+  /*
+   * Google Sheets cannot delete the last sheet.
+   */
+
+  if (ss.getSheets().length <= 1) {
+
+    throw new Error(
+      "Cannot delete the last spreadsheet sheet."
+    );
+
+  }
+
+
+  ss.deleteSheet(sheet);
+
+  return true;
+
+}
+
+
+/************************************************
+ * CREATE CLEAN SHEET
+ ************************************************/
+
+function mairixCreateCleanIdentitySheet(
+  sheetName,
+  headers
+) {
+
+  const ss =
+    mairixGetIdentitySpreadsheet();
+
+
+  const existing =
+    ss.getSheetByName(sheetName);
+
+
+  if (existing) {
+
+    if (ss.getSheets().length <= 1) {
+
+      existing.clear();
+
+    } else {
+
+      ss.deleteSheet(existing);
+
+    }
+
+  }
+
+
+  const sheet =
+    ss.insertSheet(sheetName);
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues(
+      [headers]
+    );
+
+
+  mairixFormatIdentitySheet(
+    sheet,
+    headers.length
+  );
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * FORMAT IDENTITY SHEET
+ ************************************************/
+
+function mairixFormatIdentitySheet(
+  sheet,
+  columnCount
+) {
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      columnCount
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+
+  sheet.setFrozenRows(1);
+
+
+  for (
+    let column = 1;
+    column <= columnCount;
+    column++
+  ) {
+
+    sheet.setColumnWidth(
+      column,
+      170
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * DELETE LEGACY ACCESS SHEETS
+ ************************************************/
+
+function mairixDeleteLegacyIdentitySheets() {
+
+  const results = {};
+
+
+  MAIRIX_IDENTITY_SCHEMA
+    .LEGACY_SHEETS
+    .forEach(
+      function(sheetName) {
+
+        const ss =
+          mairixGetIdentitySpreadsheet();
+
+
+        const sheet =
+          ss.getSheetByName(sheetName);
+
+
+        if (!sheet) {
+
+          results[sheetName] =
+            "NOT_FOUND";
+
+          return;
+
+        }
+
+
+        if (
+          ss.getSheets().length <= 1
+        ) {
+
+          results[sheetName] =
+            "SKIPPED_LAST_SHEET";
+
+          return;
+
+        }
+
+
+        ss.deleteSheet(sheet);
+
+
+        results[sheetName] =
+          "DELETED";
+
+      }
+    );
+
+
+  return results;
+
+}
+
+
+/************************************************
+ * FULL CLEAN IDENTITY RESET
+ *
+ * WARNING:
+ *
+ * This permanently deletes all data from:
+ *
+ * JOB_TITLES
+ * ROLES
+ * EMPLOYEES
+ * USERS
+ * ROLE_PERMISSION_MATRIX
+ * USER_PERMISSION_OVERRIDES
+ * USER_WAREHOUSES
+ *
+ * Legacy permission sheets are also deleted.
+ *
+ * Business transaction sheets are untouched.
+ ************************************************/
+
+function mairixResetIdentitySchemaCompletely() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX COMPLETE IDENTITY RESET"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const ss =
+    mairixGetIdentitySpreadsheet();
+
+
+  const results = {
+
+    legacySheets: {},
+
+    newSheets: {}
+
+  };
+
+
+  /**********************************************
+   * 1. DELETE LEGACY PERMISSION TABLES
+   **********************************************/
+
+  results.legacySheets =
+    mairixDeleteLegacyIdentitySheets();
+
+
+  /**********************************************
+   * 2. DELETE/RECREATE OFFICIAL SCHEMA
+   **********************************************/
+
+  Object.keys(
+    MAIRIX_IDENTITY_SCHEMA.SHEETS
+  ).forEach(
+    function(key) {
+
+      const sheetName =
+        MAIRIX_IDENTITY_SCHEMA
+          .SHEETS[key];
+
+
+      const headers =
+        MAIRIX_IDENTITY_SCHEMA
+          .HEADERS[key];
+
+
+      mairixCreateCleanIdentitySheet(
+        sheetName,
+        headers
+      );
+
+
+      results.newSheets[key] =
+        "CREATED";
+
+    }
+  );
+
+
+  SpreadsheetApp.flush();
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "IDENTITY RESET COMPLETED"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      results,
+      null,
+      2
+    )
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success: true,
+
+    results: results
+
+  };
+
+}
+
+
+/************************************************
+ * VERIFY CLEAN IDENTITY SCHEMA
+ ************************************************/
+
+function mairixVerifyCleanIdentitySchema() {
+
+  const ss =
+    mairixGetIdentitySpreadsheet();
+
+
+  const result = {
+
+    success: true,
+
+    sheets: {}
+
+  };
+
+
+  Object.keys(
+    MAIRIX_IDENTITY_SCHEMA.SHEETS
+  ).forEach(
+    function(key) {
+
+      const sheetName =
+        MAIRIX_IDENTITY_SCHEMA
+          .SHEETS[key];
+
+
+      const expectedHeaders =
+        MAIRIX_IDENTITY_SCHEMA
+          .HEADERS[key];
+
+
+      const sheet =
+        ss.getSheetByName(sheetName);
+
+
+      if (!sheet) {
+
+        result.success = false;
+
+        result.sheets[key] = {
+
+          exists: false
+
+        };
+
+        return;
+
+      }
+
+
+      const actualHeaders =
+        sheet
+          .getRange(
+            1,
+            1,
+            1,
+            expectedHeaders.length
+          )
+          .getDisplayValues()[0];
+
+
+      const invalidHeaders = [];
+
+
+      for (
+        let i = 0;
+        i < expectedHeaders.length;
+        i++
+      ) {
+
+        if (
+          actualHeaders[i] !==
+          expectedHeaders[i]
+        ) {
+
+          invalidHeaders.push({
+
+            column: i + 1,
+
+            expected:
+              expectedHeaders[i],
+
+            actual:
+              actualHeaders[i]
+
+          });
+
+        }
+
+      }
+
+
+      const records =
+        Math.max(
+          0,
+          sheet.getLastRow() - 1
+        );
+
+
+      result.sheets[key] = {
+
+        exists: true,
+
+        valid:
+          invalidHeaders.length === 0,
+
+        records: records,
+
+        invalidHeaders:
+          invalidHeaders
+
+      };
+
+
+      if (
+        invalidHeaders.length > 0
+      ) {
+
+        result.success = false;
+
+      }
+
+    }
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CLEAN IDENTITY SCHEMA VERIFICATION"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * FULL RESET + VERIFY TEST
+ ************************************************/
+
+function testMAIRIXCleanIdentitySchema() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX CLEAN IDENTITY SCHEMA TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const reset =
+    mairixResetIdentitySchemaCompletely();
+
+
+  const verification =
+    mairixVerifyCleanIdentitySchema();
+
+
+  if (
+    verification.success !== true
+  ) {
+
+    throw new Error(
+      "MAIRIX Identity Schema verification failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "CLEAN IDENTITY SCHEMA: PASSED"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return {
+
+    success: true,
+
+    reset: reset,
+
+    verification: verification
+
+  };
+
+}
+
+/************************************************
+ * MAIRIX ERP
+ * 4-B-MAIRIX_OrganizationSeed.gs
+ *
+ * ORGANIZATION / ROLES / JOB TITLES SEED ENGINE
+ *
+ * PURPOSE:
+ *
+ * Creates the official MAIRIX organizational structure:
+ *
+ * 1. Roles
+ * 2. Departments
+ * 3. Job Titles
+ *
+ * ARCHITECTURE:
+ *
+ * Employee
+ *    ↓
+ * Job Title
+ *    ↓
+ * Role
+ *    ↓
+ * Permission Matrix
+ *
+ * IMPORTANT:
+ *
+ * The administrator creates an EMPLOYEE by selecting
+ * a Job Title.
+ *
+ * The system automatically determines:
+ *
+ * Job Title
+ *    ↓
+ * Role
+ *    ↓
+ * Default Permissions
+ *
+ ************************************************/
+
+
+/************************************************
+ * OFFICIAL ROLES
+ ************************************************/
+
+const MAIRIX_OFFICIAL_ROLES = Object.freeze([
+
+  {
+    roleCode: "SUPER_ADMIN",
+    roleName: "Super Administrator",
+    department: "Administration",
+    description:
+      "Full unrestricted access to the entire MAIRIX ERP system."
+  },
+
+  {
+    roleCode: "ADMIN",
+    roleName: "System Administrator",
+    department: "Administration",
+    description:
+      "System administration and operational management."
+  },
+
+  {
+    roleCode: "GENERAL_MANAGER",
+    roleName: "General Manager",
+    department: "Management",
+    description:
+      "Full management visibility and executive operational control."
+  },
+
+  {
+    roleCode: "OPERATIONS_MANAGER",
+    roleName: "Operations Manager",
+    department: "Operations",
+    description:
+      "Manages daily operations across sales, inventory and warehouses."
+  },
+
+  {
+    roleCode: "SALES_MANAGER",
+    roleName: "Sales Manager",
+    department: "Sales",
+    description:
+      "Manages sales operations and sales employees."
+  },
+
+  {
+    roleCode: "SALES_SUPERVISOR",
+    roleName: "Sales Supervisor",
+    department: "Sales",
+    description:
+      "Supervises salesmen and daily sales activities."
+  },
+
+  {
+    roleCode: "SALESMAN",
+    roleName: "Salesman",
+    department: "Sales",
+    description:
+      "Creates and manages authorized sales transactions."
+  },
+
+  {
+    roleCode: "CASHIER",
+    roleName: "Cashier",
+    department: "Finance",
+    description:
+      "Handles authorized cash collections and sales payments."
+  },
+
+  {
+    roleCode: "ACCOUNTING_MANAGER",
+    roleName: "Accounting Manager",
+    department: "Finance",
+    description:
+      "Supervises accounting and financial operations."
+  },
+
+  {
+    roleCode: "ACCOUNTANT",
+    roleName: "Accountant",
+    department: "Finance",
+    description:
+      "Handles accounting, expenses, collections and financial reports."
+  },
+
+  {
+    roleCode: "FINANCE_OFFICER",
+    roleName: "Finance Officer",
+    department: "Finance",
+    description:
+      "Handles authorized financial operations and follow-up."
+  },
+
+  {
+    roleCode: "PURCHASING_MANAGER",
+    roleName: "Purchasing Manager",
+    department: "Purchasing",
+    description:
+      "Manages purchasing operations and suppliers."
+  },
+
+  {
+    roleCode: "PURCHASING_OFFICER",
+    roleName: "Purchasing Officer",
+    department: "Purchasing",
+    description:
+      "Creates and manages authorized purchase transactions."
+  },
+
+  {
+    roleCode: "WAREHOUSE_MANAGER",
+    roleName: "Warehouse Manager",
+    department: "Warehouse",
+    description:
+      "Manages warehouses, stock and inventory operations."
+  },
+
+  {
+    roleCode: "WAREHOUSE_SUPERVISOR",
+    roleName: "Warehouse Supervisor",
+    department: "Warehouse",
+    description:
+      "Supervises warehouse operations and stock movement."
+  },
+
+  {
+    roleCode: "STOREKEEPER",
+    roleName: "Storekeeper",
+    department: "Warehouse",
+    description:
+      "Handles authorized inventory and warehouse transactions."
+  },
+
+  {
+    roleCode: "INVENTORY_CONTROLLER",
+    roleName: "Inventory Controller",
+    department: "Warehouse",
+    description:
+      "Controls inventory balances, counts and adjustments."
+  },
+
+  {
+    roleCode: "CUSTOMER_SERVICE",
+    roleName: "Customer Service Officer",
+    department: "Customer Service",
+    description:
+      "Manages customers and authorized customer service operations."
+  },
+
+  {
+    roleCode: "HR_MANAGER",
+    roleName: "HR Manager",
+    department: "Human Resources",
+    description:
+      "Manages employees and HR administration."
+  },
+
+  {
+    roleCode: "HR_OFFICER",
+    roleName: "HR Officer",
+    department: "Human Resources",
+    description:
+      "Handles employee records and HR operations."
+  },
+
+  {
+    roleCode: "MARKETING_MANAGER",
+    roleName: "Marketing Manager",
+    department: "Marketing",
+    description:
+      "Manages marketing operations and campaigns."
+  },
+
+  {
+    roleCode: "MARKETING_OFFICER",
+    roleName: "Marketing Officer",
+    department: "Marketing",
+    description:
+      "Handles authorized marketing activities."
+  },
+
+  {
+    roleCode: "REPORT_ANALYST",
+    roleName: "Reports Analyst",
+    department: "Management",
+    description:
+      "Views and analyzes authorized reports."
+  },
+
+  {
+    roleCode: "AUDITOR",
+    roleName: "Internal Auditor",
+    department: "Audit",
+    description:
+      "Reviews system transactions and audit information."
+  },
+
+  {
+    roleCode: "IT_ADMIN",
+    roleName: "IT Administrator",
+    department: "Information Technology",
+    description:
+      "Maintains technical system configuration."
+  }
+
+]);
+
+
+/************************************************
+ * OFFICIAL JOB TITLES
+ *
+ * A Job Title is what appears in the Employee UI.
+ *
+ * Each Job Title automatically maps to ONE Role.
+ ************************************************/
+
+const MAIRIX_OFFICIAL_JOB_TITLES = Object.freeze([
+
+
+  /**********************************************
+   * ADMINISTRATION
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-001",
+    jobTitle: "مالك النظام",
+    department: "الإدارة",
+    roleCode: "SUPER_ADMIN",
+    roleName: "Super Administrator",
+    description: "المالك الرئيسي وصاحب كامل صلاحيات النظام."
+  },
+
+  {
+    jobTitleCode: "JOB-002",
+    jobTitle: "مدير النظام",
+    department: "الإدارة",
+    roleCode: "ADMIN",
+    roleName: "System Administrator",
+    description: "مسؤول إدارة وتشغيل النظام."
+  },
+
+
+  /**********************************************
+   * MANAGEMENT
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-003",
+    jobTitle: "المدير العام",
+    department: "الإدارة العليا",
+    roleCode: "GENERAL_MANAGER",
+    roleName: "General Manager",
+    description: "الإدارة العامة ومتابعة الأداء."
+  },
+
+  {
+    jobTitleCode: "JOB-004",
+    jobTitle: "مدير العمليات",
+    department: "العمليات",
+    roleCode: "OPERATIONS_MANAGER",
+    roleName: "Operations Manager",
+    description: "إدارة العمليات اليومية."
+  },
+
+
+  /**********************************************
+   * SALES
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-005",
+    jobTitle: "مدير المبيعات",
+    department: "المبيعات",
+    roleCode: "SALES_MANAGER",
+    roleName: "Sales Manager",
+    description: "إدارة فريق وعمليات المبيعات."
+  },
+
+  {
+    jobTitleCode: "JOB-006",
+    jobTitle: "مشرف مبيعات",
+    department: "المبيعات",
+    roleCode: "SALES_SUPERVISOR",
+    roleName: "Sales Supervisor",
+    description: "الإشراف على المندوبين والمبيعات."
+  },
+
+  {
+    jobTitleCode: "JOB-007",
+    jobTitle: "مندوب مبيعات",
+    department: "المبيعات",
+    roleCode: "SALESMAN",
+    roleName: "Salesman",
+    description: "تسجيل وتنفيذ عمليات البيع المصرح بها."
+  },
+
+
+  /**********************************************
+   * FINANCE
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-008",
+    jobTitle: "كاشير",
+    department: "المالية",
+    roleCode: "CASHIER",
+    roleName: "Cashier",
+    description: "استلام وتسجيل المدفوعات المصرح بها."
+  },
+
+  {
+    jobTitleCode: "JOB-009",
+    jobTitle: "مدير الحسابات",
+    department: "المالية",
+    roleCode: "ACCOUNTING_MANAGER",
+    roleName: "Accounting Manager",
+    description: "إدارة الحسابات والعمليات المالية."
+  },
+
+  {
+    jobTitleCode: "JOB-010",
+    jobTitle: "محاسب",
+    department: "المالية",
+    roleCode: "ACCOUNTANT",
+    roleName: "Accountant",
+    description: "تنفيذ العمليات والتقارير المالية."
+  },
+
+  {
+    jobTitleCode: "JOB-011",
+    jobTitle: "مسؤول مالي",
+    department: "المالية",
+    roleCode: "FINANCE_OFFICER",
+    roleName: "Finance Officer",
+    description: "متابعة العمليات المالية المصرح بها."
+  },
+
+
+  /**********************************************
+   * PURCHASING
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-012",
+    jobTitle: "مدير المشتريات",
+    department: "المشتريات",
+    roleCode: "PURCHASING_MANAGER",
+    roleName: "Purchasing Manager",
+    description: "إدارة الموردين والمشتريات."
+  },
+
+  {
+    jobTitleCode: "JOB-013",
+    jobTitle: "مسؤول مشتريات",
+    department: "المشتريات",
+    roleCode: "PURCHASING_OFFICER",
+    roleName: "Purchasing Officer",
+    description: "تسجيل ومتابعة عمليات الشراء."
+  },
+
+
+  /**********************************************
+   * WAREHOUSE
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-014",
+    jobTitle: "مدير مخازن",
+    department: "المخازن",
+    roleCode: "WAREHOUSE_MANAGER",
+    roleName: "Warehouse Manager",
+    description: "إدارة المخازن وحركة الأصناف."
+  },
+
+  {
+    jobTitleCode: "JOB-015",
+    jobTitle: "مشرف مخزن",
+    department: "المخازن",
+    roleCode: "WAREHOUSE_SUPERVISOR",
+    roleName: "Warehouse Supervisor",
+    description: "الإشراف على عمليات المخزن."
+  },
+
+  {
+    jobTitleCode: "JOB-016",
+    jobTitle: "أمين مخزن",
+    department: "المخازن",
+    roleCode: "STOREKEEPER",
+    roleName: "Storekeeper",
+    description: "تنفيذ عمليات المخزن المصرح بها."
+  },
+
+  {
+    jobTitleCode: "JOB-017",
+    jobTitle: "مراقب مخزون",
+    department: "المخازن",
+    roleCode: "INVENTORY_CONTROLLER",
+    roleName: "Inventory Controller",
+    description: "متابعة أرصدة وجرد المخزون."
+  },
+
+
+  /**********************************************
+   * CUSTOMER SERVICE
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-018",
+    jobTitle: "خدمة العملاء",
+    department: "خدمة العملاء",
+    roleCode: "CUSTOMER_SERVICE",
+    roleName: "Customer Service Officer",
+    description: "إدارة بيانات العملاء وخدمتهم."
+  },
+
+
+  /**********************************************
+   * HR
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-019",
+    jobTitle: "مدير الموارد البشرية",
+    department: "الموارد البشرية",
+    roleCode: "HR_MANAGER",
+    roleName: "HR Manager",
+    description: "إدارة الموظفين والموارد البشرية."
+  },
+
+  {
+    jobTitleCode: "JOB-020",
+    jobTitle: "مسؤول موارد بشرية",
+    department: "الموارد البشرية",
+    roleCode: "HR_OFFICER",
+    roleName: "HR Officer",
+    description: "متابعة بيانات وإجراءات الموظفين."
+  },
+
+
+  /**********************************************
+   * MARKETING
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-021",
+    jobTitle: "مدير التسويق",
+    department: "التسويق",
+    roleCode: "MARKETING_MANAGER",
+    roleName: "Marketing Manager",
+    description: "إدارة الأنشطة التسويقية."
+  },
+
+  {
+    jobTitleCode: "JOB-022",
+    jobTitle: "مسؤول تسويق",
+    department: "التسويق",
+    roleCode: "MARKETING_OFFICER",
+    roleName: "Marketing Officer",
+    description: "تنفيذ الأنشطة التسويقية."
+  },
+
+
+  /**********************************************
+   * REPORTS / AUDIT
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-023",
+    jobTitle: "محلل تقارير",
+    department: "الإدارة",
+    roleCode: "REPORT_ANALYST",
+    roleName: "Reports Analyst",
+    description: "تحليل وعرض التقارير المصرح بها."
+  },
+
+  {
+    jobTitleCode: "JOB-024",
+    jobTitle: "مراجع داخلي",
+    department: "المراجعة",
+    roleCode: "AUDITOR",
+    roleName: "Internal Auditor",
+    description: "مراجعة العمليات وسجل النظام."
+  },
+
+
+  /**********************************************
+   * IT
+   **********************************************/
+
+  {
+    jobTitleCode: "JOB-025",
+    jobTitle: "مسؤول تقنية المعلومات",
+    department: "تقنية المعلومات",
+    roleCode: "IT_ADMIN",
+    roleName: "IT Administrator",
+    description: "إدارة الجوانب التقنية للنظام."
+  }
+
+]);
+
+
+/************************************************
+ * GET REQUIRED SHEET
+ ************************************************/
+
+function mairixGetOrganizationSheet(sheetName) {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(sheetName);
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Required organization sheet not found: " +
+      sheetName
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * CLEAR SHEET DATA ONLY
+ ************************************************/
+
+function mairixClearOrganizationSheetData(sheet) {
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow <= 1 ||
+    lastColumn <= 0
+  ) {
+
+    return;
+
+  }
+
+
+  sheet
+    .getRange(
+      2,
+      1,
+      lastRow - 1,
+      lastColumn
+    )
+    .clearContent();
+
+}
+
+
+/************************************************
+ * SEED ROLES
+ ************************************************/
+
+function mairixSeedOfficialRoles() {
+
+  const sheet =
+    mairixGetOrganizationSheet(
+      MAIRIX_IDENTITY_SCHEMA.SHEETS.ROLES
+    );
+
+
+  mairixClearOrganizationSheetData(
+    sheet
+  );
+
+
+  const now =
+    new Date();
+
+
+  const rows =
+    MAIRIX_OFFICIAL_ROLES.map(
+      function(role) {
+
+        return [
+
+          role.roleCode,
+
+          role.roleName,
+
+          role.department,
+
+          role.description,
+
+          true,
+
+          now,
+
+          now
+
+        ];
+
+      }
+    );
+
+
+  if (rows.length) {
+
+    sheet
+      .getRange(
+        2,
+        1,
+        rows.length,
+        rows[0].length
+      )
+      .setValues(rows);
+
+  }
+
+
+  SpreadsheetApp.flush();
+
+
+  return {
+
+    success: true,
+
+    count:
+      rows.length
+
+  };
+
+}
+
+
+/************************************************
+ * SEED JOB TITLES
+ ************************************************/
+
+function mairixSeedOfficialJobTitles() {
+
+  const sheet =
+    mairixGetOrganizationSheet(
+      MAIRIX_IDENTITY_SCHEMA.SHEETS.JOB_TITLES
+    );
+
+
+  mairixClearOrganizationSheetData(
+    sheet
+  );
+
+
+  const now =
+    new Date();
+
+
+  const rows =
+    MAIRIX_OFFICIAL_JOB_TITLES.map(
+      function(job) {
+
+        return [
+
+          job.jobTitleCode,
+
+          job.jobTitle,
+
+          job.department,
+
+          job.roleCode,
+
+          job.roleName,
+
+          job.description,
+
+          true,
+
+          now,
+
+          now
+
+        ];
+
+      }
+    );
+
+
+  if (rows.length) {
+
+    sheet
+      .getRange(
+        2,
+        1,
+        rows.length,
+        rows[0].length
+      )
+      .setValues(rows);
+
+  }
+
+
+  SpreadsheetApp.flush();
+
+
+  return {
+
+    success: true,
+
+    count:
+      rows.length
+
+  };
+
+}
+
+
+/************************************************
+ * VERIFY ROLE / JOB TITLE RELATIONSHIPS
+ ************************************************/
+
+function mairixVerifyOrganizationStructure() {
+
+  const roleCodes =
+    new Set(
+      MAIRIX_OFFICIAL_ROLES.map(
+        role => role.roleCode
+      )
+    );
+
+
+  const invalidJobs = [];
+
+
+  MAIRIX_OFFICIAL_JOB_TITLES.forEach(
+    function(job) {
+
+      if (
+        !roleCodes.has(
+          job.roleCode
+        )
+      ) {
+
+        invalidJobs.push({
+
+          jobTitleCode:
+            job.jobTitleCode,
+
+          jobTitle:
+            job.jobTitle,
+
+          roleCode:
+            job.roleCode
+
+        });
+
+      }
+
+    }
+  );
+
+
+  const result = {
+
+    success:
+      invalidJobs.length === 0,
+
+    roles:
+      MAIRIX_OFFICIAL_ROLES.length,
+
+    jobTitles:
+      MAIRIX_OFFICIAL_JOB_TITLES.length,
+
+    invalidJobs:
+      invalidJobs
+
+  };
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * FULL ORGANIZATION SEED
+ ************************************************/
+
+function mairixSeedOrganizationStructure() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX ORGANIZATION STRUCTURE SEED"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const verification =
+    mairixVerifyOrganizationStructure();
+
+
+  if (
+    verification.success !== true
+  ) {
+
+    throw new Error(
+      "Organization structure contains invalid Job Title → Role mappings."
+    );
+
+  }
+
+
+  const roles =
+    mairixSeedOfficialRoles();
+
+
+  const jobs =
+    mairixSeedOfficialJobTitles();
+
+
+  const result = {
+
+    success: true,
+
+    roles,
+
+    jobs,
+
+    verification
+
+  };
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "ORGANIZATION STRUCTURE SEEDED SUCCESSFULLY"
+  );
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return result;
+
+}
+
+
+/************************************************
+ * TEST ORGANIZATION SEED
+ ************************************************/
+
+function testMAIRIXOrganizationSeed() {
+
+  const result =
+    mairixSeedOrganizationStructure();
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "MAIRIX Organization Seed failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "MAIRIX ORGANIZATION SEED: PASSED"
+  );
+
+
+  return result;
+
+}
+/************************************************
+ * MAIRIX ERP
+ * EMPLOYEE PROVISIONING ENGINE
+ *
+ * RESPONSIBILITY:
+ *
+ * Create a complete MAIRIX identity automatically:
+ *
+ * EMPLOYEE
+ *    ↓
+ * USER
+ *    ↓
+ * JOB TITLE
+ *    ↓
+ * ROLE
+ *    ↓
+ * WAREHOUSE ACCESS
+ *
+ * ADMIN INPUT ONLY:
+ *
+ * 1. Employee Name
+ * 2. Gmail
+ * 3. Phone
+ * 4. Job Title
+ * 5. Password
+ * 6. Confirm Password
+ * 7. Allowed Warehouses
+ *
+ ************************************************/
+
+
+/************************************************
+ * EMPLOYEE / USER CODE SETTINGS
+ ************************************************/
+
+const MAIRIX_PROVISIONING = Object.freeze({
+
+  EMPLOYEE_PREFIX: "EMP",
+
+  USER_PREFIX: "USR",
+
+  CODE_WIDTH: 7,
+
+  DEFAULT_ACTIVE: true
+
+});
+
+
+/************************************************
+ * CREATE COMPLETE EMPLOYEE IDENTITY
+ *
+ * MAIN ENTRY POINT
+ ************************************************/
+
+function mairixCreateEmployeeIdentity(payload) {
+
+  if (!payload || typeof payload !== "object") {
+
+    throw new Error(
+      "Employee creation payload is required."
+    );
+
+  }
+
+
+  const lock =
+    LockService.getScriptLock();
+
+
+  lock.waitLock(30000);
+
+
+  try {
+
+    /**********************************************
+     * 1. NORMALIZE INPUT
+     **********************************************/
+
+    const input =
+      mairixNormalizeEmployeePayload(
+        payload
+      );
+
+
+    /**********************************************
+     * 2. VALIDATE INPUT
+     **********************************************/
+
+    mairixValidateEmployeePayload(
+      input
+    );
+
+
+    /**********************************************
+     * 3. GET JOB TITLE
+     **********************************************/
+
+    const jobTitle =
+      mairixGetJobTitleByCode(
+        input.jobTitleCode
+      );
+
+
+    if (!jobTitle) {
+
+      throw new Error(
+        "Invalid Job Title Code: " +
+        input.jobTitleCode
+      );
+
+    }
+
+
+    /**********************************************
+     * 4. VALIDATE ROLE
+     **********************************************/
+
+    const role =
+      mairixGetRoleByCode(
+        jobTitle.roleCode
+      );
+
+
+    if (!role) {
+
+      throw new Error(
+        "Role linked to Job Title does not exist: " +
+        jobTitle.roleCode
+      );
+
+    }
+
+
+    if (role.active !== true) {
+
+      throw new Error(
+        "Role is inactive: " +
+        jobTitle.roleCode
+      );
+
+    }
+
+
+    /**********************************************
+     * 5. VALIDATE EMAIL UNIQUENESS
+     **********************************************/
+
+    mairixAssertEmailAvailable(
+      input.email
+    );
+
+
+    /**********************************************
+     * 6. VALIDATE WAREHOUSES
+     **********************************************/
+
+    mairixValidateEmployeeWarehouses(
+      input.warehouseCodes
+    );
+
+
+    /**********************************************
+     * 7. GENERATE CODES
+     **********************************************/
+
+    const employeeCode =
+      mairixGenerateSequentialCode(
+        "EMPLOYEE",
+        MAIRIX_PROVISIONING.EMPLOYEE_PREFIX
+      );
+
+
+    const userId =
+      mairixGenerateSequentialCode(
+        "USER",
+        MAIRIX_PROVISIONING.USER_PREFIX
+      );
+
+
+    /**********************************************
+     * 8. CREATE PASSWORD RECORD
+     **********************************************/
+
+    const passwordData =
+      mairixPrepareNewUserPassword(
+        input.password,
+        input.confirmPassword
+      );
+
+
+    /**********************************************
+     * 9. CREATE EMPLOYEE
+     **********************************************/
+
+    const employee =
+      mairixInsertEmployee({
+
+        employeeCode: employeeCode,
+
+        employeeName: input.employeeName,
+
+        email: input.email,
+
+        phone: input.phone,
+
+        jobTitleCode: jobTitle.jobTitleCode,
+
+        jobTitle: jobTitle.jobTitle,
+
+        department: jobTitle.department,
+
+        roleCode: jobTitle.roleCode,
+
+        active: true
+
+      });
+
+
+    /**********************************************
+     * 10. CREATE USER
+     **********************************************/
+
+    const user =
+      mairixInsertUser({
+
+        userId: userId,
+
+        employeeCode: employeeCode,
+
+        email: input.email,
+
+        userName: input.employeeName,
+
+        roleCode: jobTitle.roleCode,
+
+        roleName: jobTitle.roleName,
+
+        passwordData: passwordData,
+
+        active: true
+
+      });
+
+
+    /**********************************************
+     * 11. ASSIGN WAREHOUSES
+     **********************************************/
+
+    const warehouses =
+      mairixAssignEmployeeWarehouses({
+
+        employeeCode: employeeCode,
+
+        userId: userId,
+
+        warehouseCodes:
+          input.warehouseCodes
+
+      });
+
+
+    /**********************************************
+     * 12. FINAL RESULT
+     **********************************************/
+
+    const result = {
+
+      success: true,
+
+      employee: employee,
+
+      user: user,
+
+      role: {
+
+        roleCode:
+          jobTitle.roleCode,
+
+        roleName:
+          jobTitle.roleName
+
+      },
+
+      warehouses: warehouses,
+
+      createdAt:
+        new Date().toISOString()
+
+    };
+
+
+    Logger.log(
+      "=========================================="
+    );
+
+    Logger.log(
+      "MAIRIX EMPLOYEE IDENTITY CREATED"
+    );
+
+    Logger.log(
+      JSON.stringify(
+        result,
+        null,
+        2
+      )
+    );
+
+    Logger.log(
+      "=========================================="
+    );
+
+
+    return result;
+
+
+  } finally {
+
+    lock.releaseLock();
+
+  }
+
+}
+
+
+/************************************************
+ * NORMALIZE EMPLOYEE PAYLOAD
+ ************************************************/
+
+function mairixNormalizeEmployeePayload(payload) {
+
+  return {
+
+    employeeName:
+
+      String(
+        payload.employeeName ||
+        payload.name ||
+        ""
+      ).trim(),
+
+
+    email:
+
+      String(
+        payload.email ||
+        ""
+      )
+        .trim()
+        .toLowerCase(),
+
+
+    phone:
+
+      String(
+        payload.phone ||
+        ""
+      ).trim(),
+
+
+    jobTitleCode:
+
+      String(
+        payload.jobTitleCode ||
+        ""
+      ).trim(),
+
+
+    password:
+
+      String(
+        payload.password ||
+        ""
+      ),
+
+
+    confirmPassword:
+
+      String(
+        payload.confirmPassword ||
+        ""
+      ),
+
+
+    warehouseCodes:
+
+      Array.isArray(
+        payload.warehouseCodes
+      )
+        ? payload.warehouseCodes
+            .map(
+              function(code) {
+
+                return String(
+                  code || ""
+                ).trim();
+
+              }
+            )
+            .filter(
+              function(code) {
+
+                return !!code;
+
+              }
+            )
+
+        : []
+
+  };
+
+}
+
+
+/************************************************
+ * VALIDATE EMPLOYEE PAYLOAD
+ ************************************************/
+
+function mairixValidateEmployeePayload(input) {
+
+  if (!input.employeeName) {
+
+    throw new Error(
+      "Employee Name is required."
+    );
+
+  }
+
+
+  if (!input.email) {
+
+    throw new Error(
+      "Gmail / Email is required."
+    );
+
+  }
+
+
+  if (!mairixIsValidEmail(
+    input.email
+  )) {
+
+    throw new Error(
+      "Invalid Email format."
+    );
+
+  }
+
+
+  if (!input.phone) {
+
+    throw new Error(
+      "Phone number is required."
+    );
+
+  }
+
+
+  if (!input.jobTitleCode) {
+
+    throw new Error(
+      "Job Title is required."
+    );
+
+  }
+
+
+  if (!input.password) {
+
+    throw new Error(
+      "Password is required."
+    );
+
+  }
+
+
+  if (
+    input.password !==
+    input.confirmPassword
+  ) {
+
+    throw new Error(
+      "Password and Confirm Password do not match."
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * EMAIL VALIDATION
+ ************************************************/
+
+function mairixIsValidEmail(email) {
+
+  const pattern =
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+
+  return pattern.test(
+    String(email || "")
+      .trim()
+  );
+
+}
+
+
+/************************************************
+ * ASSERT EMAIL AVAILABLE
+ ************************************************/
+
+function mairixAssertEmailAvailable(email) {
+
+  const usersSheet =
+    mairixGetProvisioningSheet(
+      MAIRIX_IDENTITY_SCHEMA.SHEETS.USERS
+    );
+
+
+  if (
+    usersSheet.getLastRow() < 2
+  ) {
+
+    return true;
+
+  }
+
+
+  const headers =
+    usersSheet
+      .getRange(
+        1,
+        1,
+        1,
+        usersSheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const emailIndex =
+    headers.indexOf(
+      "Gmail"
+    );
+
+
+  if (emailIndex === -1) {
+
+    throw new Error(
+      'USERS sheet is missing "Gmail" column.'
+    );
+
+  }
+
+
+  const values =
+    usersSheet
+      .getRange(
+        2,
+        emailIndex + 1,
+        usersSheet.getLastRow() - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  const normalizedEmail =
+    String(email)
+      .trim()
+      .toLowerCase();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const existingEmail =
+      String(
+        values[i][0] || ""
+      )
+        .trim()
+        .toLowerCase();
+
+
+    if (
+      existingEmail ===
+      normalizedEmail
+    ) {
+
+      throw new Error(
+        "Email already belongs to another MAIRIX user."
+      );
+
+    }
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * GENERATE SEQUENTIAL CODE
+ *
+ * Examples:
+ *
+ * EMP-0000001
+ * EMP-0000002
+ *
+ * USR-0000001
+ * USR-0000002
+ ************************************************/
+
+function mairixGenerateSequentialCode(
+  entity,
+  prefix
+) {
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+
+  const propertyKey =
+    "MAIRIX_SEQUENCE_" +
+    String(entity)
+      .trim()
+      .toUpperCase();
+
+
+  const currentValue =
+    properties.getProperty(
+      propertyKey
+    );
+
+
+  let nextNumber =
+    currentValue
+      ? parseInt(
+          currentValue,
+          10
+        ) + 1
+      : 1;
+
+
+  if (
+    isNaN(nextNumber) ||
+    nextNumber < 1
+  ) {
+
+    nextNumber = 1;
+
+  }
+
+
+  properties.setProperty(
+    propertyKey,
+    String(nextNumber)
+  );
+
+
+  return (
+
+    prefix +
+
+    "-" +
+
+    String(nextNumber)
+      .padStart(
+        MAIRIX_PROVISIONING.CODE_WIDTH,
+        "0"
+      )
+
+  );
+
+}
+
+
+/************************************************
+ * GET PROVISIONING SHEET
+ ************************************************/
+
+function mairixGetProvisioningSheet(sheetName) {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        sheetName
+      );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Required sheet not found: " +
+      sheetName
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * GET JOB TITLE BY CODE
+ ************************************************/
+
+function mairixGetJobTitleByCode(jobTitleCode) {
+
+  const sheet =
+    mairixGetProvisioningSheet(
+      MAIRIX_IDENTITY_SCHEMA.SHEETS.JOB_TITLES
+    );
+
+
+  if (
+    sheet.getLastRow() < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const codeIndex =
+    headers.indexOf(
+      "Job Title Code"
+    );
+
+
+  const titleIndex =
+    headers.indexOf(
+      "Job Title"
+    );
+
+
+  const departmentIndex =
+    headers.indexOf(
+      "Department"
+    );
+
+
+  const roleCodeIndex =
+    headers.indexOf(
+      "Role Code"
+    );
+
+
+  const roleNameIndex =
+    headers.indexOf(
+      "Role Name"
+    );
+
+
+  const activeIndex =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues();
+
+
+  const normalizedCode =
+    String(jobTitleCode)
+      .trim();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const row =
+      values[i];
+
+
+    if (
+      String(
+        row[codeIndex] || ""
+      ).trim()
+      !==
+      normalizedCode
+    ) {
+
+      continue;
+
+    }
+
+
+    const active =
+      activeIndex === -1
+        ? true
+        : isMAIRIXTrueValue(
+            row[activeIndex]
+          );
+
+
+    if (!active) {
+
+      throw new Error(
+        "Selected Job Title is inactive."
+      );
+
+    }
+
+
+    return {
+
+      jobTitleCode:
+        row[codeIndex],
+
+      jobTitle:
+        titleIndex !== -1
+          ? row[titleIndex]
+          : "",
+
+      department:
+        departmentIndex !== -1
+          ? row[departmentIndex]
+          : "",
+
+      roleCode:
+        roleCodeIndex !== -1
+          ? row[roleCodeIndex]
+          : "",
+
+      roleName:
+        roleNameIndex !== -1
+          ? row[roleNameIndex]
+          : "",
+
+      active:
+        active
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET ROLE BY CODE
+ ************************************************/
+
+function mairixGetRoleByCode(roleCode) {
+
+  const sheet =
+    mairixGetProvisioningSheet(
+      MAIRIX_IDENTITY_SCHEMA.SHEETS.ROLES
+    );
+
+
+  if (
+    sheet.getLastRow() < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const codeIndex =
+    headers.indexOf(
+      "Role Code"
+    );
+
+
+  const nameIndex =
+    headers.indexOf(
+      "Role Name"
+    );
+
+
+  const activeIndex =
+    headers.indexOf(
+      "Active"
+    );
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        sheet.getLastRow() - 1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues();
+
+
+  const normalizedCode =
+    String(roleCode)
+      .trim();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    const row =
+      values[i];
+
+
+    if (
+      String(
+        row[codeIndex] || ""
+      ).trim()
+      !==
+      normalizedCode
+    ) {
+
+      continue;
+
+    }
+
+
+    return {
+
+      roleCode:
+        row[codeIndex],
+
+      roleName:
+        nameIndex !== -1
+          ? row[nameIndex]
+          : "",
+
+      active:
+        activeIndex === -1
+          ? true
+          : isMAIRIXTrueValue(
+              row[activeIndex]
+            )
+
+    };
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * VALIDATE WAREHOUSES
+ ************************************************/
+
+function mairixValidateEmployeeWarehouses(
+  warehouseCodes
+) {
+
+  if (
+    !Array.isArray(
+      warehouseCodes
+    )
+  ) {
+
+    throw new Error(
+      "Warehouse Codes must be an array."
+    );
+
+  }
+
+
+  const uniqueCodes =
+    [
+      ...new Set(
+        warehouseCodes
+      )
+    ];
+
+
+  if (
+    uniqueCodes.length !==
+    warehouseCodes.length
+  ) {
+
+    throw new Error(
+      "Duplicate warehouse selection is not allowed."
+    );
+
+  }
+
+
+  return true;
+
+}
+
+
+/************************************************
+ * PREPARE NEW USER PASSWORD
+ *
+ * TEMPORARY IMPLEMENTATION
+ *
+ * Password policy engine will replace
+ * this section in the next security file.
+ ************************************************/
+
+function mairixPrepareNewUserPassword(
+  password,
+  confirmPassword
+) {
+
+  if (
+    password !==
+    confirmPassword
+  ) {
+
+    throw new Error(
+      "Password confirmation failed."
+    );
+
+  }
+
+
+  return {
+
+    currentPassword:
+      String(password),
+
+    previousPassword:
+      "",
+
+    changedAt:
+      new Date()
+
+  };
+
+}
+
+
+/************************************************
+ * INSERT EMPLOYEE
+ ************************************************/
+
+function mairixInsertEmployee(data) {
+
+  const sheet =
+    mairixGetProvisioningSheet(
+      MAIRIX_IDENTITY_SCHEMA.SHEETS.EMPLOYEES
+    );
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const row =
+    headers.map(
+      function(header) {
+
+        switch (
+          String(header).trim()
+        ) {
+
+          case "Employee Code":
+            return data.employeeCode;
+
+          case "Employee Name":
+          case "Name":
+            return data.employeeName;
+
+          case "Gmail":
+            return data.email;
+
+          case "Phone":
+          case "Phone Number":
+            return data.phone;
+
+          case "Job Title Code":
+            return data.jobTitleCode;
+
+          case "Job Title":
+            return data.jobTitle;
+
+          case "Department":
+            return data.department;
+
+          case "Role Code":
+            return data.roleCode;
+
+          case "Active":
+            return data.active;
+
+          case "Created At":
+            return new Date();
+
+          default:
+            return "";
+
+        }
+
+      }
+    );
+
+
+  sheet
+    .appendRow(
+      row
+    );
+
+
+  return {
+
+    employeeCode:
+      data.employeeCode,
+
+    employeeName:
+      data.employeeName,
+
+    email:
+      data.email,
+
+    phone:
+      data.phone,
+
+    jobTitleCode:
+      data.jobTitleCode,
+
+    jobTitle:
+      data.jobTitle,
+
+    department:
+      data.department,
+
+    roleCode:
+      data.roleCode,
+
+    active:
+      data.active
+
+  };
+
+}
+
+
+/************************************************
+ * INSERT USER
+ ************************************************/
+
+function mairixInsertUser(data) {
+
+  const sheet =
+    mairixGetProvisioningSheet(
+      MAIRIX_IDENTITY_SCHEMA.SHEETS.USERS
+    );
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const now =
+    new Date();
+
+
+  const row =
+    headers.map(
+      function(header) {
+
+        switch (
+          String(header).trim()
+        ) {
+
+          case "User ID":
+            return data.userId;
+
+          case "Employee Code":
+            return data.employeeCode;
+
+          case "Gmail":
+            return data.email;
+
+          case "Name":
+          case "User Name":
+            return data.userName;
+
+          case "Role Code":
+            return data.roleCode;
+
+          case "Role Name":
+            return data.roleName;
+
+          case "Current Password":
+            return data.passwordData.currentPassword;
+
+          case "Previous Password":
+            return data.passwordData.previousPassword;
+
+          case "Password Last Changed At":
+            return now;
+
+          case "Active":
+            return data.active;
+
+          case "Created At":
+            return now;
+
+          case "Updated At":
+            return now;
+
+          default:
+            return "";
+
+        }
+
+      }
+    );
+
+
+  sheet
+    .appendRow(
+      row
+    );
+
+
+  return {
+
+    userId:
+      data.userId,
+
+    employeeCode:
+      data.employeeCode,
+
+    email:
+      data.email,
+
+    userName:
+      data.userName,
+
+    roleCode:
+      data.roleCode,
+
+    roleName:
+      data.roleName,
+
+    active:
+      data.active
+
+  };
+
+}
+
+
+/************************************************
+ * ASSIGN EMPLOYEE WAREHOUSES
+ ************************************************/
+
+function mairixAssignEmployeeWarehouses(data) {
+
+  /*
+   * If no warehouses are selected,
+   * the employee can still exist.
+   *
+   * Warehouse permissions are added
+   * only when selected.
+   */
+
+  if (
+    !data.warehouseCodes ||
+    data.warehouseCodes.length === 0
+  ) {
+
+    return [];
+
+  }
+
+
+  const sheet =
+    mairixGetProvisioningSheet(
+      MAIRIX_IDENTITY_SCHEMA.SHEETS.USER_WAREHOUSES
+    );
+
+
+  const headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        sheet.getLastColumn()
+      )
+      .getDisplayValues()[0];
+
+
+  const now =
+    new Date();
+
+
+  const created = [];
+
+
+  data.warehouseCodes.forEach(
+    function(warehouseCode) {
+
+      const row =
+        headers.map(
+          function(header) {
+
+            switch (
+              String(header).trim()
+            ) {
+
+              case "User ID":
+                return data.userId;
+
+              case "Employee Code":
+                return data.employeeCode;
+
+              case "Warehouse Code":
+                return warehouseCode;
+
+              case "Active":
+                return true;
+
+              case "Created At":
+                return now;
+
+              default:
+                return "";
+
+            }
+
+          }
+        );
+
+
+      sheet.appendRow(
+        row
+      );
+
+
+      created.push(
+        warehouseCode
+      );
+
+    }
+  );
+
+
+  return created;
+
+}
+
+
+/************************************************
+ * TEST EMPLOYEE PROVISIONING
+ ************************************************/
+
+function testMAIRIXEmployeeProvisioning() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX EMPLOYEE PROVISIONING TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  /*
+   * IMPORTANT:
+   *
+   * Change warehouseCode if required
+   * to match a real warehouse in your system.
+   */
+
+  const result =
+    mairixCreateEmployeeIdentity({
+
+      employeeName:
+        "TEST EMPLOYEE",
+
+      email:
+        "test.employee@example.com",
+
+      phone:
+        "01000000000",
+
+      jobTitleCode:
+        "JOB-007",
+
+      password:
+        "123456",
+
+      confirmPassword:
+        "123456",
+
+      warehouseCodes:
+        []
+
+    });
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX EMPLOYEE PROVISIONING: PASSED"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  return result;
+
+}

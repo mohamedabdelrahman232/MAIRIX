@@ -1,0 +1,56 @@
+/************************************************
+ * MAIRIX ERP
+ * FILE: 59-MAIRIX_SaleRollbackRejectionAudit.gs
+ *
+ * Sale rollback / rejection-audit verification.
+ *
+ * Existing Sale rollback remains authoritative.
+ * This file does not implement a second rollback engine.
+ ************************************************/
+
+function testMairixSaleRollbackContract() {
+
+  if (typeof createSaleRollback !== "function") {
+    throw new Error("createSaleRollback() is missing.");
+  }
+
+  if (typeof mairixRuntimeRecordRejection !== "function") {
+    throw new Error("mairixRuntimeRecordRejection() is missing.");
+  }
+
+  if (typeof withMairixTransactionLock !== "function" &&
+      typeof withMairixTransactionLock_ !== "function") {
+    throw new Error("MAIRIX transaction lock is missing.");
+  }
+
+  Logger.log("SALE ROLLBACK CONTRACT: PASS");
+
+  return {
+    success: true,
+    rollback: "CONNECTED",
+    rejectionAudit: "CONNECTED",
+    transactionLock: "CONNECTED"
+  };
+}
+
+function testMairixSaleRejectionAuditContract() {
+
+  if (typeof mairixRuntimeRecordRejection !== "function") {
+    throw new Error("Rejection audit runtime is unavailable.");
+  }
+
+  Logger.log("SALE REJECTION AUDIT CONTRACT: PASS");
+
+  return {
+    success: true,
+    status: "READY"
+  };
+}
+
+function runMairixSaleRollbackAuditTests() {
+  return {
+    success: true,
+    rollback: testMairixSaleRollbackContract(),
+    rejectionAudit: testMairixSaleRejectionAuditContract()
+  };
+}

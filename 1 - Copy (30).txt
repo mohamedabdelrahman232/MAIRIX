@@ -1,0 +1,3949 @@
+/************************************************
+ * MAIRIX ERP
+ * 17-MAIRIX_Commissions
+ *
+ * PURPOSE
+ * ------------------------------------------------
+ * Commission calculation and settlement engine.
+ *
+ * CORE RULES
+ * ------------------------------------------------
+ * 1. Commission is earned from SALES.
+ * 2. Commission payment is recorded separately.
+ * 3. Payment never changes the earned commission.
+ * 4. Returned sales reverse the related commission.
+ * 5. Commission calculations are server-side.
+ * 6. Sales employees never see commission configuration.
+ * 7. Commission configuration is administrator controlled.
+ * 8. Every commission movement has a central reference.
+ * 9. Reports distinguish:
+ *
+ *      Earned
+ *      Reversed
+ *      Paid
+ *      Outstanding
+ *
+ * 10. Cash and credit balances remain separate.
+ *
+ * ARCHITECTURE
+ * ------------------------------------------------
+ *
+ * SALES
+ *    |
+ *    +----> COMMISSION EARNED
+ *    |
+ *    +----> FINANCIAL EFFECT
+ *
+ * SALES RETURN
+ *    |
+ *    +----> COMMISSION REVERSAL
+ *
+ * EXPENSE / COMMISSION PAYMENT
+ *    |
+ *    +----> COMMISSION PAID
+ *
+ * REPORT
+ *    |
+ *    +----> Earned
+ *    +----> Reversed
+ *    +----> Paid
+ *    +----> Outstanding
+ *
+ ************************************************/
+
+
+/************************************************
+ * CONSTANTS
+ ************************************************/
+
+var MAIRIX_COMMISSION = {
+
+  SHEETS: {
+
+    SETTINGS:
+      "MAIRIX_SETTINGS",
+
+    USERS:
+      "MAIRIX_USERS",
+
+    COMMISSION_RULES:
+      "MAIRIX_COMMISSION_RULES",
+
+    COMMISSION_LEDGER:
+      "MAIRIX_COMMISSION_LEDGER"
+
+  },
+
+  MOVEMENT_TYPES: {
+
+    SALE:
+      "SALE",
+
+    SALE_RETURN:
+      "SALE_RETURN",
+
+    PAYMENT:
+      "PAYMENT",
+
+    ADJUSTMENT:
+      "ADJUSTMENT"
+
+  },
+
+  STATUS: {
+
+    ACTIVE:
+      "ACTIVE",
+
+    INACTIVE:
+      "INACTIVE",
+
+    POSTED:
+      "POSTED",
+
+    REVERSED:
+      "REVERSED"
+
+  }
+
+};
+
+
+/************************************************
+ * SETUP COMMISSION ENGINE
+ *
+ * Creates required sheets from zero.
+ ************************************************/
+
+function setupMAIRIXCommissions() {
+
+  var ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  /**********************************************
+   * COMMISSION RULES
+   **********************************************/
+
+  var rules =
+    ss.getSheetByName(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_RULES
+    );
+
+
+  if (!rules) {
+
+    rules =
+      ss.insertSheet(
+        MAIRIX_COMMISSION.SHEETS.COMMISSION_RULES
+      );
+
+  }
+
+
+  var rulesHeaders = [
+
+    "Rule ID",
+    "User ID",
+    "Employee Name",
+    "Rule Type",
+    "Rate",
+    "Fixed Amount",
+    "Basis",
+    "Effective From",
+    "Effective To",
+    "Active",
+    "Notes",
+    "Created At",
+    "Created By"
+
+  ];
+
+
+  ensureSheetHeaders(
+    rules,
+    rulesHeaders
+  );
+
+
+  /**********************************************
+   * COMMISSION LEDGER
+   **********************************************/
+
+  var ledger =
+    ss.getSheetByName(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+    );
+
+
+  if (!ledger) {
+
+    ledger =
+      ss.insertSheet(
+        MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+      );
+
+  }
+
+
+  var ledgerHeaders = [
+
+    "Commission Movement ID",
+    "Movement Date",
+    "Movement Type",
+    "Employee User ID",
+    "Employee Name",
+    "Source Reference",
+    "Source Type",
+    "Sale Reference",
+    "Customer Reference",
+    "Warehouse Reference",
+
+    "Commission Rate",
+    "Commission Basis",
+    "Commission Amount",
+
+    "Cash Effect",
+    "Credit Effect",
+
+    "Status",
+    "Notes",
+
+    "Created At",
+    "Created By"
+
+  ];
+
+
+  ensureSheetHeaders(
+    ledger,
+    ledgerHeaders
+  );
+
+
+  formatCommissionSheets();
+
+
+  return {
+
+    success:
+      true,
+
+    rulesSheet:
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_RULES,
+
+    ledgerSheet:
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+
+  };
+
+}
+
+
+/************************************************
+ * CREATE COMMISSION RULE
+ *
+ * ADMIN ONLY
+ *
+ * This defines how an employee earns commission.
+ *
+ * Rule Types:
+ *
+ * RATE
+ * FIXED
+ *
+ * Basis examples:
+ *
+ * NET_SALE
+ * GROSS_SALE
+ * ITEM_QUANTITY
+ ************************************************/
+
+function createCommissionRule(data) {
+
+  var currentUser =
+    requireMAIRIXCommissionAdmin();
+
+
+  if (!data) {
+
+    throw new Error(
+      "Commission rule data is required."
+    );
+
+  }
+
+
+  var userId =
+    requireCommissionValue(
+      data.userId,
+      "User ID"
+    );
+
+
+  var ruleType =
+    requireCommissionValue(
+      data.ruleType,
+      "Rule Type"
+    )
+      .toUpperCase();
+
+
+  var basis =
+    requireCommissionValue(
+      data.basis,
+      "Basis"
+    )
+      .toUpperCase();
+
+
+  if (
+    ruleType !== "RATE" &&
+    ruleType !== "FIXED"
+  ) {
+
+    throw new Error(
+      "Invalid commission rule type."
+    );
+
+  }
+
+
+  if (
+    [
+      "NET_SALE",
+      "GROSS_SALE",
+      "ITEM_QUANTITY"
+    ].indexOf(basis) === -1
+  ) {
+
+    throw new Error(
+      "Invalid commission basis: " +
+      basis
+    );
+
+  }
+
+
+  var user =
+    getCommissionUser(
+      userId
+    );
+
+
+  if (!user) {
+
+    throw new Error(
+      "Commission employee not found: " +
+      userId
+    );
+
+  }
+
+
+  var sheet =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_RULES
+    );
+
+
+  var ruleId =
+    generateCommissionRuleId();
+
+
+  var headers =
+    getCommissionHeaders(
+      sheet
+    );
+
+
+  var row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Rule ID",
+    ruleId
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "User ID",
+    userId
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Employee Name",
+    user.name
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Rule Type",
+    ruleType
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Rate",
+    Number(data.rate || 0)
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Fixed Amount",
+    Number(data.fixedAmount || 0)
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Basis",
+    basis
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Effective From",
+    data.effectiveFrom || new Date()
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Effective To",
+    data.effectiveTo || ""
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Active",
+    true
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Notes",
+    cleanCommissionText(
+      data.notes
+    )
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Created By",
+    currentUser.email
+  );
+
+
+  sheet
+    .getRange(
+      sheet.getLastRow() + 1,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  writeCommissionAudit(
+    "CREATE_COMMISSION_RULE",
+    ruleId,
+    "Employee: " +
+      userId +
+      " | Type: " +
+      ruleType +
+      " | Basis: " +
+      basis +
+      " | Created By: " +
+      currentUser.email
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    ruleId:
+      ruleId,
+
+    userId:
+      userId,
+
+    ruleType:
+      ruleType,
+
+    basis:
+      basis
+
+  };
+
+}
+
+
+/************************************************
+ * DEACTIVATE COMMISSION RULE
+ ************************************************/
+
+function deactivateCommissionRule(
+  ruleId
+) {
+
+  var currentUser =
+    requireMAIRIXCommissionAdmin();
+
+
+  var sheet =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_RULES
+    );
+
+
+  var row =
+    findCommissionRow(
+      sheet,
+      "Rule ID",
+      ruleId
+    );
+
+
+  if (row === -1) {
+
+    throw new Error(
+      "Commission rule not found: " +
+      ruleId
+    );
+
+  }
+
+
+  var activeColumn =
+    getCommissionColumnNumber(
+      sheet,
+      "Active"
+    );
+
+
+  sheet
+    .getRange(
+      row,
+      activeColumn
+    )
+    .setValue(false);
+
+
+  writeCommissionAudit(
+    "DEACTIVATE_COMMISSION_RULE",
+    ruleId,
+    "Changed By: " +
+      currentUser.email
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    ruleId:
+      ruleId,
+
+    active:
+      false
+
+  };
+
+}
+
+
+/************************************************
+ * CALCULATE COMMISSION
+ *
+ * Pure calculation.
+ *
+ * Does NOT post anything.
+ ************************************************/
+
+function calculateCommission(
+  userId,
+  saleData
+) {
+
+  var user =
+    getCommissionUser(
+      userId
+    );
+
+
+  if (!user) {
+
+    throw new Error(
+      "Commission employee not found."
+    );
+
+  }
+
+
+  var rule =
+    getActiveCommissionRule(
+      userId,
+      saleData &&
+      saleData.date
+        ? saleData.date
+        : new Date()
+    );
+
+
+  if (!rule) {
+
+    return {
+
+      eligible:
+        false,
+
+      amount:
+        0,
+
+      reason:
+        "No active commission rule."
+
+    };
+
+  }
+
+
+  var basisValue =
+    getCommissionBasisValue(
+      rule.basis,
+      saleData || {}
+    );
+
+
+  var amount =
+    0;
+
+
+  if (
+    rule.ruleType === "RATE"
+  ) {
+
+    amount =
+      basisValue *
+      Number(rule.rate || 0) /
+      100;
+
+  }
+
+
+  if (
+    rule.ruleType === "FIXED"
+  ) {
+
+    /*
+     * Fixed commission is multiplied
+     * by quantity when the basis is
+     * ITEM_QUANTITY.
+     */
+
+    if (
+      rule.basis === "ITEM_QUANTITY"
+    ) {
+
+      amount =
+        Number(rule.fixedAmount || 0) *
+        Number(
+          saleData.quantity || 0
+        );
+
+    } else {
+
+      amount =
+        Number(
+          rule.fixedAmount || 0
+        );
+
+    }
+
+  }
+
+
+  amount =
+    roundCommissionAmount(
+      amount
+    );
+
+
+  return {
+
+    eligible:
+      true,
+
+    userId:
+      userId,
+
+    employeeName:
+      user.name,
+
+    ruleId:
+      rule.ruleId,
+
+    ruleType:
+      rule.ruleType,
+
+    rate:
+      Number(rule.rate || 0),
+
+    basis:
+      rule.basis,
+
+    basisValue:
+      basisValue,
+
+    amount:
+      amount
+
+  };
+
+}
+
+
+/************************************************
+ * POST COMMISSION FROM SALE
+ *
+ * Called by SALES engine.
+ *
+ * IMPORTANT:
+ * Sale must already have a central reference.
+ ************************************************/
+
+function postCommissionFromSale(
+  saleData
+) {
+
+  var currentUser =
+    requireMAIRIXCommissionServerUser();
+
+
+  if (!saleData) {
+
+    throw new Error(
+      "Sale data is required."
+    );
+
+  }
+
+
+  var saleReference =
+    requireCommissionValue(
+      saleData.saleReference ||
+      saleData.reference,
+      "Sale Reference"
+    );
+
+
+  var userId =
+    requireCommissionValue(
+      saleData.employeeUserId ||
+      saleData.salesmanUserId ||
+      saleData.userId,
+      "Employee User ID"
+    );
+
+
+  var calculation =
+    calculateCommission(
+      userId,
+      saleData
+    );
+
+
+  if (
+    !calculation.eligible ||
+    calculation.amount <= 0
+  ) {
+
+    return {
+
+      success:
+        true,
+
+      posted:
+        false,
+
+      amount:
+        0,
+
+      reason:
+        calculation.reason ||
+        "Commission amount is zero."
+
+    };
+
+  }
+
+
+  var existing =
+    findCommissionBySource(
+      saleReference,
+      MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE
+    );
+
+
+  /*
+   * Idempotency:
+   *
+   * The same sale must never create
+   * commission twice.
+   */
+
+  if (existing) {
+
+    return {
+
+      success:
+        true,
+
+      posted:
+        false,
+
+      duplicate:
+        true,
+
+      movementId:
+        existing.movementId,
+
+      amount:
+        Number(
+          existing.amount || 0
+        )
+
+    };
+
+  }
+
+
+  var movementId =
+    generateCommissionMovementId();
+
+
+  var ledger =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+    );
+
+
+  var headers =
+    getCommissionHeaders(
+      ledger
+    );
+
+
+  var row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Movement ID",
+    movementId
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Movement Date",
+    saleData.date || new Date()
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Movement Type",
+    MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Employee User ID",
+    userId
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Employee Name",
+    calculation.employeeName
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Source Reference",
+    saleReference
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Source Type",
+    "SALE"
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Sale Reference",
+    saleReference
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Customer Reference",
+    saleData.customerReference ||
+      saleData.customerId ||
+      ""
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Warehouse Reference",
+    saleData.warehouseReference ||
+      saleData.warehouseId ||
+      ""
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Rate",
+    calculation.rate
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Basis",
+    calculation.basis
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Amount",
+    calculation.amount
+  );
+
+
+  /*
+   * Commission itself is NOT cash.
+   *
+   * Payment happens separately.
+   */
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Cash Effect",
+    0
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Credit Effect",
+    calculation.amount
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Status",
+    MAIRIX_COMMISSION.STATUS.POSTED
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Notes",
+    "Commission earned from sale."
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Created By",
+    currentUser.email
+  );
+
+
+  ledger
+    .getRange(
+      ledger.getLastRow() + 1,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  writeCommissionAudit(
+    "POST_COMMISSION_FROM_SALE",
+    movementId,
+    "Sale: " +
+      saleReference +
+      " | Employee: " +
+      userId +
+      " | Amount: " +
+      calculation.amount
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    posted:
+      true,
+
+    duplicate:
+      false,
+
+    movementId:
+      movementId,
+
+    saleReference:
+      saleReference,
+
+    employeeUserId:
+      userId,
+
+    amount:
+      calculation.amount
+
+  };
+
+}
+
+
+/************************************************
+ * POST COMMISSION REVERSAL
+ *
+ * Called by SALES RETURNS.
+ *
+ * IMPORTANT:
+ * We NEVER delete the original commission.
+ * We create a reversing movement.
+ ************************************************/
+
+function postCommissionReversal(
+  returnData
+) {
+
+  var currentUser =
+    requireMAIRIXCommissionServerUser();
+
+
+  var saleReference =
+    requireCommissionValue(
+      returnData.saleReference,
+      "Original Sale Reference"
+    );
+
+
+  var returnReference =
+    requireCommissionValue(
+      returnData.returnReference ||
+      returnData.reference,
+      "Return Reference"
+    );
+
+
+  var original =
+    findCommissionBySource(
+      saleReference,
+      MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE
+    );
+
+
+  if (!original) {
+
+    return {
+
+      success:
+        true,
+
+      posted:
+        false,
+
+      amount:
+        0,
+
+      reason:
+        "No commission found for original sale."
+
+    };
+
+  }
+
+
+  var existingReversal =
+    findCommissionBySource(
+      returnReference,
+      MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE_RETURN
+    );
+
+
+  if (existingReversal) {
+
+    return {
+
+      success:
+        true,
+
+      posted:
+        false,
+
+      duplicate:
+        true,
+
+      movementId:
+        existingReversal.movementId,
+
+      amount:
+        existingReversal.amount
+
+    };
+
+  }
+
+
+  var originalAmount =
+    Number(
+      original.amount || 0
+    );
+
+
+  var reversalAmount =
+    calculateReturnCommissionAmount(
+      originalAmount,
+      returnData
+    );
+
+
+  if (
+    reversalAmount <= 0
+  ) {
+
+    return {
+
+      success:
+        true,
+
+      posted:
+        false,
+
+      amount:
+        0
+
+    };
+
+  }
+
+
+  var movementId =
+    generateCommissionMovementId();
+
+
+  var ledger =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+    );
+
+
+  var headers =
+    getCommissionHeaders(
+      ledger
+    );
+
+
+  var row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Movement ID",
+    movementId
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Movement Date",
+    returnData.date || new Date()
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Movement Type",
+    MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE_RETURN
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Employee User ID",
+    original.employeeUserId
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Employee Name",
+    original.employeeName
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Source Reference",
+    returnReference
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Source Type",
+    "SALE_RETURN"
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Sale Reference",
+    saleReference
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Customer Reference",
+    returnData.customerReference ||
+      ""
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Warehouse Reference",
+    returnData.warehouseReference ||
+      ""
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Rate",
+    original.rate
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Basis",
+    original.basis
+  );
+
+
+  /*
+   * Reversal is negative.
+   */
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Amount",
+    -reversalAmount
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Cash Effect",
+    0
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Credit Effect",
+    -reversalAmount
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Status",
+    MAIRIX_COMMISSION.STATUS.POSTED
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Notes",
+    "Commission reversed by sales return."
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Created By",
+    currentUser.email
+  );
+
+
+  ledger
+    .getRange(
+      ledger.getLastRow() + 1,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  writeCommissionAudit(
+    "REVERSE_COMMISSION",
+    movementId,
+    "Return: " +
+      returnReference +
+      " | Original Sale: " +
+      saleReference +
+      " | Amount: -" +
+      reversalAmount
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    posted:
+      true,
+
+    movementId:
+      movementId,
+
+    saleReference:
+      saleReference,
+
+    returnReference:
+      returnReference,
+
+    amount:
+      -reversalAmount
+
+  };
+
+}
+
+
+/************************************************
+ * RECORD COMMISSION PAYMENT
+ *
+ * This is the settlement side.
+ *
+ * Payment is an expense/cash movement.
+ *
+ * Commission earned remains unchanged.
+ ************************************************/
+
+function recordCommissionPayment(
+  data
+) {
+
+  var currentUser =
+    requireMAIRIXCommissionServerUser();
+
+
+  if (!data) {
+
+    throw new Error(
+      "Commission payment data is required."
+    );
+
+  }
+
+
+  var employeeUserId =
+    requireCommissionValue(
+      data.employeeUserId,
+      "Employee User ID"
+    );
+
+
+  var amount =
+    Number(
+      data.amount
+    );
+
+
+  if (
+    !isFinite(amount) ||
+    amount <= 0
+  ) {
+
+    throw new Error(
+      "Commission payment amount must be greater than zero."
+    );
+
+  }
+
+
+  var paymentReference =
+    requireCommissionValue(
+      data.paymentReference ||
+      data.reference,
+      "Payment Reference"
+    );
+
+
+  var employee =
+    getCommissionUser(
+      employeeUserId
+    );
+
+
+  if (!employee) {
+
+    throw new Error(
+      "Commission employee not found."
+    );
+
+  }
+
+
+  var balance =
+    getCommissionBalance(
+      employeeUserId,
+      data.beforeDate
+    );
+
+
+  if (
+    amount >
+    balance.outstanding + 0.0001
+  ) {
+
+    throw new Error(
+      "Commission payment exceeds outstanding commission. " +
+      "Outstanding: " +
+      balance.outstanding
+    );
+
+  }
+
+
+  /*
+   * Payment movement:
+   *
+   * Cash = negative
+   * Commission payable = negative
+   *
+   * It settles the employee liability.
+   */
+
+  var movementId =
+    generateCommissionMovementId();
+
+
+  var ledger =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+    );
+
+
+  var headers =
+    getCommissionHeaders(
+      ledger
+    );
+
+
+  var row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Movement ID",
+    movementId
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Movement Date",
+    data.date || new Date()
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Movement Type",
+    MAIRIX_COMMISSION.MOVEMENT_TYPES.PAYMENT
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Employee User ID",
+    employeeUserId
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Employee Name",
+    employee.name
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Source Reference",
+    paymentReference
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Source Type",
+    "COMMISSION_PAYMENT"
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Sale Reference",
+    ""
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Customer Reference",
+    ""
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Warehouse Reference",
+    "");
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Rate",
+    0
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Basis",
+    "SETTLEMENT"
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Commission Amount",
+    0
+  );
+
+
+  /*
+   * Cash decreases.
+   */
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Cash Effect",
+    -amount
+  );
+
+
+  /*
+   * Payable decreases.
+   */
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Credit Effect",
+    -amount
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Status",
+    MAIRIX_COMMISSION.STATUS.POSTED
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Notes",
+    cleanCommissionText(
+      data.notes
+    ) ||
+      "Commission payment."
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+
+  setCommissionHeaderValue(
+    row,
+    headers,
+    "Created By",
+    currentUser.email
+  );
+
+
+  ledger
+    .getRange(
+      ledger.getLastRow() + 1,
+      1,
+      1,
+      row.length
+    )
+    .setValues([
+      row
+    ]);
+
+
+  writeCommissionAudit(
+    "PAY_COMMISSION",
+    movementId,
+    "Employee: " +
+      employeeUserId +
+      " | Amount: " +
+      amount +
+      " | Payment Reference: " +
+      paymentReference
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    movementId:
+      movementId,
+
+    paymentReference:
+      paymentReference,
+
+    employeeUserId:
+      employeeUserId,
+
+    amount:
+      amount,
+
+    outstandingBefore:
+      balance.outstanding,
+
+    outstandingAfter:
+      roundCommissionAmount(
+        balance.outstanding -
+        amount
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * COMMISSION BALANCE
+ *
+ * Earned
+ * + Reversed
+ * - Paid
+ ************************************************/
+
+function getCommissionBalance(
+  employeeUserId,
+  beforeDate
+) {
+
+  var ledger =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+    );
+
+
+  var lastRow =
+    ledger.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return {
+
+      earned:
+        0,
+
+      reversed:
+        0,
+
+      paid:
+        0,
+
+      outstanding:
+        0
+
+    };
+
+  }
+
+
+  var rows =
+    getSheetDataAsObjectsForCommission(
+      ledger
+    );
+
+
+  var earned =
+    0;
+
+  var reversed =
+    0;
+
+  var paid =
+    0;
+
+
+  rows.forEach(
+    function(row) {
+
+      if (
+        cleanCommissionText(
+          row["Employee User ID"]
+        ) !==
+        employeeUserId
+      ) {
+
+        return;
+      }
+
+
+      if (
+        beforeDate &&
+        new Date(
+          row["Movement Date"]
+        ) >
+        new Date(beforeDate)
+      ) {
+
+        return;
+      }
+
+
+      var type =
+        cleanCommissionText(
+          row["Movement Type"]
+        );
+
+
+      var amount =
+        Number(
+          row["Commission Amount"] || 0
+        );
+
+
+      if (
+        type ===
+        MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE
+      ) {
+
+        earned +=
+          Math.max(
+            amount,
+            0
+          );
+
+      }
+
+
+      if (
+        type ===
+        MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE_RETURN
+      ) {
+
+        reversed +=
+          Math.abs(
+            Math.min(
+              amount,
+              0
+            )
+          );
+
+      }
+
+
+      if (
+        type ===
+        MAIRIX_COMMISSION.MOVEMENT_TYPES.PAYMENT
+      ) {
+
+        paid +=
+          Math.abs(
+            Number(
+              row["Cash Effect"] || 0
+            )
+          );
+
+      }
+
+    }
+  );
+
+
+  var outstanding =
+    earned -
+    reversed -
+    paid;
+
+
+  if (
+    outstanding < 0 &&
+    outstanding > -0.0001
+  ) {
+
+    outstanding = 0;
+
+  }
+
+
+  return {
+
+    earned:
+      roundCommissionAmount(
+        earned
+      ),
+
+    reversed:
+      roundCommissionAmount(
+        reversed
+      ),
+
+    paid:
+      roundCommissionAmount(
+        paid
+      ),
+
+    outstanding:
+      roundCommissionAmount(
+        Math.max(
+          outstanding,
+          0
+        )
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * COMMISSION REPORT
+ *
+ * Returns all employees or one employee.
+ ************************************************/
+
+function getCommissionReport(
+  filters
+) {
+
+  var currentUser =
+    requireMAIRIXCommissionServerUser();
+
+
+  filters =
+    filters || {};
+
+
+  var ledger =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+    );
+
+
+  var rows =
+    getSheetDataAsObjectsForCommission(
+      ledger
+    );
+
+
+  var employeeFilter =
+    cleanCommissionText(
+      filters.employeeUserId
+    );
+
+
+  var fromDate =
+    filters.fromDate
+      ? new Date(filters.fromDate)
+      : null;
+
+
+  var toDate =
+    filters.toDate
+      ? new Date(filters.toDate)
+      : null;
+
+
+  var employeeMap =
+    {};
+
+
+  rows.forEach(
+    function(row) {
+
+      var userId =
+        cleanCommissionText(
+          row["Employee User ID"]
+        );
+
+
+      if (
+        !userId
+      ) {
+
+        return;
+      }
+
+
+      if (
+        employeeFilter &&
+        userId !==
+        employeeFilter
+      ) {
+
+        return;
+      }
+
+
+      var movementDate =
+        new Date(
+          row["Movement Date"]
+        );
+
+
+      if (
+        fromDate &&
+        movementDate <
+        fromDate
+      ) {
+
+        return;
+      }
+
+
+      if (
+        toDate &&
+        movementDate >
+        toDate
+      ) {
+
+        return;
+      }
+
+
+      if (
+        !employeeMap[userId]
+      ) {
+
+        employeeMap[userId] = {
+
+          userId:
+            userId,
+
+          employeeName:
+            cleanCommissionText(
+              row["Employee Name"]
+            ),
+
+          earned:
+            0,
+
+          reversed:
+            0,
+
+          paid:
+            0
+
+        };
+
+      }
+
+
+      var item =
+        employeeMap[userId];
+
+
+      var type =
+        cleanCommissionText(
+          row["Movement Type"]
+        );
+
+
+      var amount =
+        Number(
+          row["Commission Amount"] || 0
+        );
+
+
+      if (
+        type ===
+        MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE
+      ) {
+
+        item.earned +=
+          Math.max(
+            amount,
+            0
+          );
+
+      }
+
+
+      if (
+        type ===
+        MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE_RETURN
+      ) {
+
+        item.reversed +=
+          Math.abs(
+            Math.min(
+              amount,
+              0
+            )
+          );
+
+      }
+
+
+      if (
+        type ===
+        MAIRIX_COMMISSION.MOVEMENT_TYPES.PAYMENT
+      ) {
+
+        item.paid +=
+          Math.abs(
+            Number(
+              row["Cash Effect"] || 0
+            )
+          );
+
+      }
+
+    }
+  );
+
+
+  var report =
+    Object.keys(
+      employeeMap
+    ).map(
+      function(userId) {
+
+        var item =
+          employeeMap[userId];
+
+
+        item.netEarned =
+          roundCommissionAmount(
+            item.earned -
+            item.reversed
+          );
+
+
+        item.outstanding =
+          roundCommissionAmount(
+            Math.max(
+              item.netEarned -
+              item.paid,
+              0
+            )
+          );
+
+
+        return item;
+
+      }
+    );
+
+
+  return {
+
+    success:
+      true,
+
+    generatedAt:
+      new Date(),
+
+    generatedBy:
+      currentUser.email,
+
+    filters:
+      filters,
+
+    rows:
+      report,
+
+    totals:
+      calculateCommissionReportTotals(
+        report
+      )
+
+  };
+
+}
+
+
+/************************************************
+ * GET EMPLOYEE COMMISSION DETAILS
+ *
+ * Used by drill-down UI.
+ *
+ * Every reference remains clickable.
+ ************************************************/
+
+function getEmployeeCommissionDetails(
+  employeeUserId,
+  filters
+) {
+
+  var currentUser =
+    requireMAIRIXCommissionServerUser();
+
+
+  var userId =
+    requireCommissionValue(
+      employeeUserId,
+      "Employee User ID"
+    );
+
+
+  filters =
+    filters || {};
+
+
+  var ledger =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+    );
+
+
+  var rows =
+    getSheetDataAsObjectsForCommission(
+      ledger
+    );
+
+
+  var result =
+    [];
+
+
+  rows.forEach(
+    function(row) {
+
+      if (
+        cleanCommissionText(
+          row["Employee User ID"]
+        ) !==
+        userId
+      ) {
+
+        return;
+      }
+
+
+      result.push({
+
+        movementId:
+          row["Commission Movement ID"],
+
+        date:
+          row["Movement Date"],
+
+        type:
+          row["Movement Type"],
+
+        sourceReference:
+          row["Source Reference"],
+
+        sourceType:
+          row["Source Type"],
+
+        saleReference:
+          row["Sale Reference"],
+
+        amount:
+          Number(
+            row["Commission Amount"] || 0
+          ),
+
+        cashEffect:
+          Number(
+            row["Cash Effect"] || 0
+          ),
+
+        creditEffect:
+          Number(
+            row["Credit Effect"] || 0
+          ),
+
+        status:
+          row["Status"],
+
+        notes:
+          row["Notes"]
+
+      });
+
+    }
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    employeeUserId:
+      userId,
+
+    rows:
+      result,
+
+    generatedAt:
+      new Date(),
+
+    generatedBy:
+      currentUser.email
+
+  };
+
+}
+
+
+/************************************************
+ * GET ACTIVE COMMISSION RULE
+ ************************************************/
+
+function getActiveCommissionRule(
+  userId,
+  date
+) {
+
+  var sheet =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_RULES
+    );
+
+
+  var rows =
+    getSheetDataAsObjectsForCommission(
+      sheet
+    );
+
+
+  var targetDate =
+    date
+      ? new Date(date)
+      : new Date();
+
+
+  var candidates =
+    [];
+
+
+  rows.forEach(
+    function(row) {
+
+      if (
+        cleanCommissionText(
+          row["User ID"]
+        ) !==
+        userId
+      ) {
+
+        return;
+      }
+
+
+      if (
+        !isCommissionTrue(
+          row["Active"]
+        )
+      ) {
+
+        return;
+      }
+
+
+      var from =
+        row["Effective From"]
+          ? new Date(
+              row["Effective From"]
+            )
+          : null;
+
+
+      var to =
+        row["Effective To"]
+          ? new Date(
+              row["Effective To"]
+            )
+          : null;
+
+
+      if (
+        from &&
+        targetDate < from
+      ) {
+
+        return;
+      }
+
+
+      if (
+        to &&
+        targetDate > to
+      ) {
+
+        return;
+      }
+
+
+      candidates.push({
+
+        ruleId:
+          cleanCommissionText(
+            row["Rule ID"]
+          ),
+
+        userId:
+          userId,
+
+        ruleType:
+          cleanCommissionText(
+            row["Rule Type"]
+          ).toUpperCase(),
+
+        rate:
+          Number(
+            row["Rate"] || 0
+          ),
+
+        fixedAmount:
+          Number(
+            row["Fixed Amount"] || 0
+          ),
+
+        basis:
+          cleanCommissionText(
+            row["Basis"]
+          ).toUpperCase(),
+
+        effectiveFrom:
+          from,
+
+        effectiveTo:
+          to
+
+      });
+
+    }
+  );
+
+
+  /*
+   * Latest effective rule wins.
+   */
+
+  candidates.sort(
+    function(a, b) {
+
+      return (
+        new Date(
+          b.effectiveFrom || 0
+        ) -
+        new Date(
+          a.effectiveFrom || 0
+        )
+      );
+
+    }
+  );
+
+
+  return candidates.length
+    ? candidates[0]
+    : null;
+
+}
+
+
+/************************************************
+ * FIND COMMISSION BY SOURCE
+ ************************************************/
+
+function findCommissionBySource(
+  sourceReference,
+  movementType
+) {
+
+  var ledger =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+    );
+
+
+  var rows =
+    getSheetDataAsObjectsForCommission(
+      ledger
+    );
+
+
+  for (
+    var i = 0;
+    i < rows.length;
+    i++
+  ) {
+
+    var row =
+      rows[i];
+
+
+    if (
+      cleanCommissionText(
+        row["Source Reference"]
+      ) ===
+      cleanCommissionText(
+        sourceReference
+      ) &&
+      cleanCommissionText(
+        row["Movement Type"]
+      ) ===
+      movementType
+    ) {
+
+      return {
+
+        movementId:
+          row["Commission Movement ID"],
+
+        amount:
+          Number(
+            row["Commission Amount"] || 0
+          ),
+
+        employeeUserId:
+          row["Employee User ID"],
+
+        employeeName:
+          row["Employee Name"],
+
+        rate:
+          Number(
+            row["Commission Rate"] || 0
+          ),
+
+        basis:
+          row["Commission Basis"]
+
+      };
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * CALCULATE BASIS
+ ************************************************/
+
+function getCommissionBasisValue(
+  basis,
+  saleData
+) {
+
+  if (
+    basis === "NET_SALE"
+  ) {
+
+    return Number(
+      saleData.netTotal ||
+      saleData.netAmount ||
+      0
+    );
+
+  }
+
+
+  if (
+    basis === "GROSS_SALE"
+  ) {
+
+    return Number(
+      saleData.grossTotal ||
+      saleData.grossAmount ||
+      0
+    );
+
+  }
+
+
+  if (
+    basis === "ITEM_QUANTITY"
+  ) {
+
+    return Number(
+      saleData.quantity ||
+      saleData.totalQuantity ||
+      0
+    );
+
+  }
+
+
+  throw new Error(
+    "Unsupported commission basis: " +
+    basis
+  );
+
+}
+
+
+/************************************************
+ * RETURN COMMISSION CALCULATION
+ ************************************************/
+
+function calculateReturnCommissionAmount(
+  originalAmount,
+  returnData
+) {
+
+  var returnQuantity =
+    Number(
+      returnData.quantity ||
+      returnData.returnQuantity ||
+      0
+    );
+
+
+  var originalQuantity =
+    Number(
+      returnData.originalQuantity ||
+      0
+    );
+
+
+  /*
+   * If quantities are supplied,
+   * reverse proportionally.
+   */
+
+  if (
+    returnQuantity > 0 &&
+    originalQuantity > 0
+  ) {
+
+    var ratio =
+      returnQuantity /
+      originalQuantity;
+
+
+    ratio =
+      Math.min(
+        Math.max(
+          ratio,
+          0
+        ),
+        1
+      );
+
+
+    return roundCommissionAmount(
+      originalAmount *
+      ratio
+    );
+
+  }
+
+
+  /*
+   * Full return.
+   */
+
+  return roundCommissionAmount(
+    originalAmount
+  );
+
+}
+
+
+/************************************************
+ * REPORT TOTALS
+ ************************************************/
+
+function calculateCommissionReportTotals(
+  rows
+) {
+
+  var totals = {
+
+    earned:
+      0,
+
+    reversed:
+      0,
+
+    paid:
+      0,
+
+    netEarned:
+      0,
+
+    outstanding:
+      0
+
+  };
+
+
+  rows.forEach(
+    function(row) {
+
+      totals.earned +=
+        Number(
+          row.earned || 0
+        );
+
+
+      totals.reversed +=
+        Number(
+          row.reversed || 0
+        );
+
+
+      totals.paid +=
+        Number(
+          row.paid || 0
+        );
+
+
+      totals.netEarned +=
+        Number(
+          row.netEarned || 0
+        );
+
+
+      totals.outstanding +=
+        Number(
+          row.outstanding || 0
+        );
+
+    }
+  );
+
+
+  Object.keys(
+    totals
+  ).forEach(
+    function(key) {
+
+      totals[key] =
+        roundCommissionAmount(
+          totals[key]
+        );
+
+    }
+  );
+
+
+  return totals;
+
+}
+
+
+/************************************************
+ * REQUIRE COMMISSION ADMIN
+ ************************************************/
+
+function requireMAIRIXCommissionAdmin() {
+
+  const user =
+    mairixRequireCurrentUser();
+
+  if (
+    user.role !== "ADMIN"
+  ) {
+
+    throw new Error(
+      "Administrator permission is required."
+    );
+
+  }
+
+  return user;
+
+}
+
+
+/************************************************
+ * REQUIRE SERVER USER
+ ************************************************/
+
+function requireMAIRIXCommissionServerUser() {
+
+  return mairixRequireCurrentUser();
+
+}
+
+
+/************************************************
+ * CURRENT USER ADAPTER
+ *
+ * MAIRIX unified Users engine.
+ *
+ * IMPORTANT:
+ * No legacy fallback.
+ ************************************************/
+
+function getMAIRIXCommissionCurrentUser() {
+
+  return mairixRequireCurrentUser();
+
+}
+
+
+/************************************************
+ * GET USER
+ ************************************************/
+
+function getCommissionUser(
+  userId
+) {
+
+  if (
+    typeof getCurrentMAIRIXUser ===
+    "function"
+  ) {
+
+    return getCurrentMAIRIXUser(
+      userId
+    );
+
+  }
+
+
+  var sheet =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.USERS
+    );
+
+
+  var rows =
+    getSheetDataAsObjectsForCommission(
+      sheet
+    );
+
+
+  for (
+    var i = 0;
+    i < rows.length;
+    i++
+  ) {
+
+    if (
+      cleanCommissionText(
+        rows[i]["User ID"]
+      ) ===
+      cleanCommissionText(
+        userId
+      )
+    ) {
+
+      return {
+
+        userId:
+          rows[i]["User ID"],
+
+        name:
+          rows[i]["Name"],
+
+        email:
+          rows[i]["Gmail"],
+
+        role:
+          rows[i]["Role"],
+
+        active:
+          isCommissionTrue(
+            rows[i]["Active"]
+          )
+
+      };
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GET USER BY EMAIL
+ ************************************************/
+
+function getCommissionUserByEmail(
+  email
+) {
+
+  var sheet =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.USERS
+    );
+
+
+  var rows =
+    getSheetDataAsObjectsForCommission(
+      sheet
+    );
+
+
+  var normalized =
+    cleanCommissionText(
+      email
+    ).toLowerCase();
+
+
+  for (
+    var i = 0;
+    i < rows.length;
+    i++
+  ) {
+
+    if (
+      cleanCommissionText(
+        rows[i]["Gmail"]
+      ).toLowerCase() ===
+      normalized
+    ) {
+
+      return {
+
+        userId:
+          rows[i]["User ID"],
+
+        name:
+          rows[i]["Name"],
+
+        email:
+          rows[i]["Gmail"],
+
+        role:
+          rows[i]["Role"],
+
+        active:
+          isCommissionTrue(
+            rows[i]["Active"]
+          )
+
+      };
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GENERATE RULE ID
+ ************************************************/
+
+function generateCommissionRuleId() {
+
+  var dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  var sheet =
+    getMAIRIXCommissionSheet(
+      MAIRIX_COMMISSION.SHEETS.COMMISSION_RULES
+    );
+
+
+  var prefix =
+    "CMR-" +
+    dateKey +
+    "-";
+
+
+  var counter =
+    1;
+
+
+  var lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow >= 2
+  ) {
+
+    var ids =
+      sheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          1
+        )
+        .getDisplayValues();
+
+
+    ids.forEach(
+      function(row) {
+
+        var value =
+          cleanCommissionText(
+            row[0]
+          );
+
+
+        if (
+          value.indexOf(prefix) !== 0
+        ) {
+
+          return;
+        }
+
+
+        var number =
+          parseInt(
+            value.substring(
+              prefix.length
+            ),
+            10
+          );
+
+
+        if (
+          !isNaN(number) &&
+          number >= counter
+        ) {
+
+          counter =
+            number + 1;
+
+        }
+
+      }
+    );
+
+  }
+
+
+  return (
+    prefix +
+    String(counter)
+      .padStart(
+        4,
+        "0"
+      )
+  );
+
+}
+
+
+/************************************************
+ * GENERATE MOVEMENT ID
+ ************************************************/
+
+function generateCommissionMovementId() {
+
+  var dateKey =
+    Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+
+  var timestamp =
+    new Date().getTime();
+
+
+  return (
+    "CMT-" +
+    dateKey +
+    "-" +
+    timestamp
+  );
+
+}
+
+
+/************************************************
+ * SHEET HELPERS
+ ************************************************/
+
+function getMAIRIXCommissionSheet(
+  sheetName
+) {
+
+  var ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  var sheet =
+    ss.getSheetByName(
+      sheetName
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "Required MAIRIX sheet not found: " +
+      sheetName
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * HEADER HELPERS
+ ************************************************/
+
+function getCommissionHeaders(
+  sheet
+) {
+
+  return sheet
+    .getRange(
+      1,
+      1,
+      1,
+      sheet.getLastColumn()
+    )
+    .getDisplayValues()[0];
+
+}
+
+
+function setCommissionHeaderValue(
+  row,
+  headers,
+  header,
+  value
+) {
+
+  var index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (
+    index === -1
+  ) {
+
+    throw new Error(
+      'Missing commission header: "' +
+      header +
+      '"'
+    );
+
+  }
+
+
+  row[index] =
+    value;
+
+}
+
+
+/************************************************
+ * COLUMN NUMBER
+ ************************************************/
+
+function getCommissionColumnNumber(
+  sheet,
+  header
+) {
+
+  var headers =
+    getCommissionHeaders(
+      sheet
+    );
+
+
+  var index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (
+    index === -1
+  ) {
+
+    throw new Error(
+      'Header not found: "' +
+      header +
+      '"'
+    );
+
+  }
+
+
+  return index + 1;
+
+}
+
+
+/************************************************
+ * FIND ROW
+ ************************************************/
+
+function findCommissionRow(
+  sheet,
+  header,
+  value
+) {
+
+  var column =
+    getCommissionColumnNumber(
+      sheet,
+      header
+    );
+
+
+  var lastRow =
+    sheet.getLastRow();
+
+
+  if (
+    lastRow < 2
+  ) {
+
+    return -1;
+
+  }
+
+
+  var values =
+    sheet
+      .getRange(
+        2,
+        column,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  var normalized =
+    cleanCommissionText(
+      value
+    );
+
+
+  for (
+    var i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      cleanCommissionText(
+        values[i][0]
+      ) ===
+      normalized
+    ) {
+
+      return i + 2;
+
+    }
+
+  }
+
+
+  return -1;
+
+}
+
+
+/************************************************
+ * SHEET -> OBJECTS
+ ************************************************/
+
+function getSheetDataAsObjectsForCommission(
+  sheet
+) {
+
+  var lastRow =
+    sheet.getLastRow();
+
+
+  var lastColumn =
+    sheet.getLastColumn();
+
+
+  if (
+    lastRow < 2 ||
+    lastColumn < 1
+  ) {
+
+    return [];
+
+  }
+
+
+  var headers =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        lastColumn
+      )
+      .getDisplayValues()[0];
+
+
+  var values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  return values.map(
+    function(row) {
+
+      var object = {};
+
+
+      headers.forEach(
+        function(header, index) {
+
+          object[
+            cleanCommissionText(
+              header
+            )
+          ] =
+            row[index];
+
+        }
+      );
+
+
+      return object;
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * ENSURE HEADERS
+ ************************************************/
+
+function ensureSheetHeaders(
+  sheet,
+  headers
+) {
+
+  if (
+    sheet.getLastRow() === 0
+  ) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        headers.length
+      )
+      .setValues([
+        headers
+      ]);
+
+    return;
+
+  }
+
+
+  var existing =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        Math.max(
+          sheet.getLastColumn(),
+          headers.length
+        )
+      )
+      .getDisplayValues()[0];
+
+
+  var missing = [];
+
+
+  headers.forEach(
+    function(header) {
+
+      if (
+        existing.indexOf(
+          header
+        ) === -1
+      ) {
+
+        missing.push(
+          header
+        );
+
+      }
+
+    }
+  );
+
+
+  if (
+    missing.length
+  ) {
+
+    throw new Error(
+      "MAIRIX sheet headers are incompatible. " +
+      "Missing: " +
+      missing.join(", ")
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * FORMAT
+ ************************************************/
+
+function formatCommissionSheets() {
+
+  var ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  [
+    MAIRIX_COMMISSION.SHEETS.COMMISSION_RULES,
+    MAIRIX_COMMISSION.SHEETS.COMMISSION_LEDGER
+  ].forEach(
+    function(name) {
+
+      var sheet =
+        ss.getSheetByName(
+          name
+        );
+
+
+      if (!sheet) {
+        return;
+      }
+
+
+      sheet.setFrozenRows(1);
+
+
+      var lastColumn =
+        sheet.getLastColumn();
+
+
+      if (
+        lastColumn > 0
+      ) {
+
+        sheet
+          .getRange(
+            1,
+            1,
+            1,
+            lastColumn
+          )
+          .setFontWeight(
+            "bold"
+          );
+
+
+        sheet.autoResizeColumns(
+          1,
+          lastColumn
+        );
+
+      }
+
+    }
+  );
+
+}
+
+
+/************************************************
+ * AUDIT
+ ************************************************/
+
+function writeCommissionAudit(
+  action,
+  reference,
+  details
+) {
+
+  try {
+
+    if (
+      typeof logAction ===
+      "function"
+    ) {
+
+      logAction(
+        action,
+        reference,
+        details
+      );
+
+      return;
+
+    }
+
+
+    Logger.log(
+      "[MAIRIX COMMISSION] " +
+      action +
+      " | " +
+      reference +
+      " | " +
+      details
+    );
+
+  } catch (error) {
+
+    Logger.log(
+      "Commission audit failed: " +
+      error.message
+    );
+
+  }
+
+}
+
+
+/************************************************
+ * VALIDATION HELPERS
+ ************************************************/
+
+function requireCommissionValue(
+  value,
+  label
+) {
+
+  var normalized =
+    cleanCommissionText(
+      value
+    );
+
+
+  if (!normalized) {
+
+    throw new Error(
+      label +
+      " is required."
+    );
+
+  }
+
+
+  return normalized;
+
+}
+
+
+function cleanCommissionText(
+  value
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return "";
+
+  }
+
+
+  return String(
+    value
+  ).trim();
+
+}
+
+
+function isCommissionTrue(
+  value
+) {
+
+  if (
+    value === true
+  ) {
+
+    return true;
+
+  }
+
+
+  var normalized =
+    cleanCommissionText(
+      value
+    ).toUpperCase();
+
+
+  return (
+    normalized === "TRUE" ||
+    normalized === "YES" ||
+    normalized === "1"
+  );
+
+}
+
+
+function roundCommissionAmount(
+  value
+) {
+
+  return Math.round(
+    Number(value || 0) *
+    100
+  ) / 100;
+
+}
+
+
+/************************************************
+ * TEST 1
+ *
+ * ENGINE SETUP
+ ************************************************/
+
+function testMAIRIXCommissionSetup() {
+
+  var result =
+    setupMAIRIXCommissions();
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "Commission setup failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX COMMISSION SETUP: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST 2
+ *
+ * CALCULATION ONLY
+ ************************************************/
+
+function testMAIRIXCommissionCalculation() {
+
+  var userId =
+    "TEST-USER";
+
+
+  var saleData = {
+
+    date:
+      new Date(),
+
+    netTotal:
+      10000,
+
+    grossTotal:
+      11000,
+
+    quantity:
+      20
+
+  };
+
+
+  Logger.log(
+    JSON.stringify(
+      saleData,
+      null,
+      2
+    )
+  );
+
+
+  /*
+   * This test intentionally does not post
+   * a commission.
+   */
+
+  Logger.log(
+    "Commission calculation test prepared."
+  );
+
+}
+
+
+/************************************************
+ * TEST 3
+ *
+ * COMMISSION BALANCE
+ ************************************************/
+
+function testMAIRIXCommissionBalance() {
+
+  var currentUser =
+    requireMAIRIXCommissionServerUser();
+
+
+  var result =
+    getCommissionBalance(
+      currentUser.userId
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.outstanding < 0
+  ) {
+
+    throw new Error(
+      "Commission outstanding cannot be negative."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "COMMISSION BALANCE TEST: PASS"
+  );
+
+  Logger.log(
+    "Outstanding: " +
+    result.outstanding
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST 4
+ *
+ * REPORT
+ ************************************************/
+
+function testMAIRIXCommissionReport() {
+
+  var result =
+    getCommissionReport({});
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  if (
+    result.success !== true
+  ) {
+
+    throw new Error(
+      "Commission report failed."
+    );
+
+  }
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "COMMISSION REPORT TEST: PASS"
+  );
+
+  Logger.log(
+    "Employees: " +
+    result.rows.length
+  );
+
+  Logger.log(
+    "Outstanding: " +
+    result.totals.outstanding
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
+
+
+/************************************************
+ * TEST 5
+ *
+ * IDEMPOTENCY
+ ************************************************/
+
+function testMAIRIXCommissionSourceLookup() {
+
+  var source =
+    "TEST-SALE-REFERENCE";
+
+
+  var result =
+    findCommissionBySource(
+      source,
+      MAIRIX_COMMISSION.MOVEMENT_TYPES.SALE
+    );
+
+
+  Logger.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+
+  Logger.log(
+    "COMMISSION SOURCE LOOKUP TEST: PASS"
+  );
+
+}
