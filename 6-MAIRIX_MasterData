@@ -1,0 +1,2290 @@
+/************************************************
+ * MAIRIX ERP
+ * MASTER DATA CORE
+ *
+ * FILE:
+ * 6-MAIRIX_MasterData.gs
+ *
+ * PURPOSE:
+ * Central master-data engine for MAIRIX.
+ *
+ * MASTER DATA:
+ * 1. Items
+ * 2. Customers
+ * 3. Vendors
+ * 4. Employees
+ * 5. Warehouses
+ * 6. Tax Types
+ * 7. Financial Accounts
+ *
+ * IMPORTANT:
+ * This file DOES NOT create transactions.
+ * This file DOES NOT update inventory balances.
+ * This file DOES NOT calculate financial statements.
+ *
+ * It only manages master records and their identity.
+ ************************************************/
+
+
+/************************************************
+ * MAIRIX MASTER DATA CONFIGURATION
+ ************************************************/
+
+const MAIRIX_MASTER_DATA = {
+
+  SHEETS: {
+
+    ITEMS:
+      "ITEMS",
+
+    CUSTOMERS:
+      "CUSTOMERS",
+
+    VENDORS:
+      "VENDORS",
+
+    EMPLOYEES:
+      "EMPLOYEES",
+
+    WAREHOUSES:
+      "WAREHOUSES",
+
+    TAX_TYPES:
+      "TAX_TYPES",
+
+    FINANCIAL_ACCOUNTS:
+      "FINANCIAL_ACCOUNTS"
+
+  },
+
+
+  STATUS: {
+
+    ACTIVE:
+      "ACTIVE",
+
+    INACTIVE:
+      "INACTIVE"
+
+  },
+
+
+  ENTITY_PREFIX: {
+
+    ITEM:
+      "ITM",
+
+    CUSTOMER:
+      "CUS",
+
+    VENDOR:
+      "VND",
+
+    EMPLOYEE:
+      "EMP",
+
+    WAREHOUSE:
+      "WH",
+
+    TAX:
+      "TAX",
+
+    ACCOUNT:
+      "ACC"
+
+  }
+
+};
+
+
+/************************************************
+ * GET MASTER SHEET
+ ************************************************/
+
+function getMairixMasterSheet(
+  sheetName
+) {
+
+  const sheet =
+    SpreadsheetApp
+      .getActiveSpreadsheet()
+      .getSheetByName(
+        sheetName
+      );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      "MAIRIX master sheet not found: " +
+      sheetName
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/************************************************
+ * NORMALIZE MASTER CODE
+ ************************************************/
+
+function normalizeMairixMasterCode(
+  value
+) {
+
+  return mairixCleanText(
+    value
+  ).toUpperCase();
+
+}
+
+
+/************************************************
+ * REQUIRE MASTER CODE
+ ************************************************/
+
+function requireMairixMasterCode(
+  value,
+  label
+) {
+
+  const code =
+    normalizeMairixMasterCode(
+      value
+    );
+
+
+  if (!code) {
+
+    throw new Error(
+      (label || "Master Code") +
+      " is required."
+    );
+
+  }
+
+
+  return code;
+
+}
+
+
+/************************************************
+ * FIND MASTER RECORD
+ ************************************************/
+
+function findMairixMasterRecord(
+  sheet,
+  codeColumnName,
+  code
+) {
+
+  const normalizedCode =
+    normalizeMairixMasterCode(
+      code
+    );
+
+
+  if (!normalizedCode) {
+    return null;
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (lastRow < 2) {
+    return null;
+  }
+
+
+  const codeColumn =
+    mairixgetColumnNumber(
+      sheet,
+      codeColumnName
+    );
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        codeColumn,
+        lastRow - 1,
+        1
+      )
+      .getDisplayValues();
+
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+
+    if (
+      normalizeMairixMasterCode(
+        values[i][0]
+      ) ===
+      normalizedCode
+    ) {
+
+      return i + 2;
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/************************************************
+ * GENERIC MASTER CODE GENERATOR
+ ************************************************/
+
+function generateMairixMasterCode(
+  prefix,
+  sheetName,
+  codeColumnName
+) {
+
+  const sheet =
+    getMairixMasterSheet(
+      sheetName
+    );
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  let counter =
+    1;
+
+
+  if (lastRow >= 2) {
+
+    const codeColumn =
+      mairixgetColumnNumber(
+        sheet,
+        codeColumnName
+      );
+
+
+    const values =
+      sheet
+        .getRange(
+          2,
+          codeColumn,
+          lastRow - 1,
+          1
+        )
+        .getDisplayValues();
+
+
+    const normalizedPrefix =
+      String(prefix)
+        .toUpperCase() +
+      "-";
+
+
+    values.forEach(
+      function(row) {
+
+        const value =
+          normalizeMairixMasterCode(
+            row[0]
+          );
+
+
+        if (
+          value.indexOf(
+            normalizedPrefix
+          ) !== 0
+        ) {
+
+          return;
+
+        }
+
+
+        const number =
+          parseInt(
+            value.substring(
+              normalizedPrefix.length
+            ),
+            10
+          );
+
+
+        if (
+          !isNaN(number) &&
+          number >= counter
+        ) {
+
+          counter =
+            number + 1;
+
+        }
+
+      }
+    );
+
+  }
+
+
+  return (
+    String(prefix)
+      .toUpperCase() +
+    "-" +
+    String(counter)
+      .padStart(
+        5,
+        "0"
+      )
+  );
+
+}
+
+
+/************************************************
+ * MASTER ACTIVE FLAG
+ ************************************************/
+
+function normalizeMairixActive(
+  value
+) {
+
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+
+    return true;
+
+  }
+
+
+  if (
+    value === true ||
+    value === 1 ||
+    String(value)
+      .trim()
+      .toUpperCase() ===
+      "TRUE"
+  ) {
+
+    return true;
+
+  }
+
+
+  if (
+    value === false ||
+    value === 0 ||
+    String(value)
+      .trim()
+      .toUpperCase() ===
+      "FALSE"
+  ) {
+
+    return false;
+
+  }
+
+
+  throw new Error(
+    "Invalid MAIRIX Active value: " +
+    value
+  );
+
+}
+
+
+/************************************************
+ * ITEMS
+ ************************************************/
+
+
+function createMairixItem(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Item data is required."
+    );
+
+  }
+
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.ITEMS
+    );
+
+
+  const name =
+    mairixCleanText(
+      data.name
+    );
+
+
+  if (!name) {
+
+    throw new Error(
+      "Item Name is required."
+    );
+
+  }
+
+
+  const code =
+    data.code
+      ? normalizeMairixMasterCode(
+          data.code
+        )
+      : generateMairixMasterCode(
+          MAIRIX_MASTER_DATA.ENTITY_PREFIX.ITEM,
+          MAIRIX_MASTER_DATA.SHEETS.ITEMS,
+          "Item Code"
+        );
+
+
+  if (
+    findMairixMasterRecord(
+      sheet,
+      "Item Code",
+      code
+    )
+  ) {
+
+    throw new Error(
+      "Item Code already exists: " +
+      code
+    );
+
+  }
+
+
+  const headers =
+    getMairixHeaders(
+      sheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Item Code",
+    code
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Item Name",
+    name
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Category",
+    mairixCleanText(
+      data.category
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Unit",
+    mairixCleanText(
+      data.unit
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Barcode",
+    mairixCleanText(
+      data.barcode
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Selling Price",
+    Number(
+      data.sellingPrice || 0
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Opening Quantity",
+    Number(
+      data.openingQuantity || 0
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Opening Cost",
+    Number(
+      data.openingCost || 0
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Active",
+    normalizeMairixActive(
+      data.active
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Updated At",
+    new Date()
+  );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    code:
+      code,
+
+    name:
+      name
+
+  };
+
+}
+
+
+/************************************************
+ * GET ITEM
+ ************************************************/
+
+function getMairixItem(
+  itemCode
+) {
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.ITEMS
+    );
+
+
+  const rowNumber =
+    findMairixMasterRecord(
+      sheet,
+      "Item Code",
+      itemCode
+    );
+
+
+  if (!rowNumber) {
+    return null;
+  }
+
+
+  return getMairixMasterRowAsObject(
+    sheet,
+    rowNumber
+  );
+
+}
+
+
+/************************************************
+ * CUSTOMERS
+ ************************************************/
+
+function createMairixCustomer(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Customer data is required."
+    );
+
+  }
+
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.CUSTOMERS
+    );
+
+
+  const name =
+    mairixCleanText(
+      data.name
+    );
+
+
+  if (!name) {
+
+    throw new Error(
+      "Customer Name is required."
+    );
+
+  }
+
+
+  const code =
+    data.code
+      ? normalizeMairixMasterCode(
+          data.code
+        )
+      : generateMairixMasterCode(
+          MAIRIX_MASTER_DATA.ENTITY_PREFIX.CUSTOMER,
+          MAIRIX_MASTER_DATA.SHEETS.CUSTOMERS,
+          "Customer Code"
+        );
+
+
+  if (
+    findMairixMasterRecord(
+      sheet,
+      "Customer Code",
+      code
+    )
+  ) {
+
+    throw new Error(
+      "Customer Code already exists: " +
+      code
+    );
+
+  }
+
+
+  const headers =
+    getMairixHeaders(
+      sheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Customer Code",
+    code
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Customer Name",
+    name
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Phone",
+    mairixCleanText(
+      data.phone
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Address",
+    mairixCleanText(
+      data.address
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Opening Balance",
+    Number(
+      data.openingBalance || 0
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Active",
+    normalizeMairixActive(
+      data.active
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Updated At",
+    new Date()
+  );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    code:
+      code,
+
+    name:
+      name
+
+  };
+
+}
+
+
+/************************************************
+ * GET CUSTOMER
+ ************************************************/
+
+function getMairixCustomer(
+  customerCode
+) {
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.CUSTOMERS
+    );
+
+
+  const rowNumber =
+    findMairixMasterRecord(
+      sheet,
+      "Customer Code",
+      customerCode
+    );
+
+
+  if (!rowNumber) {
+    return null;
+  }
+
+
+  return getMairixMasterRowAsObject(
+    sheet,
+    rowNumber
+  );
+
+}
+
+
+/************************************************
+ * VENDORS
+ ************************************************/
+
+function createMairixVendor(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Vendor data is required."
+    );
+
+  }
+
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.VENDORS
+    );
+
+
+  const name =
+    mairixCleanText(
+      data.name
+    );
+
+
+  if (!name) {
+
+    throw new Error(
+      "Vendor Name is required."
+    );
+
+  }
+
+
+  const code =
+    data.code
+      ? normalizeMairixMasterCode(
+          data.code
+        )
+      : generateMairixMasterCode(
+          MAIRIX_MASTER_DATA.ENTITY_PREFIX.VENDOR,
+          MAIRIX_MASTER_DATA.SHEETS.VENDORS,
+          "Vendor Code"
+        );
+
+
+  if (
+    findMairixMasterRecord(
+      sheet,
+      "Vendor Code",
+      code
+    )
+  ) {
+
+    throw new Error(
+      "Vendor Code already exists: " +
+      code
+    );
+
+  }
+
+
+  const headers =
+    getMairixHeaders(
+      sheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Vendor Code",
+    code
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Vendor Name",
+    name
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Phone",
+    mairixCleanText(
+      data.phone
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Address",
+    mairixCleanText(
+      data.address
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Opening Balance",
+    Number(
+      data.openingBalance || 0
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Active",
+    normalizeMairixActive(
+      data.active
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Updated At",
+    new Date()
+  );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    code:
+      code,
+
+    name:
+      name
+
+  };
+
+}
+
+
+/************************************************
+ * GET VENDOR
+ ************************************************/
+
+function getMairixVendor(
+  vendorCode
+) {
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.VENDORS
+    );
+
+
+  const rowNumber =
+    findMairixMasterRecord(
+      sheet,
+      "Vendor Code",
+      vendorCode
+    );
+
+
+  if (!rowNumber) {
+    return null;
+  }
+
+
+  return getMairixMasterRowAsObject(
+    sheet,
+    rowNumber
+  );
+
+}
+
+
+/************************************************
+ * EMPLOYEES
+ ************************************************/
+
+function createMairixEmployee(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Employee data is required."
+    );
+
+  }
+
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.EMPLOYEES
+    );
+
+
+  const name =
+    mairixCleanText(
+      data.name
+    );
+
+
+  if (!name) {
+
+    throw new Error(
+      "Employee Name is required."
+    );
+
+  }
+
+
+  const code =
+    data.code
+      ? normalizeMairixMasterCode(
+          data.code
+        )
+      : generateMairixMasterCode(
+          MAIRIX_MASTER_DATA.ENTITY_PREFIX.EMPLOYEE,
+          MAIRIX_MASTER_DATA.SHEETS.EMPLOYEES,
+          "Employee Code"
+        );
+
+
+  if (
+    findMairixMasterRecord(
+      sheet,
+      "Employee Code",
+      code
+    )
+  ) {
+
+    throw new Error(
+      "Employee Code already exists: " +
+      code
+    );
+
+  }
+
+
+  const headers =
+    getMairixHeaders(
+      sheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Employee Code",
+    code
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Employee Name",
+    name
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Employee Type",
+    mairixCleanText(
+      data.employeeType
+    ).toUpperCase()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Phone",
+    mairixCleanText(
+      data.phone
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Address",
+    mairixCleanText(
+      data.address
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "User ID",
+    mairixCleanText(
+      data.userId
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Active",
+    normalizeMairixActive(
+      data.active
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Updated At",
+    new Date()
+  );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    code:
+      code,
+
+    name:
+      name
+
+  };
+
+}
+
+
+/************************************************
+ * GET EMPLOYEE
+ ************************************************/
+
+function getMairixEmployee(
+  employeeCode
+) {
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.EMPLOYEES
+    );
+
+
+  const rowNumber =
+    findMairixMasterRecord(
+      sheet,
+      "Employee Code",
+      employeeCode
+    );
+
+
+  if (!rowNumber) {
+    return null;
+  }
+
+
+  return getMairixMasterRowAsObject(
+    sheet,
+    rowNumber
+  );
+
+}
+
+
+/************************************************
+ * WAREHOUSES
+ ************************************************/
+
+function createMairixWarehouse(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Warehouse data is required."
+    );
+
+  }
+
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.WAREHOUSES
+    );
+
+
+  const name =
+    mairixCleanText(
+      data.name
+    );
+
+
+  if (!name) {
+
+    throw new Error(
+      "Warehouse Name is required."
+    );
+
+  }
+
+
+  const code =
+    data.code
+      ? normalizeMairixMasterCode(
+          data.code
+        )
+      : generateMairixMasterCode(
+          MAIRIX_MASTER_DATA.ENTITY_PREFIX.WAREHOUSE,
+          MAIRIX_MASTER_DATA.SHEETS.WAREHOUSES,
+          "Warehouse Code"
+        );
+
+
+  if (
+    findMairixMasterRecord(
+      sheet,
+      "Warehouse Code",
+      code
+    )
+  ) {
+
+    throw new Error(
+      "Warehouse Code already exists: " +
+      code
+    );
+
+  }
+
+
+  const headers =
+    getMairixHeaders(
+      sheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Warehouse Code",
+    code
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Warehouse Name",
+    name
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Description",
+    mairixCleanText(
+      data.description
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Active",
+    normalizeMairixActive(
+      data.active
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Updated At",
+    new Date()
+  );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    code:
+      code,
+
+    name:
+      name
+
+  };
+
+}
+
+
+/************************************************
+ * GET WAREHOUSE
+ ************************************************/
+
+function getMairixWarehouse(
+  warehouseCode
+) {
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.WAREHOUSES
+    );
+
+
+  const rowNumber =
+    findMairixMasterRecord(
+      sheet,
+      "Warehouse Code",
+      warehouseCode
+    );
+
+
+  if (!rowNumber) {
+    return null;
+  }
+
+
+  return getMairixMasterRowAsObject(
+    sheet,
+    rowNumber
+  );
+
+}
+
+
+/************************************************
+ * TAX TYPES
+ *
+ * Tax behavior is fully configurable.
+ ************************************************/
+
+function createMairixTaxType(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Tax type data is required."
+    );
+
+  }
+
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.TAX_TYPES
+    );
+
+
+  const name =
+    mairixCleanText(
+      data.name
+    );
+
+
+  if (!name) {
+
+    throw new Error(
+      "Tax Type Name is required."
+    );
+
+  }
+
+
+  const code =
+    data.code
+      ? normalizeMairixMasterCode(
+          data.code
+        )
+      : generateMairixMasterCode(
+          MAIRIX_MASTER_DATA.ENTITY_PREFIX.TAX,
+          MAIRIX_MASTER_DATA.SHEETS.TAX_TYPES,
+          "Tax Code"
+        );
+
+
+  if (
+    findMairixMasterRecord(
+      sheet,
+      "Tax Code",
+      code
+    )
+  ) {
+
+    throw new Error(
+      "Tax Code already exists: " +
+      code
+    );
+
+  }
+
+
+  const rate =
+    Number(
+      data.rate || 0
+    );
+
+
+  if (
+    rate < 0
+  ) {
+
+    throw new Error(
+      "Tax rate cannot be negative."
+    );
+
+  }
+
+
+  const headers =
+    getMairixHeaders(
+      sheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Tax Code",
+    code
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Tax Name",
+    name
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Rate",
+    rate
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Calculation Base",
+    mairixCleanText(
+      data.calculationBase ||
+      data.taxNature
+    ).toUpperCase()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Applies To Sales",
+    data.appliesToSales === true
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Applies To Sales Returns",
+    data.appliesToSalesReturns === true
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Applies To Purchases",
+    data.appliesToPurchases === true
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Applies To Purchase Returns",
+    data.appliesToPurchaseReturns === true
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Applies To Expenses",
+    data.appliesToExpenses === true
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Active",
+    normalizeMairixActive(
+      data.active
+    )
+  );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    code:
+      code,
+
+    name:
+      name,
+
+    rate:
+      rate
+
+  };
+
+}
+
+
+/************************************************
+ * GET TAX TYPE
+ ************************************************/
+
+function getMairixTaxType(
+  taxCode
+) {
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.TAX_TYPES
+    );
+
+
+  const rowNumber =
+    findMairixMasterRecord(
+      sheet,
+      "Tax Code",
+      taxCode
+    );
+
+
+  if (!rowNumber) {
+    return null;
+  }
+
+
+  return getMairixMasterRowAsObject(
+    sheet,
+    rowNumber
+  );
+
+}
+
+
+/************************************************
+ * FINANCIAL ACCOUNTS
+ ************************************************/
+
+function createMairixFinancialAccount(
+  data
+) {
+
+  if (!data) {
+
+    throw new Error(
+      "Financial account data is required."
+    );
+
+  }
+
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.FINANCIAL_ACCOUNTS
+    );
+
+
+  const name =
+    mairixCleanText(
+      data.name
+    );
+
+
+  if (!name) {
+
+    throw new Error(
+      "Financial Account Name is required."
+    );
+
+  }
+
+
+  const code =
+    data.code
+      ? normalizeMairixMasterCode(
+          data.code
+        )
+      : generateMairixMasterCode(
+          MAIRIX_MASTER_DATA.ENTITY_PREFIX.ACCOUNT,
+          MAIRIX_MASTER_DATA.SHEETS.FINANCIAL_ACCOUNTS,
+          "Account Code"
+        );
+
+
+  if (
+    findMairixMasterRecord(
+      sheet,
+      "Account Code",
+      code
+    )
+  ) {
+
+    throw new Error(
+      "Account Code already exists: " +
+      code
+    );
+
+  }
+
+
+  const headers =
+    getMairixHeaders(
+      sheet
+    );
+
+
+  const row =
+    new Array(
+      headers.length
+    ).fill("");
+
+
+  const parentAccountCode =
+    normalizeMairixMasterCode(
+      data.parentAccountCode ||
+      data.parentAccount
+    );
+
+
+  const normalBalance =
+    mairixCleanText(
+      data.normalBalance ||
+      data.normalSign
+    ).toUpperCase();
+
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Account Code",
+    code
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Account Name",
+    name
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Account Type",
+    mairixCleanText(
+      data.accountType
+    ).toUpperCase()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Statement",
+    mairixCleanText(
+      data.statement
+    ).toUpperCase()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Parent Account Code",
+    parentAccountCode
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Normal Balance",
+    normalBalance
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Active",
+    normalizeMairixActive(
+      data.active
+    )
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Created At",
+    new Date()
+  );
+
+  setMairixHeaderValue(
+    row,
+    headers,
+    "Updated At",
+    new Date()
+  );
+
+
+  sheet.appendRow(
+    row
+  );
+
+
+  return {
+
+    success:
+      true,
+
+    code:
+      code,
+
+    name:
+      name
+
+  };
+
+}
+
+
+/************************************************
+ * GET FINANCIAL ACCOUNT
+ ************************************************/
+
+function getMairixFinancialAccount(
+  accountCode
+) {
+
+  const sheet =
+    getMairixMasterSheet(
+      MAIRIX_MASTER_DATA.SHEETS.FINANCIAL_ACCOUNTS
+    );
+
+
+  const rowNumber =
+    findMairixMasterRecord(
+      sheet,
+      "Account Code",
+      accountCode
+    );
+
+
+  if (!rowNumber) {
+    return null;
+  }
+
+
+  return getMairixMasterRowAsObject(
+    sheet,
+    rowNumber
+  );
+
+}
+
+
+/************************************************
+ * INTERNAL HEADER HELPERS
+ ************************************************/
+
+function getMairixHeaders(
+  sheet
+) {
+
+  return sheet
+    .getRange(
+      1,
+      1,
+      1,
+      sheet.getLastColumn()
+    )
+    .getDisplayValues()[0]
+    .map(
+      function(header) {
+
+        return mairixCleanText(
+          header
+        );
+
+      }
+    );
+
+}
+
+
+/************************************************
+ * SET VALUE BY HEADER
+ ************************************************/
+
+function setMairixHeaderValue(
+  row,
+  headers,
+  header,
+  value
+) {
+
+  const index =
+    headers.indexOf(
+      header
+    );
+
+
+  if (
+    index === -1
+  ) {
+
+    return;
+
+  }
+
+
+  row[index] =
+    value;
+
+}
+
+
+/************************************************
+ * CONVERT ROW TO OBJECT
+ ************************************************/
+
+function getMairixMasterRowAsObject(
+  sheet,
+  rowNumber
+) {
+
+  const headers =
+    getMairixHeaders(
+      sheet
+    );
+
+
+  const values =
+    sheet
+      .getRange(
+        rowNumber,
+        1,
+        1,
+        headers.length
+      )
+      .getValues()[0];
+
+
+  const object = {};
+
+
+  headers.forEach(
+    function(
+      header,
+      index
+    ) {
+
+      object[header] =
+        values[index];
+
+    }
+  );
+
+
+  return object;
+
+}
+
+
+/************************************************
+ * MASTER DATA LOOKUP
+ ************************************************/
+
+function requireMairixItem(
+  itemCode
+) {
+
+  const item =
+    getMairixItem(
+      itemCode
+    );
+
+
+  if (!item) {
+
+    throw new Error(
+      "Item not found: " +
+      itemCode
+    );
+
+  }
+
+
+  return item;
+
+}
+
+
+function requireMairixCustomer(
+  customerCode
+) {
+
+  const customer =
+    getMairixCustomer(
+      customerCode
+    );
+
+
+  if (!customer) {
+
+    throw new Error(
+      "Customer not found: " +
+      customerCode
+    );
+
+  }
+
+
+  return customer;
+
+}
+
+
+function requireMairixVendor(
+  vendorCode
+) {
+
+  const vendor =
+    getMairixVendor(
+      vendorCode
+    );
+
+
+  if (!vendor) {
+
+    throw new Error(
+      "Vendor not found: " +
+      vendorCode
+    );
+
+  }
+
+
+  return vendor;
+
+}
+
+
+function requireMairixEmployee(
+  employeeCode
+) {
+
+  const employee =
+    getMairixEmployee(
+      employeeCode
+    );
+
+
+  if (!employee) {
+
+    throw new Error(
+      "Employee not found: " +
+      employeeCode
+    );
+
+  }
+
+
+  return employee;
+
+}
+
+
+function requireMairixWarehouse(
+  warehouseCode
+) {
+
+  const warehouse =
+    getMairixWarehouse(
+      warehouseCode
+    );
+
+
+  if (!warehouse) {
+
+    throw new Error(
+      "Warehouse not found: " +
+      warehouseCode
+    );
+
+  }
+
+
+  return warehouse;
+
+}
+
+
+function requireMairixTaxType(
+  taxCode
+) {
+
+  const tax =
+    getMairixTaxType(
+      taxCode
+    );
+
+
+  if (!tax) {
+
+    throw new Error(
+      "Tax type not found: " +
+      taxCode
+    );
+
+  }
+
+
+  return tax;
+
+}
+
+
+function requireMairixFinancialAccount(
+  accountCode
+) {
+
+  const account =
+    getMairixFinancialAccount(
+      accountCode
+    );
+
+
+  if (!account) {
+
+    throw new Error(
+      "Financial account not found: " +
+      accountCode
+    );
+
+  }
+
+
+  return account;
+
+}
+
+
+/************************************************
+ * MASTER DATA TEST
+ *
+ * IMPORTANT:
+ * This test only validates code generation.
+ * It does not create business records.
+ ************************************************/
+
+function testMairixMasterDataEngine() {
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MAIRIX MASTER DATA ENGINE TEST"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+
+  const itemCode =
+    generateMairixMasterCode(
+      MAIRIX_MASTER_DATA.ENTITY_PREFIX.ITEM,
+      MAIRIX_MASTER_DATA.SHEETS.ITEMS,
+      "Item Code"
+    );
+
+  Logger.log(
+    "Generated Item Code: " +
+    itemCode
+  );
+
+
+  const customerCode =
+    generateMairixMasterCode(
+      MAIRIX_MASTER_DATA.ENTITY_PREFIX.CUSTOMER,
+      MAIRIX_MASTER_DATA.SHEETS.CUSTOMERS,
+      "Customer Code"
+    );
+
+  Logger.log(
+    "Generated Customer Code: " +
+    customerCode
+  );
+
+
+  const vendorCode =
+    generateMairixMasterCode(
+      MAIRIX_MASTER_DATA.ENTITY_PREFIX.VENDOR,
+      MAIRIX_MASTER_DATA.SHEETS.VENDORS,
+      "Vendor Code"
+    );
+
+  Logger.log(
+    "Generated Vendor Code: " +
+    vendorCode
+  );
+
+
+  const employeeCode =
+    generateMairixMasterCode(
+      MAIRIX_MASTER_DATA.ENTITY_PREFIX.EMPLOYEE,
+      MAIRIX_MASTER_DATA.SHEETS.EMPLOYEES,
+      "Employee Code"
+    );
+
+  Logger.log(
+    "Generated Employee Code: " +
+    employeeCode
+  );
+
+
+  const warehouseCode =
+    generateMairixMasterCode(
+      MAIRIX_MASTER_DATA.ENTITY_PREFIX.WAREHOUSE,
+      MAIRIX_MASTER_DATA.SHEETS.WAREHOUSES,
+      "Warehouse Code"
+    );
+
+  Logger.log(
+    "Generated Warehouse Code: " +
+    warehouseCode
+  );
+
+
+  const taxCode =
+    generateMairixMasterCode(
+      MAIRIX_MASTER_DATA.ENTITY_PREFIX.TAX,
+      MAIRIX_MASTER_DATA.SHEETS.TAX_TYPES,
+      "Tax Code"
+    );
+
+  Logger.log(
+    "Generated Tax Code: " +
+    taxCode
+  );
+
+
+  const accountCode =
+    generateMairixMasterCode(
+      MAIRIX_MASTER_DATA.ENTITY_PREFIX.ACCOUNT,
+      MAIRIX_MASTER_DATA.SHEETS.FINANCIAL_ACCOUNTS,
+      "Account Code"
+    );
+
+  Logger.log(
+    "Generated Financial Account Code: " +
+    accountCode
+  );
+
+
+  Logger.log(
+    "=========================================="
+  );
+
+  Logger.log(
+    "MASTER DATA ENGINE TEST: PASS"
+  );
+
+  Logger.log(
+    "=========================================="
+  );
+
+}
